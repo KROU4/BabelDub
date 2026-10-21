@@ -27,7 +27,7 @@ UTF-8 without BOM, one object per line:
 |---|---|---|
 | `term` | yes | the term as in the source text (case does not matter: the search is case-insensitive and allows endings of up to 3 letters) |
 | `translation` | yes | how to write it in the target language; in the `official` and `adapt` modes, as in the official translation |
-| `pronounce` | no | how to pronounce it when the reading is not obvious: stress with the U+0301 mark, letters of an acronym separated by hyphens, transliteration of Latin script |
+| `pronounce` | no | how to pronounce it when the reading is not obvious: letters of an acronym separated by hyphens, transliteration of Latin script, the intended stress (U+0301 here is a note for the translator; it never goes into `dub_text`, the CLI strips it) |
 | `note` | no | gender, role, context, "do not inflect", and so on |
 
 A repeated `term` is a new version; the last one wins. `glossary apply` rejects a line without `term` or `translation` (exit code 2, list in `errors`).

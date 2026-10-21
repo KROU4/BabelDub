@@ -26,14 +26,14 @@ A stage in the `attention` state counts as passed: the following stages run. Do 
 
 ## 3. Stages
 
-Stage order in the CLI: `init → scan → extract → link → cast → translate → synth → post → qa → build → verify → install`. A stage started before the previous one returns exit code 2 with a hint.
+Stage order in the CLI: `init → scan → extract → link → cast → translate → synth → post → vc → qa → build → verify → install`. A stage started before the previous one returns exit code 2 with a hint. `vc train` (RVC models of the main characters) is a one-time step any time after `cast`.
 
 ### 3.0. Environment (outside a project)
 
 | Command | What it does | Key fields |
 |---|---|---|
 | `babeldub doctor` | OS, Python, tools, GPU (name, VRAM, driver), disk space, engine venvs, models; recommends a tier | `tier`, `gpu`, `missing[]`, `optional_missing[]`, `todo[]`, `warnings[]`, `install{}`, `next` |
-| `babeldub setup [--engines qwen3tts,qc] [--tools] [--models auto] [--dry-run]` | engine venvs, packages, model weights, external tools (vgmstream) | `planned[]`, `download_gb`, `blocked[]`, `done[]`, `failed[]` |
+| `babeldub setup [--engines voxcpm,applio,qc] [--tools] [--models auto] [--dry-run]` | engine venvs (on an 8 GB+ GPU: `voxcpm`, `applio`, `qc`; smaller GPUs: `qwen3tts-fast`; CPU: `qwen3tts`), packages, model weights, the Applio checkout, external tools (vgmstream) | `planned[]`, `download_gb`, `blocked[]`, `done[]`, `failed[]` |
 | `babeldub models list` / `babeldub models fetch <name>` | model catalog with licenses and status | `models[]` |
 
 `doctor`: code 4 — required tools missing (`missing[]`: uv, ffmpeg, ffprobe; install commands in `install{}`); code 3 — venvs or models missing (`todo[]`) → `setup`. Details are in the `babeldub-doctor` skill.
@@ -98,6 +98,7 @@ babeldub cast select --chars A,B | --policy main|all
 - Code 3: there are voice clusters or `uncertain[]`. The caster role labels them in `cast/labels.agent.jsonl` → `babeldub cast apply-labels` (output `updated`, `labeled`, `uncertain[]`; code 2 — invalid file, fix it).
 - `no_ref[]` — the character has no separate reference: their lines use the original line as the prompt (`line`); short lines of such a character may stay without synthesis.
 - After question 2 to the user: `babeldub cast select ...` (output `policy`, `selected[]`).
+- Then, on an 8 GB+ GPU, train the RVC models of the `main` characters once: `babeldub vc train --chars <ids> [--epochs 20] [--minutes 30] [--dry-run]` (dataset: clean original lines of 2–20 s; ~15 min per character on an 8 GB GPU; models in `vc/<char_id>/`). Output `trained[]`, `skipped[]`, `no_data[]`, `failed[]`; code 4 — no `applio` env; code 2 — unknown character or no GPU.
 
 ### 3.6. `translate`: text for the dub
 
@@ -113,8 +114,8 @@ babeldub glossary check
 
 | Command | What it does | Output |
 |---|---|---|
-| `translate plan` | decides the mode; with `auto` — `official` if an official translation exists for ≥ 95 % of the linked voiced lines, otherwise `translate` | `mode`, `need_agent`, `translated`, `glossary`, `style_bible`, `next` |
-| `translate use-official` | copies the official translation into `translate/translations.jsonl` (`by=official`) | `copied`, `missing`, `next` |
+| `translate plan` | decides the mode; with `auto` — `adapt` when official target-language texts exist (the translator turns them into spoken dub texts; lines without one are translated in the same batches), otherwise `translate`; `official` (voice the official text as is) only when set explicitly | `mode`, `need_agent`, `translated`, `glossary`, `style_bible`, `next` |
+| `translate use-official` | mode `official`: copies the official translation into `translate/translations.jsonl` (`by=official`) | `copied`, `missing`, `next` |
 | `glossary apply` | validates `translate/glossary.agent.jsonl` and merges it into `translate/glossary.jsonl` | `added`, `updated`, `total` |
 | `batch make` | cuts batches by scene for the lines that need an agent; `--ids` and `--from-decisions` make batches for retranslation (QA decisions `shorten`, `retranslate`) | `mode`, `batches[]`, `lines`, `open`, `dir`, `next` |
 | `batch next` | the first open batch | `batch`, `state`, `in`, `out`, `remaining`, `next` |
@@ -123,7 +124,7 @@ babeldub glossary check
 
 Order:
 
-1. `translate plan`. Mode `official` → `translate use-official`. If `need_agent` = 0 after that, go to the voice stage.
+1. `translate plan`. Mode `adapt` (the default with official texts) or `translate` → batches below; batch rows with `task: "adapt"` carry the official text in `tgt_official`, and an adapted dub keeps it as the subtitle. Mode `official` → `translate use-official`; if `need_agent` = 0 after that, go to the voice stage.
 2. Lexicon role: `translate/glossary.agent.jsonl` and `translate/style_bible.md`, then `babeldub glossary apply`. This must happen **before** `batch make`: the batch header only receives terms from `translate/glossary.jsonl` and the style bible text.
 3. `batch make`, then loop: `batch next` → translator → `batch submit <bid>`. `batch next` always returns the first open batch; for parallel work take different `bid` values from `batches[]` of the `batch make` output (or from the file names `translate/batches/<bid>.in.jsonl` that have no `.out.jsonl` yet).
 4. `batch submit`: code 2 — errors in `errors[]` (full list in `errors_file`). The translator fixes their `.out.jsonl` and submits again, up to 3 iterations. Code 3 — `over_budget[]`: lines longer than 115 % of the budget; `over_fixed[]` (fixed length) needs shorter `variants`, `post` fits the rest.
@@ -133,12 +134,15 @@ Order:
 ### 3.7. `synth`: synthesis in the hero's voice
 
 ```text
-babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>]
+babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>] [--best-of N]
 ```
 
-- For every selected line with a translation, builds the voice prompt by `tts.ref_strategy` (`line` — the original of this line with its source text; `char` — the character's best reference; `auto` — `line` if the original is ≥ `tts.line_ref_min_s` and has text, otherwise `char`).
+- Engine: `tts.engine=auto` — `voxcpm` (VoxCPM2) on CUDA when its env exists, else `qwen3tts-fast`/`qwen3tts`/`chatterbox`; the choice is in `notes`.
+- Voice prompt by `tts.ref_strategy`: with VoxCPM2 `auto` = `bootstrap` — the character's ~15–20 s long original timbre reference; the first 4 lines of each character with it alone (`bootstrap-src`), the rest wait (`skipped.bootstrap_wait`) until QA accepted 3 of them, then a target-language prompt from those dubs joins the reference (`bootstrap-tgt`). Other engines: `line` — the original of this line with its source text; `char` — the character's best reference; `auto` — `line` if the original is ≥ `tts.line_ref_min_s` and has text, otherwise `char`.
+- Best of N: `tts.best_of` (3) takes per line with different seeds; the one closest to the original's speech length is kept (`best_of` in the results row).
+- U+0301 stress marks are stripped from the text for every model except an explicit stress model.
 - The model loads once per run, on the GPU when present; lines go in groups by character. Results: `synth/raw/<uid>/a<attempt>.wav` and `synth/results.jsonl`. Holds `state/locks/gpu.lock`.
-- Output: `done`, `failed`, `rtf`, `remaining`, `next`; skipped lines are counted by reason (character not selected, no translation, attempts exhausted).
+- Output: `done`, `failed`, `rtf`, `best_of`, `remaining`, `next`; skipped lines are counted by reason (character not selected, no translation, attempts exhausted, `bootstrap_wait`). With waiting lines `next` says to run `post`, `vc`, `qa` and `synth` again; `status` and `qa` repeat it.
 - `--attempt-next`: a new attempt for lines with the decision `regen` (new seed) or `reref` (prompt switch: original → character reference or the other way round).
 - Lines with a changed translation (after `shorten`/`retranslate`) are picked up by a plain `synth`.
 - Code 3: `failed` > 0 — rerun for them; if the error repeats, see `troubleshooting.md`.
@@ -151,10 +155,19 @@ babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>]
 babeldub post
 ```
 
-- Silence trimming; fitting the duration to the original speech while keeping the pitch (within `post.max_stretch` = 0.12); restoring the original's edge silence; loudness matched to the original line (BS.1770 LUFS; RMS for clips shorter than 0.4 s); peak ceiling `post.true_peak_db` = −1 dB; sample rate and channels as in the original.
-- For `fixed_length: true` (cutscenes, timelines, video) the line must fit the original duration within `post.fixed_length_tolerance` (0.03).
-- Output: `done`, `over_length[]`, `next`.
-- Code 3: `over_length[]` — lines that did not fit even after stretching. After `qa` they get `shorten`.
+- Tempo fit to the original speech only within `post.tempo_min`..`post.tempo_max` (0.93–1.20, pitch kept), the rest of the difference as silence; the speech starts where the original's does; exactly the original's sample count, sample rate and channels; loudness matched to the original speech (BS.1770 LUFS; RMS for clips shorter than 0.4 s); peak ceiling `post.true_peak_db` = −1 dB.
+- For `fixed_length: true` (cutscenes, timelines, video) the speech must fit the original within `post.fixed_length_tolerance` (0.03).
+- Output: `done`, `exact`, `not_exact[]`, `over_length[]`, `next`.
+- Code 3: `over_length[]` — lines that did not fit even at the fastest allowed tempo (speech is never cut; such files run longer, `not_exact[]`). After `qa` they get `shorten`.
+
+### 3.8a. `vc`: timbre transfer
+
+```text
+babeldub vc [--chars A,B] [--ids ...] [--force] [--dry-run]
+```
+
+- For every line of a character with an RVC model (`vc train`): Applio converts the post audio, the CLI re-applies the exact length and loudness, writes `vc/audio/<uid>.wav` and a new `post/post.jsonl` row (`stage: "vc"`), so QA checks and the build packs the converted take. Characters without a model pass through (`passthrough{}` and a note).
+- Output: `converted`, `up_to_date`, `passthrough{}`, `failed`, `next`. Idempotent; holds `state/locks/gpu.lock`. Code 4 — no `applio` env (only when there is something to convert).
 
 ### 3.9. `qa`: quality and voice similarity
 
@@ -175,11 +188,12 @@ babeldub report
 ### 3.10. Quality loop
 
 ```text
-synth → post → qa ─┬─ accept ─────────────────────────────────────────────→ ready to build
-                   ├─ regen / reref ──→ synth --attempt-next → post → qa
-                   ├─ shorten / retranslate ──→ batch make --from-decisions → batch next → translator
-                   │                             → batch submit → synth → post → qa
-                   └─ keep_original / skip ─────────────────────────────────→ original plays
+synth → post → vc → qa ─┬─ accept ──────────────────────────────────────────→ ready to build
+                        ├─ bootstrap_wait ──→ synth → post → vc → qa
+                        ├─ regen / reref ──→ synth --attempt-next → post → vc → qa
+                        ├─ shorten / retranslate ──→ batch make --from-decisions → batch next → translator
+                        │                             → batch submit → synth → post → vc → qa
+                        └─ keep_original / skip ──────────────────────────────→ original plays
 ```
 
 - The `next` hint of `qa` tells which branch is needed now. The loop is over when `next` suggests `babeldub report`.
@@ -248,8 +262,9 @@ BABELDUB_HOME/projects/<slug>/
 ├─ audio/orig/<uid>.wav                 decoded originals
 ├─ cast/ characters.jsonl assign.jsonl refs.jsonl refs/<char_id>/<uid>.wav casting_sheet.md labels.agent.jsonl
 ├─ translate/ glossary.jsonl glossary.agent.jsonl style_bible.md batches/<bid>.in.jsonl batches/<bid>.out.jsonl translations.jsonl
-├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav
+├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav prompts/<char_id>/ (bootstrap: src-*.wav, tgt.json, tgt-*.wav)
 ├─ post/ post.jsonl audio/<uid>.wav
+├─ vc/ <char_id>/model.pth model.index model.json dataset/  audio/<uid>.wav
 ├─ qa/ qa.jsonl decisions.jsonl decisions.agent.jsonl report.md
 ├─ build/ out/<relpath> build_manifest.json backup/<relpath> install.json
 └─ logs/
@@ -257,7 +272,7 @@ BABELDUB_HOME/projects/<slug>/
 
 | Who writes | Files |
 |---|---|
-| CLI only (canon) | `project.json`, `state/*`, `inventory/*`, `cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`, `translate/glossary.jsonl`, `translate/batches/*.in.jsonl`, `translate/translations.jsonl`, `synth/*`, `post/*`, `qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/report.md`, `build/*` |
+| CLI only (canon) | `project.json`, `state/*`, `inventory/*`, `cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`, `translate/glossary.jsonl`, `translate/batches/*.in.jsonl`, `translate/translations.jsonl`, `synth/*`, `post/*`, `vc/*`, `qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/report.md`, `build/*` |
 | roles (agents) | `cast/labels.agent.jsonl` (caster), `translate/glossary.agent.jsonl` and `translate/style_bible.md` (lexicon), `translate/batches/<bid>.out.jsonl` (translator), `qa/decisions.agent.jsonl` (qa) |
 
 All JSONL files are UTF-8 without BOM, one object per line. A repeated `id` is a new revision; the last one wins.
@@ -268,7 +283,7 @@ All JSONL files are UTF-8 without BOM, one object per line. A repeated `id` is a
 inventoried (extract) → linked (link; no text → original plays)
 → cast (character not selected → original plays)
 → translated (translations.jsonl)
-→ synth (attempt k) → post → qa
+→ synth (attempt k; bootstrap lines may wait for their character's target-language prompt) → post → vc → qa
    ├─ accept → build → install
    ├─ regen / reref → synth (attempt k+1, at most tts.max_attempts per text)
    ├─ shorten / retranslate → new translation → synth

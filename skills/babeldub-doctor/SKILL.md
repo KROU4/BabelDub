@@ -67,12 +67,14 @@ What is installed by default (CLI v0.1 catalog; the current list is `babeldub mo
 
 | Purpose | Models | License |
 |---|---|---|
-| synthesis, tiers 8/12/24 GB | `Qwen3-TTS-12Hz-1.7B-Base` (for all languages of the engine); `qwen3-tts-12hz-1.7b-ru-stress-cf` (more accurate Russian stress, but a worse match to the character's voice) is not installed by default, only via `babeldub models fetch` when the user decides so | Apache-2.0 (part of the ru-stress-cf training texts has no stated license: a catalog warning) |
-| synthesis, CPU tier (and VRAM below 8 GB) | `Qwen3-TTS-12Hz-0.6B-Base` | Apache-2.0 |
-| synthesis for languages outside Qwen3-TTS (for example pl, tr) | `chatterbox-multilingual` (every file carries the inaudible PerTh watermark) | MIT |
+| synthesis, NVIDIA GPU with 8 GB+ (venv `voxcpm`) | `VoxCPM2` (30 languages, 48 kHz, peak VRAM 6.5 GB) | Apache-2.0 |
+| timbre transfer, NVIDIA GPU with 8 GB+ (venv `applio`, checkout `BABELDUB_HOME/engines/applio` at a pinned commit) | Applio (RVC v2) with its pretrained HiFi-GAN, rmvpe and contentvec files; the per-character models are trained later by `babeldub vc train` | MIT |
+| synthesis, smaller GPUs (venv `qwen3tts-fast`) | `Qwen3-TTS-12Hz-1.7B-Base`; `qwen3-tts-12hz-1.7b-ru-stress-cf` (more accurate Russian stress, but a worse match to the character's voice) only via `babeldub models fetch` when the user decides so | Apache-2.0 (part of the ru-stress-cf training texts has no stated license: a catalog warning) |
+| synthesis, CPU tier (venv `qwen3tts`) | `Qwen3-TTS-12Hz-0.6B-Base` | Apache-2.0 |
+| synthesis without VoxCPM2 for languages outside Qwen3-TTS (for example pl, tr) | `chatterbox-multilingual` (every file carries the inaudible PerTh watermark) | MIT |
 | QA and casting (venv `qc`) | `faster-whisper-large-v3-turbo` (speech recognition), `spkrec-ecapa-voxceleb` (speaker similarity) | MIT, Apache-2.0 |
 
-Qwen3-TTS supports zh, en, ja, ko, de, fr, ru, pt, es, it.
+VoxCPM2 speaks ar, my, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko, lo, ms, no, pl, pt, ru, es, sw, sv, tl, th, tr, vi; Qwen3-TTS zh, en, ja, ko, de, fr, ru, pt, es, it. The `applio` venv is large (~8 GB with its CUDA libraries).
 
 ## 3. Engines, models, utilities
 
@@ -81,7 +83,7 @@ Qwen3-TTS supports zh, en, ja, ko, de, fr, ru, pt, es, it.
    - By default only models with permissive licenses (Apache-2.0, MIT) are installed.
    - The CLI blocks non-commercial (NC) models (`blocked[]`) until explicit consent. Install one only after the user asked for that model themselves and confirmed its license; then run `babeldub setup --accept-license <model>`. Without such a request, leave NC models alone.
    - Copy catalog warnings (a model's `warning`, for example about the origin of its training data) into the report.
-3. Install: `babeldub setup` (engines, models and utilities for the recommended tier and the project language), or explicitly `babeldub setup --engines qwen3tts-fast,qc --tools --models auto` (`qwen3tts-fast` is CUDA only; on the `cpu` tier use `qwen3tts`). A single model: `babeldub models fetch <name>`.
+3. Install: `babeldub setup` (engines, models and utilities for the recommended tier and the project language), or explicitly `babeldub setup --engines voxcpm,applio,qc --tools --models auto` (`voxcpm`, `applio` and `qwen3tts-fast` are CUDA only; on the `cpu` tier use `qwen3tts`). `applio` needs `git`. A single model: `babeldub models fetch <name>`.
 4. Output: `done[]`, `skipped[]`, `failed[]`, `blocked[]`.
    - Code 1 (`failed[]`): read the log of the failed step (its path is in the output or in the plan file), fix the cause, rerun `setup` once. Network failures usually pass on the second try.
    - Code 3 (`blocked[]`): the reason is in the plan file (`reason`): no uv or git, a non-commercial license, no `uvx`/`huggingface_hub`.
@@ -103,7 +105,7 @@ Installation is long: venvs with torch and model weights take gigabytes (the CLI
 Return a short summary to the orchestrator (or to the user, if the skill was called directly):
 
 ```json
-{"cli": "0.1.0", "exe": "...", "tier": "8gb", "gpu": "NVIDIA GeForce RTX 3060 Ti 8 GB", "installed": ["qwen3tts-fast", "qc", "vgmstream-cli"], "missing": [], "todo": [], "warnings": []}
+{"cli": "0.1.0", "exe": "...", "tier": "8gb", "gpu": "NVIDIA GeForce RTX 3060 Ti 8 GB", "installed": ["voxcpm", "applio", "qc", "vgmstream-cli"], "missing": [], "todo": [], "warnings": []}
 ```
 
 The values in the example are illustrative: take them from the output of `bootstrap.py`, `babeldub doctor` and `babeldub setup`.

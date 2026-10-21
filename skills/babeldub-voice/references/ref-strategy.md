@@ -4,21 +4,24 @@ Read this before the pilot, and whenever the metrics say "wrong voice", "the emo
 
 ## 1. What a voice prompt is
 
-BabelDub engines clone a voice zero-shot: the model is not trained on the character; it receives a short sample of the character's speech, the **voice prompt**, and keeps speaking the same way, but with new text. In Qwen3-TTS (the default engine) this is ICL mode: the input is `ref_audio` (the audio) and `ref_text` (what is said in it). According to the authors, the model's audio tokenizer "fully preserves paralinguistic information", and the Base model has no style instructions: emotion and manner come only from the prompt.
+BabelDub engines clone a voice zero-shot: the model is not trained on the character; it receives a sample of the character's speech, the **voice prompt**, and keeps speaking the same way, but with new text. VoxCPM2 (the default engine on 8 GB+ GPUs) takes two separate inputs: a **timbre reference** (`reference_wav_path`, no transcript needed) and an optional **continuation prompt** (`prompt_wav_path` + its exact `prompt_text`) whose language, pace and manner the model continues. Qwen3-TTS uses ICL mode: `ref_audio` (the audio) and `ref_text` (what is said in it); according to the authors, its audio tokenizer "fully preserves paralinguistic information", and the Base model has no style instructions: emotion and manner come only from the prompt.
 
 Hence the main conclusion: **as the prompt, so the dub.** A calm reference produces a calm voice even for a shout. A shout in the prompt produces a shout.
 
 Chatterbox (the engine for pl, tr and others) clones from the prompt audio only, without a transcript; emotion also comes from the audio, and its strength is additionally set by the `exaggeration` parameter.
 
-## 2. Three strategies
+## 2. Strategies
 
 | `tts.ref_strategy` | Prompt | What carries over | When |
 |---|---|---|---|
-| `line` | the original recording of this same line + its original text | timbre **and** emotion, pace, loudness of delivery, breathing, the manner of this exact phrase | the main dubbing mode |
+| `bootstrap` (`auto` with VoxCPM2) | the character's long original timbre reference, plus a target-language prompt from the character's accepted dubs once there are enough | the actor's timbre with native pronunciation in the target language | the default dubbing chain (section 2.2) |
+| `line` | the original recording of this same line + its original text | timbre **and** emotion, pace, loudness of delivery, breathing, the manner of this exact phrase | Qwen3-TTS / Chatterbox: the main mode |
 | `char` | the character's best clean reference (`cast/refs.jsonl`, `chosen`) + its text | the character's timbre in a neutral delivery | short lines, interjections, noise or music under the voice, no original text |
-| `auto` (default) | `line` if the line is usable; otherwise `char` | — | always, unless there is a reason to change it |
+| `auto` (default) | VoxCPM2: `bootstrap`; other engines: `line` if the line is usable, otherwise `char` | — | always, unless there is a reason to change it |
 
-The `auto` rule in CLI v0.1. A line is usable for `line` if all of the following hold:
+`bootstrap` needs an engine with a continuation prompt (VoxCPM2); set with another engine it works as `auto` and `synth` says so in `notes`. With VoxCPM2, `line` and `char` give the model that recording as its timbre reference only.
+
+The `auto` rule for Qwen3-TTS and Chatterbox. A line is usable for `line` if all of the following hold:
 
 - there is a decoded original (`audio/orig/<uid>.wav`) and original text (`text.src`);
 - the duration is at least `tts.line_ref_min_s` (1.6 s) and at most 15 s;
@@ -37,6 +40,18 @@ ICL cloning reads `ref_text` as the literal content of `ref_audio`. If the trans
 3. **Runaway guard.** Every line gets its own generation cap from the longer of the estimated dub length and the original. A take that hits the cap or is far longer than plausible is discarded and the line is retried alone: timbre-only on the same prompt (`line-xvec`), then the character reference in ICL mode (`char`). The kept row says `retry_reason: "runaway"` and lists the `discarded` takes; if all tries loop, the row fails with `error: "runaway"` and the next `synth` tries a new seed. Takes that ran to the cap in runs before this guard (`hit_token_limit` on an `ok` row) are not used: the next `synth` voices those lines again and `post` skips them.
 
 Timbre-only mode keeps the voice but loses some of the delivery of the exact phrase, so it is a fallback, not a default.
+
+### 2.2 Bootstrap: the original timbre, then the character's own target-language voice
+
+A reference in the original language makes the target-language speech sound like a foreigner speaking it (section 6). The bootstrap removes the accent without losing the actor:
+
+1. **Long timbre reference.** Per character, 3–4 clean original lines (4–7.5 s each, no flags, the cast references first; relaxed to 2–12 s when there are none) are joined with 0.35 s gaps into ~15–20 s: `synth/prompts/<char_id>/src-<hash>.wav`. Every line of the character gets it as the timbre reference. The `unknown` group has none and uses `line`/`char`.
+2. **Phase 1.** The first `tts.bootstrap_lines` (4) lines of the character — plain lines with text of 2.5–8 s first, in game order — are dubbed with the long reference alone (`ref_mode: bootstrap-src`). The other lines wait (`skipped.bootstrap_wait`; `synth` and `status` say to run `post`, `vc`, `qa` and `synth` again).
+3. **Target-language prompt.** When QA accepted at least `tts.bootstrap_min_accepted` (3) lines of the character with CER within `qa.max_cer`, up to 4 of them (lowest CER first, ≤ 26 s) are joined from their final audio (after `vc` when the character has an RVC model) with the exact text they were synthesized from: `synth/prompts/<char_id>/tgt.json` + `tgt-<hash>.wav`. It is built once and then frozen.
+4. **Phase 2.** The remaining lines, and regenerated phase-1 lines, are dubbed with the long reference **and** the prompt (`ref_mode: bootstrap-tgt`, `prompt_id` in `synth/results.jsonl`).
+5. If every phase-1 line is settled (checked, `keep_original`/`skip`, or out of attempts) and fewer than 3 were accepted, the rest goes on with the long reference only; `ref_reason` says so. Look at such a character first: its references or texts are usually the problem.
+
+To rebuild a prompt (for example after retraining the RVC model), delete `synth/prompts/<char_id>/tgt.json` and run `synth --force --chars <id>`.
 
 ## 3. Why the original line as a prompt carries the emotion
 
@@ -71,7 +86,7 @@ There is no need to touch the global `tts.ref_strategy` setting.
 
 ## 6. Accent in cross-lingual cloning
 
-A prompt in the original language (English, Polish) carries not only the voice but also the **phonetics of its language**. When synthesizing in another language, the model may carry over an accent: an "English" r, vowel reduction, intonation contours. The OmniVoice authors say so explicitly; for other models it is expected; the quality of the EN→RU pair on game voices has not been measured in published tables. So the accent is checked in the pilot.
+A prompt in the original language (English, Polish) carries not only the voice but also the **phonetics of its language**. When synthesizing in another language, the model may carry over an accent: an "English" r, vowel reduction, intonation contours. The listening rounds on Low-Budget Repairs confirmed it: the per-language reference matters. With VoxCPM2 the bootstrap (section 2.2) is the remedy; with Qwen3-TTS and Chatterbox the steps below apply. The accent is checked in the pilot.
 
 How to recognize it from metrics (you cannot hear audio):
 
@@ -81,12 +96,12 @@ How to recognize it from metrics (you cannot hear audio):
 What to do, in order:
 
 1. **Check the text.** A high CER is most often not an accent but Latin script, numbers in digits, abbreviations, rare names. That calls for `retranslate` and `pronounce` in the glossary (skill `babeldub-translate`).
-2. **Stress for Russian.** By default `Qwen3-TTS-12Hz-1.7B-Base` does the voicing: the stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` follows the U+0301 mark more reliably, but on the test lines it preserved the original hero's voice noticeably worse, so it is neither installed nor selected automatically. Enable it only for widespread stress errors and only after a pilot that checks `sim`: `babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, then `babeldub set tts.model=qwen3-tts-12hz-1.7b-ru-stress-cf`. Put the stress mark in `dub_text` on words where an error is likely (homographs, names), via the glossary's `pronounce`.
+2. **Stress for Russian.** VoxCPM2 and Qwen3-TTS Base do not read the U+0301 stress mark: they turn it into extra sounds, so the CLI strips it from the text for every model except a stress model. Fix a wrong stress by rewording or by a spelling the model reads right (glossary `pronounce`). Only the Qwen3-TTS fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` follows the mark, but it preserved the original hero's voice noticeably worse, so it is neither installed nor selected automatically: enable it only for widespread stress errors and after a pilot that checks `sim` (`babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, `babeldub set tts.engine=qwen3tts-fast tts.model=qwen3-tts-12hz-1.7b-ru-stress-cf`).
 3. **Compare prompt languages.** If the game is voiced in several languages (Low-Budget Repairs has en-US and pl-PL), run the pilot on both: the accents of different languages sound different in the target language. In v0.1 the CLI takes the originals of the locale that `extract` extracted; comparing languages is a manual experiment, and its outcome is recorded in the report.
 4. **`char` with a more neutral delivery.** A calm reference usually carries less "foreign" intonation than an emotional line. For a character with a strong accent you can switch to `char` at the cost of some emotion; this is a trade-off and must be named in the report.
 5. **For Chatterbox** with a prompt in another language, the authors recommend `cfg_weight=0` to pull the accent less. The v0.1 worker does this itself when the prompt language differs from the target. Chatterbox's emotion strength is set by `exaggeration` (default 0.5); engine parameters are passed through `tts.params` in `project.json`: `babeldub set tts.params.exaggeration=0.7`. Do not edit `project.json` by hand.
 
-Ideas that are **not verified** and not implemented in v0.1: using the character's first successful line in the target language as the new prompt (with timbre-drift control by similarity to the original); embedding-only mode (`x_vector_only`) as a remedy for accent; a voice-conversion (VC) post-pass. Do not apply them without an explicit decision by the user.
+Two former ideas are now the default chain: the character's first accepted target-language lines as the prompt (the bootstrap, section 2.2) and a voice-conversion post-pass (RVC per main character, stage `vc`, which also pulls the timbre back to the original after the prompt). Zero-shot VC (Seed-VC) was rejected: it hallucinated words and sounds. Embedding-only mode (`x_vector_only`) as a remedy for accent is not verified; do not apply it without an explicit decision by the user.
 
 ## 7. How QA checks that the voice is the same
 

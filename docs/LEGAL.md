@@ -44,7 +44,7 @@ The BabelDub project follows these rules itself: the repository, the releases an
 
 ## Model licenses
 
-BabelDub does not distribute model weights: `babeldub setup` downloads them from Hugging Face and shows each model's license. The default models (Qwen3-TTS, Chatterbox Multilingual, faster-whisper, SpeechBrain ECAPA) are released under permissive licenses (Apache-2.0, MIT). Models with non-commercial licenses (for example, CC-BY-NC) are not in the default set and are installed only with your explicit consent; their output must not be used commercially.
+BabelDub does not distribute model weights: `babeldub setup` downloads them from Hugging Face and shows each model's license. The default models and engines (VoxCPM2, Applio/RVC, Qwen3-TTS, Chatterbox Multilingual, faster-whisper, SpeechBrain ECAPA) are released under permissive licenses (Apache-2.0, MIT). The RVC voice models are trained on your machine from the game's own lines (`babeldub vc train`), stay in the project folder and must not be distributed: they reproduce the voice actors' timbre. Models with non-commercial licenses (for example, CC-BY-NC) are not in the default set and are installed only with your explicit consent; their output must not be used commercially.
 
 Some models have extra terms:
 

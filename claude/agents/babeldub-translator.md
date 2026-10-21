@@ -36,13 +36,15 @@ Then the lines:
 {"id": "fmod:...#fsb1:0042", "key": "dlg_a1_m01_d03_Zbyszek_01", "speaker": "Zbyszek", "src": "Okay, let's see.", "tgt_official": "Так, посмотрим.", "dur_s": 2.35, "budget_syll": 9, "fixed_length": false, "placeholders": [], "context_prev": "...", "context_next": "..."}
 ```
 
-Lines that came back from QA also have `task` (`shorten` — make it shorter, `retranslate` — translate again) and `current` (the current `dub_text`).
+Lines with an official text in an `adapt` batch have `task: "adapt"`. Lines that came back from QA also have `task` (`shorten` — make it shorter, `retranslate` — translate again) and `current` (the current `dub_text`).
 
 ## Modes
 
+- `adapt` (the default when the game has an official translation) — for a line with `task: "adapt"` the base is `tgt_official`: keep its meaning and the agreed terms, but make it what a voice actor would say: spoken and colloquial, numbers and symbols as words, Latin-script names transliterated into the target script, fitting `budget_syll`. Lines of the batch without `tgt_official` are translated from `src`. Leave out `sub_text`: the subtitle stays the official text. Explain any noticeable difference from the official text in `notes`.
 - `translate` — translate from `src`.
-- `adapt` — the base is `tgt_official`. Terms and meaning do not change. Edit only for pronounceability and length; explain any noticeable difference in `notes`.
-- `official` — there are no batches (the CLI copies the official text itself).
+- `official` — chosen only explicitly; there are no batches (the CLI copies the official text itself).
+
+Never put U+0301 stress marks into `dub_text`: the default TTS engines voice them as extra sounds (the CLI strips them anyway).
 
 ## Text rules
 

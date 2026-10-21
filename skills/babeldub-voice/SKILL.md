@@ -1,139 +1,142 @@
 ---
 name: babeldub-voice
-description: "Dub game lines in the original character's own voice: clone timbre, emotion and delivery from the original line with GPU-first local voice-cloning TTS (Qwen3-TTS by default, Chatterbox for pl/tr), choose the voice prompt (line, char, auto), run the pilot and batch synthesis, fit length and loudness to the original. Use for the synth and post stages and for voice questions. Example requests: 'dub the voices', 'voice it in the hero's voice', 'same voice in another language', 'clone the voices', 'why does the voice sound different', 'озвучь голосом героя', 'тот же голос на русском', 'сделай русскую озвучку', 'клонирование голоса', 'нейроозвучка', 'синтез реплик', 'doblar el juego', 'doblaje con la voz original'."
+description: "Dub game lines in the original character's own voice: GPU-first local voice cloning (VoxCPM2 with bootstrap prompts by default, Qwen3-TTS and Chatterbox as fallbacks), best-of-N takes, exact-length fit to the original, RVC timbre transfer per main character, the pilot and batch synthesis. Use for the synth, post and vc stages and for voice questions. Example requests: 'dub the voices', 'voice it in the hero's voice', 'same voice in another language', 'clone the voices', 'train the voice model', 'why does the voice sound different', 'озвучь голосом героя', 'тот же голос на русском', 'сделай русскую озвучку', 'клонирование голоса', 'обучи голос персонажа', 'нейроозвучка', 'doblar el juego', 'doblaje con la voz original'."
 license: MIT
-compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); NVIDIA GPU with 8+ GB VRAM recommended, CPU works but is many times slower; engine venvs and weights are installed by babeldub setup."
+compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); NVIDIA GPU with 8+ GB VRAM for the default chain (VoxCPM2 + RVC), smaller GPUs and the CPU fall back to Qwen3-TTS; engine venvs and weights are installed by babeldub setup."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
 # BabelDub: voice — dubbing in the original character's voice
 
-This skill covers the `synth` and `post` stages. Its job is to make every translated line sound like **its own original character**: the same timbre, emotion, delivery and pace, only in the target language. This is dubbing, not "text-to-speech by a narrator". Facial animation and lip sync are not rebuilt.
+This skill covers the `synth`, `post` and `vc` stages. Its job is to make every translated line sound like **its own original character**: the same timbre, emotion, delivery and pace, only in the target language. This is dubbing, not "text-to-speech by a narrator". Facial animation and lip sync are not rebuilt.
 
 The skill complements the `voice` role of the `babeldub-localize` skill (`references/roles/voice.md`). Stage order and exit codes are in that skill's `references/pipeline.md`.
 
 Talk to the user in the user's language. Keep commands, field names and identifiers as they are.
 
-## Core principle
+## The default chain
 
-1. **The voice prompt is the original line itself.** The cloning engine receives the original audio of this line and its original text (ICL cloning: `ref_audio` + `ref_text`). This carries over not only the timbre but the delivery of this exact phrase: a shout stays a shout, a whisper stays a whisper, fatigue stays fatigue. This is `tts.ref_strategy=line`.
-2. **The character's best reference** is used when the original line is unfit as a prompt: the line is shorter than `tts.line_ref_min_s`, has no original text, or has the flags `has_bed` (music or noise under the voice) or `nonverbal`. This is `char`.
-3. **The default is `auto`**: `line` for a usable line, otherwise `char`; if the character has no reference, the short original line is used anyway, so the line is not lost.
-4. **ICL needs the exact transcript of the prompt.** When a line's source text cannot belong to its audio (implausible syllables per second), the CLI uses the character reference, or the line for its timbre only (`line-xvec`). Alternative takes and duplicates of a line (`alt_take`, `duplicate`) are not voiced at all: they follow their leader, and the build gives them the leader's accepted dub.
-5. **The translation must fit the intonation of the original.** A text with the same emotional shape (exclamation, question, hesitation, cut-off) sounds natural; a text "calmer" than the original fights the prompt.
-6. **QA compares the synthesized voice with the original character** (ECAPA similarity to the original line and to the character reference, relative to the character's own baseline). A line whose voice has drifted is regenerated or gets a different prompt.
+Chosen in blind listening rounds on a real game (Low-Budget Repairs, English → Russian) over Qwen3-TTS, Seed-VC and fine-tunes:
 
-Details on why a line prompt carries the emotion, when `char` is needed, and how to reduce the accent of the original language: [references/ref-strategy.md](references/ref-strategy.md). Read it before the pilot.
+1. **TTS: VoxCPM2** (`tts.engine=auto` on an NVIDIA GPU with 8 GB+ and the `voxcpm` env; 30 languages, 48 kHz, Apache-2.0).
+2. **Bootstrap voice prompts** (`tts.ref_strategy=auto` = `bootstrap` for VoxCPM2). Every line gets the character's *long timbre reference*: 3–4 clean original lines (4–7.5 s each) joined into ~15–20 s. The first `tts.bootstrap_lines` (4) lines of each character are dubbed with it alone (`bootstrap-src`). When QA accepted at least `tts.bootstrap_min_accepted` (3) of them, their final audio and exact text become a ~20–26 s *target-language prompt*, and the rest of the character's lines are dubbed with both (`bootstrap-tgt`): the actor's timbre, native pronunciation.
+3. **Best of N** (`tts.best_of=3`): N takes with different seeds; the one whose speech length is closest to the original's wins.
+4. **Exact fit** (`post`): tempo changes only within `post.tempo_min`..`post.tempo_max` (0.93–1.20, pitch kept), the rest of the difference is silence, the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness.
+5. **RVC timbre transfer** (`vc`): one RVC v2 model per main character, trained once on its clean original lines (`babeldub vc train`), converts every dub of that character. It works for any target language.
+6. **QA** (Whisper with VAD, ECAPA with cross-language calibration) accepts or sends lines back.
 
-## When to use
+Measured on Low-Budget Repairs: VoxCPM2 + RVC CER 0.045 (Qwen3-TTS + RVC 0.050), ECAPA similarity to the originals ~0.65–0.70 (originals among themselves 0.77).
 
-- The `synth` and `post` stages, the pilot before batch synthesis, reruns after QA decisions.
-- Questions like "why doesn't the voice sound like the character", "why is there an accent", "why is the line longer than the original", "which engine to use for language X".
+## Core principles
+
+1. **The timbre comes from the original actor.** The voice prompt is always made of original recordings (the long reference, or for other engines the original line itself with its text), never of a generic voice.
+2. **Delivery follows the original.** For Qwen3-TTS and Chatterbox the default `auto` strategy uses the original line as an ICL prompt (`line`), or the character's best clean reference (`char`) when the line is too short, untranscribed, noisy or nonverbal; ICL needs the exact transcript, so an implausible one switches to the character reference or timbre only (`line-xvec`). Details: [references/ref-strategy.md](references/ref-strategy.md).
+3. **Plain text.** VoxCPM2 and Qwen3-TTS Base turn U+0301 stress marks into extra sounds: the CLI strips them for every model except an explicit stress model (`qwen3-tts-…-ru-stress-cf`).
+4. **Alternative takes and duplicates** (`alt_take`, `duplicate`) are not voiced: they follow their leader, and the build gives them the leader's accepted dub.
+5. **The translation must fit the intonation and length of the original.** With official texts the translator adapts them for speech (`translation.mode=adapt`, the `babeldub-translate` skill).
+6. **QA compares the synthesized voice with the original character** and sends drifted voices back.
 
 ## Preconditions
 
-1. `babeldub status`: the `cast` and `translate` stages are finished (`done` or `attention`), and there are selected characters and translations. Otherwise `synth` returns exit code 2 with a hint.
-2. The engine environment is installed. If `synth` returned exit code 4 (no venv or weights), apply the `babeldub-doctor` skill: `babeldub doctor` → `babeldub setup --engines <engine>`.
+1. `babeldub status`: `cast` and `translate` are finished (`done` or `attention`), with selected characters and translations. Otherwise `synth` returns exit code 2 with a hint.
+2. The engine environments are installed. On exit code 4 apply the `babeldub-doctor` skill: `babeldub doctor` → `babeldub setup` (on an 8 GB+ GPU it installs `voxcpm`, `applio` and `qc`).
 3. Lines without original text (`no_text`) are neither translated nor voiced: in v0.1 they keep the original voice.
-4. GPU-first: synthesis runs on the NVIDIA GPU when one is present (project `compute.device=auto`); `babeldub synth --device cuda|cpu` overrides it for one run. If a GPU is present but the worker ended up on the CPU, `synth` says so in `notes`: reinstall the engine with CUDA wheels (`babeldub setup --engines <engine> --force`).
+4. GPU-first: every stage runs on the NVIDIA GPU when one is present (`compute.device=auto`); `--device cuda|cpu` overrides it for one run. `synth` reports the engine it chose and why in `notes`.
 
-## Step 1. Engine and model
+## Step 1. Engine
 
-- The default is `tts.engine=qwen3tts-fast`: Qwen3-TTS-12Hz-1.7B-Base (Apache-2.0) through `faster-qwen3-tts` with CUDA graphs, about 7× faster per line than the official package with identical output. Without CUDA or without its env, `synth` uses the official `qwen3tts` and says so in `notes`; `tts.engine=qwen3tts` forces the official package. Languages: zh, en, ja, ko, de, fr, ru, pt, es, it. The Russian-stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` keeps the hero's voice less faithfully: it is not installed by default and is enabled only explicitly (`references/engines.md`).
-- For `pl`, `tr` and the other languages of Chatterbox Multilingual V3 (MIT, 23 languages, an inaudible PerTh watermark in every file): `babeldub set tts.engine=chatterbox`, or for one run `babeldub synth --engine chatterbox`.
-- If the engine does not speak the target language, `synth` returns exit code 2 with a hint about which engine to use. If no v0.1 engine fits (for example, `uk`), say so honestly in the report: models with non-commercial licenses (OmniVoice and others) are not part of v0.1.
-- The engine's model is chosen by hardware tier (`tts.tier=auto`). To pick one explicitly, run `babeldub set tts.model=<name from babeldub models list>`, for example `Qwen3-TTS-12Hz-0.6B-Base` when video memory is short.
+- `tts.engine=auto` (default): `voxcpm` on CUDA when its env exists and it speaks the language; otherwise `qwen3tts-fast` (CUDA) / `qwen3tts` (CPU) for zh, en, ja, ko, de, fr, ru, pt, es, it, and `chatterbox` for pl, tr and its other languages. `synth` writes the choice into `notes` (`tts.engine=auto -> voxcpm`, or why not).
+- `babeldub set tts.engine=<engine>` or `babeldub synth --engine <engine>` forces one; a CUDA-only engine falls back along its chain on the CPU (`voxcpm` → `qwen3tts-fast` → `qwen3tts`).
+- If no v0.1 engine speaks the language (for example `uk`), say so honestly: models with non-commercial licenses are not part of v0.1.
 
-The full picture of engines, VRAM tiers, licenses and what is not in v0.1: [references/engines.md](references/engines.md).
+Engines, VRAM, licenses and measurements: [references/engines.md](references/engines.md).
 
-## Step 2. Prompt strategy
+## Step 2. RVC models of the main characters (once per project)
 
-Keep `tts.ref_strategy=auto` unless there is a reason to change it. The duration threshold `tts.line_ref_min_s` is 1.6 s. Change settings only based on pilot metrics, and record the reason in the report:
+Train one model per **main** character (tier `main` in `cast/casting_sheet.md`) as soon as `cast` is done; it does not depend on the translation:
 
-| Situation | Action |
-|---|---|
-| similarity is fine, emotions are intact | change nothing |
-| the character has many short lines, `line` gives a "wrong" voice | raise the threshold: `babeldub set tts.line_ref_min_s=2.5` |
-| the character's originals are dirty (echo, radio, music without the `has_bed` flag) | use `char` for this character: `babeldub set tts.ref_strategy=char` → `babeldub synth --chars <id>` → set `auto` back |
-| strong accent of the original language in the target language | see the accent section in `references/ref-strategy.md` |
+```text
+babeldub vc train --chars <id1>,<id2> --dry-run   # dataset size per character
+babeldub vc train --chars <id1>,<id2>            # ~15 min per character on an 8 GB GPU (20 epochs, 30 min of speech)
+```
 
-To regenerate individual lines with a different prompt, use the QA decision `reref` (see step 6), not the global setting.
+- The dataset is the character's clean original lines (2–20 s, no flags), up to `vc.minutes` (30). Fewer than ~5 minutes gives a weak model: tell the user.
+- Training needs an NVIDIA GPU and the `applio` env (exit code 4 → `babeldub setup --engines applio`). It is a long job: tell the user before starting and run it in the background when the host allows.
+- Secondary characters usually go without a model: `vc` passes their lines through unchanged.
 
 ## Step 3. Pilot
 
-Before batch synthesis, run a pilot on 10–20 lines of every main character:
+Run the pilot on the main characters before the batch:
 
 ```text
-babeldub synth --chars <id1>,<id2> --limit 30
+babeldub synth --chars <id1>,<id2> --dry-run   # plan: by_ref, best_of, skipped
+babeldub synth --chars <id1>,<id2>             # bootstrap phase 1: the first 4 lines of each
 babeldub post
+babeldub vc
 babeldub qa
 babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.sim,qa.sim_ref,qa.ratio,qa.reasons --limit 30
 ```
 
-- `synth --dry-run` shows the plan in advance: how many lines, how many with each prompt (`by_ref`: `line`, `line-xvec`, `char`), what is skipped and why (`skipped`; `follows` are alt takes that reuse their leader's dub).
-- Pilot criteria per character: voice similarity `sim ≥ sim_threshold` (0.45 × `sim_ref` for a dub in another language, 0.75 × for a same-language dub, never below 0.25) and identity `margin ≥ −0.05`, intelligibility `cer ≤ qa.max_cer` (0.15), duration `ratio ≤ qa.max_duration_ratio` (1.35; for `fixed_length`, 1 + `post.fixed_length_tolerance`).
-- You cannot hear audio. The pilot does not block the work, but in the report (in the user's language) list 3–5 `post/audio/<uid>.wav` files of the main characters for the user to listen to, and explain how to compare them with `audio/orig/<uid>.wav`.
-- Analyze a character's pilot failure using the step 2 table and `references/ref-strategy.md`. A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role, not for synthesis.
+- With `bootstrap`, the first `synth` dubs only the first lines of each character (`by_ref: bootstrap-src`) and reports the rest in `skipped.bootstrap_wait`; the next `synth` after QA builds the target-language prompt (`synth/prompts/<char_id>/tgt.json`) and dubs the rest (`bootstrap-tgt`). If fewer than 3 first lines were accepted, the rest goes on with the original reference only (`ref_reason` says so) — look at those lines first.
+- Pilot criteria per character: `sim ≥ sim_threshold` (0.45 × `sim_ref` for a dub in another language, never below 0.25), identity `margin ≥ −0.05`, `cer ≤ qa.max_cer` (0.15), `ratio ≤ qa.max_duration_ratio` (1.35).
+- You cannot hear audio. In the report (in the user's language) list 3–5 final files of the main characters (`vc/audio/<uid>.wav`, or `post/audio/<uid>.wav` without a model) to compare with `audio/orig/<uid>.wav`.
+- A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role.
 
 ## Step 4. Batch synthesis
 
-1. In chunks by character, main characters first: `babeldub synth --chars <id>`; split large volumes with `--limit 200`. Watch the `remaining` field.
-2. Estimate run time from `rtf` and `audio_s` in the output: minutes of speech × `rtf`.
-3. `synth` holds `state/locks/gpu.lock`. Do not run GPU stages (`synth`, `qa`, and `cast` with embeddings) in parallel.
-4. `tts.best_of` is not used in v0.1: the QA loop regenerates weak lines (`regen` → `synth --attempt-next`).
-5. After `tts.max_attempts` (3) attempts for the same text, the CLI stops synthesizing the line and reports it in `attention`; QA decides what happens next (usually `keep_original`).
-
-Reacting to the `synth` output:
+1. In chunks by character, main characters first: `babeldub synth --chars <id>`; split large volumes with `--limit 200`. Watch `remaining` and `skipped.bootstrap_wait`.
+2. Time: minutes of speech × `rtf` × `best_of`. `--best-of 1` (or `tts.best_of=1`) is a faster draft.
+3. `synth`, `vc`, `qa` and `cast` with embeddings hold `state/locks/gpu.lock`: never run them in parallel.
+4. After `tts.max_attempts` (3) attempts for the same text the line goes to `attention`; QA decides (usually `keep_original`).
 
 | Symptom | What to do |
 |---|---|
-| exit code 3, `failed` > 0, various errors | rerun `babeldub synth` (failed lines get a new attempt) |
-| `aborted`: 5 identical errors in a row, or the worker crashes | read the log from the `log` field; on `CUDA out of memory`, use a smaller model (`tts.model`) or close programs that use video memory; see `troubleshooting.md` of the `babeldub-localize` skill |
-| `runaway[]`: a take looped (hit the per-line token cap or ran far past any plausible length) | the CLI already discarded it and retried the line alone: timbre only on the same prompt, then the character reference; `runaway_recovered` counts the saves. A line that loops every time is a `failed` row with `error: "runaway"`: rerun `synth` (new seed); after `tts.max_attempts` decide `keep_original` or `retranslate` (simpler text) |
-| `skipped.follows` | alt takes/duplicates of another line: intended, the build gives them the leader's dub |
-| `skipped.no_ref` | the character has neither a reference nor a usable original: a question for the caster (`babeldub cast`) |
-| `skipped.not_selected` | the character is not selected for dubbing: this is intended, and the original voice plays |
+| exit code 3, `failed` > 0 | rerun `babeldub synth` (failed lines get a new attempt) |
+| `aborted` or a crashing worker | read the `log`; on `CUDA out of memory` close programs that use video memory or use a smaller engine; see `troubleshooting.md` of `babeldub-localize` |
+| `runaway[]` | the take looped and was discarded; the line was retried alone. A line that loops every time is `error: "runaway"`: rerun, then `keep_original` or `retranslate` |
+| `skipped.bootstrap_wait` | expected: run `post`, `vc`, `qa`, then `synth` again |
+| `skipped.follows` / `not_selected` | intended: alt takes reuse their leader; unselected characters keep the original voice |
+| `skipped.no_ref` | no reference and no usable original: a question for the caster |
 
-## Step 5. Post-processing
+## Step 5. Post-processing and timbre transfer
 
-`babeldub post` fits every line to the original: it trims silence from the synthesized audio, compresses speech without changing pitch within `post.max_stretch` (up to 12%), restores the leading and trailing pauses of the original, matches loudness to the original line, caps true peak at `post.true_peak_db` (−1 dB), and converts sample rate and channels to the original. `post` cannot slow speech down: a short dubbed line is padded with pauses.
+`babeldub post` fits every take to its original (exact length, tempo within 0.93–1.20, loudness, true peak ≤ −1 dB, original format). Then `babeldub vc` converts the lines of characters with an RVC model and re-applies the exact length and loudness; characters without a model pass through (`passthrough`). Both are idempotent.
 
-- Exit code 3 and `over_length[]`: lines that did not fit even after compression. QA decides their fate (usually `shorten`).
-- Length rules by line type and the fitting cascade: [references/length-policy.md](references/length-policy.md).
-- Order of operations, loudness, format, effects: [references/post.md](references/post.md).
+- `post` exit code 3, `over_length[]`: the dub does not fit even at the fastest allowed tempo; `not_exact[]`: such files run longer than the original (speech is never cut). QA decides (usually `shorten`).
+- Length rules and the fitting cascade: [references/length-policy.md](references/length-policy.md). Order of operations, loudness, format, RVC: [references/post.md](references/post.md).
 
 ## Step 6. The loop after QA
 
 ```text
 babeldub qa → (qa role) qa/decisions.agent.jsonl → babeldub decide apply
-babeldub synth --attempt-next → babeldub post → babeldub qa
+babeldub synth --attempt-next → babeldub post → babeldub vc → babeldub qa
 ```
 
-- `regen`: a new attempt with a different seed and the same prompt.
-- `reref`: a new attempt with a different prompt: `line` → `char`; `char` → another character reference or the line's original.
-- `shorten` and `retranslate` go through translation (the `babeldub-translate` skill); then a regular `synth` picks up the new text as a new attempt.
-- If more than 20% of a character's lines in a chunk are defective, stop synthesis for that character and find the cause (step 2, caster role) instead of running retries.
+- `regen`: a new attempt with new seeds and the same prompt (bootstrap lines then get the target-language prompt when it exists).
+- `reref`: a new attempt with a different prompt (`line` → `char`, `char` → another reference or the line).
+- `shorten` and `retranslate` go through translation; then a regular `synth` picks up the new text.
+- If more than 20% of a character's lines in a chunk are defective, stop and find the cause (step 1–2, caster role) instead of retrying.
 
-## synth and post exit codes
+## Exit codes
 
-| Code | synth | post |
-|---|---|---|
-| 0 | everything planned was synthesized | all lines processed |
-| 2 | no lines or translations, the engine does not speak the target language, invalid `--engine` | no synthesis (`synth` was not run) |
-| 3 | there are `failed`, `attention` or `aborted` | there are `over_length[]` or errors in individual files |
-| 4 | no engine venv or weights → `babeldub-doctor` | no stretching tool (rubberband or ffmpeg) → `babeldub-doctor` |
+| Code | synth | post | vc / vc train |
+|---|---|---|---|
+| 0 | everything planned was synthesized | all lines processed | converted / trained |
+| 2 | no lines or translations, the engine does not speak the language | `synth` was not run | `post` not done; unknown character; training without a GPU |
+| 3 | `failed`, `attention` or `aborted` | `over_length[]` or file errors | some lines failed; a character without clean lines |
+| 4 | no engine venv or weights | no stretching tool (rubberband or ffmpeg) | no `applio` env |
 
 ## What not to do
 
-- Do not synthesize outside the CLI (your own scripts, third-party TTS): that loses idempotency, attempt accounting and the model licenses in the build manifest.
-- Do not enable models with non-commercial licenses without showing the license and getting an explicit "yes" from the user.
+- Do not synthesize or convert outside the CLI (own scripts, third-party TTS or RVC): that loses idempotency, attempt accounting and the model licenses in the build manifest.
+- Do not enable models with non-commercial licenses without showing the license and getting an explicit "yes".
 - Do not "improve" the original lines before cloning (denoising, EQ): the prompt must sound like the character in the game.
-- Do not edit the canon (`synth/results.jsonl`, `post/post.jsonl`) or the game folder.
+- Do not put stress marks into dub texts for VoxCPM2 or Qwen3-TTS Base; do not edit the canon (`synth/results.jsonl`, `post/post.jsonl`) or the game folder.
 
 ## References
 
 - Before the pilot and on any "the voice does not match", "the emotion is gone", "accent": [references/ref-strategy.md](references/ref-strategy.md).
-- When choosing an engine for a language, on low VRAM, on license questions: [references/engines.md](references/engines.md).
-- On `over_length[]`, cutscenes and videos (`fixed_length`), the `shorten` decision: [references/length-policy.md](references/length-policy.md).
-- On questions about loudness, pauses, format, radio and echo effects: [references/post.md](references/post.md).
+- Engines, languages, VRAM, licenses, measurements: [references/engines.md](references/engines.md).
+- `over_length[]`, cutscenes (`fixed_length`), the `shorten` decision: [references/length-policy.md](references/length-policy.md).
+- Loudness, pauses, format, RVC conversion, effects: [references/post.md](references/post.md).

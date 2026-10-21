@@ -36,11 +36,11 @@ Output: `mode`, `need_agent`, `lines`, `with_official`, `official_share`, `no_te
 
 | `mode` | Meaning | What to do |
 |---|---|---|
-| `official` | an official translation into the target language exists for ≥ 95% of lines; it is voiced as is | `babeldub translate use-official`; the agent translates the remaining lines without official text (`missing`) |
-| `translate` | there is no official text, or too little of it; lines are translated from the source | glossary → batches |
-| `adapt` | official text exists, but it is adapted for voice-over (length, pronounceability) | glossary → batches with `tgt_official` |
+| `adapt` | official text exists; the agent turns it into spoken dub text (numbers as words, Latin names transliterated, colloquial, within the length budget); lines without it are translated in the same batches | glossary → batches; rows with `task: "adapt"` carry `tgt_official` |
+| `translate` | there is no official text; lines are translated from the source | glossary → batches |
+| `official` | the official text is voiced as is (only when set explicitly) | `babeldub translate use-official`; the agent translates the lines without official text (`missing`) |
 
-`auto` (default) chooses only between `official` and `translate`. The `adapt` mode is enabled explicitly: `babeldub set translation.mode=adapt` (or `init --mode adapt`). When to choose which: [references/adapt-vs-translate.md](references/adapt-vs-translate.md).
+`auto` (default) resolves to `adapt` when the game has official target-language texts, otherwise to `translate`. Official text is written to be read: voiced as is it sounds bookish and stumbles over digits and Latin names (Low-Budget Repairs listening rounds), so `official` is chosen only explicitly: `babeldub set translation.mode=official`. In `adapt` the subtitle stays the official text. When to choose which: [references/adapt-vs-translate.md](references/adapt-vs-translate.md).
 
 ### 2. Glossary and style bible (lexicon role)
 

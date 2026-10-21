@@ -6,27 +6,26 @@ Read this after `babeldub translate plan` if it is unclear which mode is needed,
 
 | Mode | Source material | Who writes the text | Pros | Cons |
 |---|---|---|---|---|
-| `official` | the game's official translation into the target language | the CLI copies it (`translate use-official`) | subtitles and voice match word for word; zero translator work | official text was written to be read, not spoken: it can be long, bookish, full of digits and abbreviations |
-| `adapt` | the official translation as the base | the agent edits it for voice and length | terminology and meaning as in the game, but it sounds natural and fits the length | subtitles (unchanged in v0.1) diverge from the voice in places |
+| `adapt` (the default with official texts) | the official translation as the base | the agent turns it into spoken dub text | terminology and meaning as in the game, but it sounds natural and fits the length; the subtitle stays official | the voice differs from the on-screen text in places |
 | `translate` | the source text | the agent translates | full control over how it sounds | no official terminology; more work and more checks |
+| `official` (explicit only) | the game's official translation into the target language | the CLI copies it (`translate use-official`) | subtitles and voice match word for word; zero translator work | official text was written to be read, not spoken: it can be long, bookish, full of digits, abbreviations and Latin names |
 
 The `translation.mode` setting:
 
-- `auto` (default): `official` if official text exists for ≥ 95% of the voiced lines with text, otherwise `translate`. **`auto` never chooses `adapt`.**
-- explicit: `babeldub set translation.mode=adapt` (or `official`, `translate`), then `babeldub translate plan`.
+- `auto` (default): `adapt` when official target-language text exists (lines without it are translated from `src` in the same batches), otherwise `translate`.
+- explicit: `babeldub set translation.mode=official` (or `adapt`, `translate`), then `babeldub translate plan`.
 
 ## 2. When to choose which
 
 | Situation | Mode |
 |---|---|
-| there is no official translation | `translate` |
-| an official translation exists; lines are short and conversational, with no digits or abbreviations | `official` |
-| an official translation exists but is noticeably longer than the original, bookish, with digits and Latin script, and there are `fixed_length` cutscenes | `adapt` |
-| the official translation is incomplete (below 95%) | `auto` gives `translate`; if the official text is good, `adapt` is better: the agent translates lines without official text and adapts the rest |
+| there is no official translation | `translate` (`auto`) |
+| an official translation exists, complete or not | `adapt` (`auto`) |
+| the user wants the voice to match the subtitles word for word and the official text is already conversational | `official`, set explicitly; mention the trade-off in the report |
 
-Choosing the mode is not a question for the user (the two-questions rule). Decide from the `translate plan` output (`official_share`) and a sample: `babeldub query --where translated=false --fields id,text.src,text.tgt_official,audio.dur_s --limit 20`; compare the length of the official text with the syllable budget. Put the decision and the reason into the final report.
+Choosing the mode is not a question for the user (the two-questions rule). Keep `auto` unless there is a reason; put a changed mode and the reason into the final report.
 
-Example: in Low-Budget Repairs official Russian text exists for every dialogue key, and the median ratio of Russian to English line length is 1.00, so the game analysis recommends `adapt`: almost nothing needs changing, but the cutscenes need fitting. This is an illustration, not a rule for other games.
+Why `adapt` is the default: in the Low-Budget Repairs listening rounds (English → Russian) the official Russian text, voiced as is, sounded read rather than spoken, and digits and Latin-script names («Pine Street 36») broke the synthesis; the adapted lines («Пайн-стрит, тридцать шесть») won. The official text still exists for every key there, so meaning and terms stay as the players see them.
 
 ## 3. Adaptation rules (`adapt`)
 
@@ -35,7 +34,8 @@ The base is `tgt_official`. Your task is to make it **speakable in the character
 1. **Meaning and terms do not change.** Names, titles, key information stay as in the official text and the glossary.
 2. **Edit only for the sake of the voice:**
    - length: shorten to the budget (`references/length-budget.md`);
-   - pronounceability: numbers and dates in words, abbreviations expanded, Latin script per the glossary, «ё» in Russian;
+   - pronounceability: numbers, dates and symbols in words, abbreviations expanded, Latin-script names transliterated into the target script (per the glossary), «ё» in Russian; no U+0301 stress marks (the default TTS engines voice them as extra sounds);
+   - register: spoken and colloquial, as the character would say it (the style bible); keep the character's swearing level;
    - intonation: restore the emotional shape of the original if the official text smoothed it out (the original shouts "Stop!", while the official text says «Пожалуйста, остановитесь.» ("Please stop.") → «Стой!» ("Stop!"));
    - living speech: replace bookish phrases an actor would never say (Russian examples: «осуществить», «в настоящий момент»).
 3. **Explain every noticeable difference** in `notes`: "shortened for length", "restored the exclamation", "number in words". Minor edits («ё», numbers) need no explanation.
@@ -53,9 +53,9 @@ The base is `tgt_official`. Your task is to make it **speakable in the character
 `babeldub translate use-official` copies the official text into `translate/translations.jsonl` (`by: official`) and computes `fit`. Output: `copied`, `missing`, `over_budget`. Then:
 
 - `missing` > 0: lines without official text → `batch make` → translator;
-- many `over_budget` lines, or cutscenes that do not fit: a reason to switch to `adapt` (`babeldub set translation.mode=adapt`, `translate plan`, `batch make`); in that mode lines with text from `official` go into batches;
+- many `over_budget` lines, or cutscenes that do not fit: a reason to go back to `adapt` (`babeldub set translation.mode=auto`, `translate plan`, `batch make`); in that mode lines with text from `official` go into batches;
 - later QA itself sends to `shorten` whatever still does not fit after post-processing.
 
 ## 6. Subtitles
 
-In v0.1 the game's subtitles are not rebuilt: the player sees the official (or source) text and hears `dub_text`. So in `adapt` keep `dub_text` close to the official text in meaning and in the order of information; then the mismatch with the on-screen line is barely noticeable. `sub_text` is kept in the project for a future version that writes subtitles into the game.
+In v0.1 the game's subtitles are not rebuilt: the player sees the official (or source) text and hears `dub_text`. So in `adapt` keep `dub_text` close to the official text in meaning and in the order of information; then the mismatch with the on-screen line is barely noticeable. `sub_text` is kept in the project for a future version that writes subtitles into the game; in `adapt` it defaults to the official text when the agent leaves it out.

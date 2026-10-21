@@ -21,7 +21,7 @@ babeldub decide apply       merge qa/decisions.agent.jsonl into the canonical de
 babeldub report             qa/report.md: per-character totals and the attention list
 ```
 
-`qa` requires the `post` stage. `qa` holds the GPU (`state/locks/gpu.lock`): do not run it in parallel with `synth`. A repeated `qa` checks only new attempts; attempts already checked are skipped.
+`qa` requires the `post` stage and checks each line's final take: the RVC-converted one (`vc/audio/<uid>.wav`) after `babeldub vc`, otherwise `post/audio/<uid>.wav`; a line converted after it was checked is checked again. Run `babeldub vc` before `qa` when characters have RVC models. `qa` holds the GPU (`state/locks/gpu.lock`): do not run it in parallel with `synth` or `vc`. A repeated `qa` checks only new attempts; attempts already checked are skipped.
 
 ## What is measured
 
@@ -40,7 +40,7 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 ## Workflow
 
 1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `errors[]`, `next`.
-2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `qa`, skill `babeldub-voice`); if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
+2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `vc` → `qa`, skill `babeldub-voice`); if `next` mentions waiting lines (bootstrap phase 2), run `synth` → `post` → `vc` → `qa`; if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
 3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
 4. **Look at the metrics** of the relevant lines only:
    `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.ratio,qa.peak_db,qa.reasons --limit 50`.

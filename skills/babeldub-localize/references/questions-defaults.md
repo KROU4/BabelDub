@@ -58,17 +58,22 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | Setting | Default | Meaning |
 |---|---|---|
 | `compute.device` | `auto` | GPU-first: every neural workload runs on the NVIDIA GPU when present; `cuda` requires a GPU; `cpu` only on the user's explicit request |
-| `translation.mode` | `auto` | `official` if an official translation into the target language exists for ≥ 95 % of the linked voiced lines; otherwise `translate`; the CLI decides in `translate plan` |
+| `translation.mode` | `auto` | `adapt` when official target-language texts exist (the translator turns them into spoken dub texts; the official text stays the subtitle), otherwise `translate`; `official` (voice the official text as is) only explicitly; the CLI decides in `translate plan` |
 | `cast.policy` | `main` | main characters (`cast.main_share` = 0.7) |
 | `cast.merge_threshold` | 0.75 | a voice cluster at least this similar to a named character is merged into him |
-| `tts.engine` | `qwen3tts-fast` | Qwen3-TTS (Apache-2.0) through `faster-qwen3-tts` on an NVIDIA GPU; `synth` falls back to the official `qwen3tts` on the CPU or without its env |
-| `tts.model` | `null` | the model is picked by the tier from `babeldub doctor` |
-| `tts.ref_strategy` | `auto` | `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` (the character's best reference) |
+| `tts.engine` | `auto` | VoxCPM2 (`voxcpm`, Apache-2.0) on an NVIDIA GPU with its env; otherwise `qwen3tts-fast` (CUDA) / `qwen3tts` (CPU) / `chatterbox` by language |
+| `tts.model` | `null` | the model is picked by the engine, tier and language |
+| `tts.ref_strategy` | `auto` | VoxCPM2: `bootstrap` (long original timbre reference, then a target-language prompt from the character's accepted dubs); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |
-| `tts.best_of` | 1 | candidates per line (not used in CLI v0.1: retries are done by the QA loop) |
+| `tts.best_of` | 3 | takes per line; the one closest to the original's speech length is kept |
+| `tts.bootstrap_lines` | 4 | first lines of a character dubbed before its target-language prompt exists |
+| `tts.bootstrap_min_accepted` | 3 | accepted first lines needed to build the prompt |
 | `tts.max_attempts` | 3 | attempts before `keep_original` |
-| `post.max_stretch` | 0.12 | limit of time stretching or compression |
+| `post.tempo_min` / `post.tempo_max` | 0.93 / 1.2 | the only tempo range `post` uses to fit a dub; the rest is silence, the file keeps the original's exact length |
+| `post.tolerance` | 0.03 | no tempo change when the dub's speech is within ±3 % of the original's |
 | `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
+| `vc.epochs` / `vc.minutes` | 20 / 30 | RVC training per character (`babeldub vc train`) |
+| `vc.index_rate` / `vc.protect` | 0.5 / 0.33 | RVC conversion settings (`babeldub vc`) |
 | `post.true_peak_db` | −1.0 | peak ceiling |
 | `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |
 | `qa.min_sim_ratio_xlang` | 0.45 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline, when the dub is in another language than the original audio (the normal case) |

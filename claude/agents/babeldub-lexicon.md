@@ -31,7 +31,7 @@ You are the BabelDub lexicographer. You set the shared rules by which every tran
    ```
 
    - character names (from the casting `name_tgt` or the official translation), places, organizations, items, game terms;
-   - `pronounce` — for everything the synthesis may read wrongly: Latin script, abbreviations, foreign names, numbers with units, words with non-obvious stress (stress mark U+0301 over the vowel);
+   - `pronounce` — for everything the synthesis may read wrongly: Latin script, abbreviations, foreign names, numbers with units, words with non-obvious stress (the U+0301 mark here is only a note for translators: it never goes into `dub_text`, because the default TTS engines voice it as an extra sound);
    - interjections and sounds with their translation (for Russian: `Hmm` → «Хм», `Ugh` → «Тьфу»).
 2. **Style bible** (`translate/style_bible.md`), short, by section:
    - **Dubbing in the hero's voice:** the translation keeps the emotional shape of the original — exclamations, questions, stammers and repetitions (for Russian: «Н-нет!»), cut-off phrases, laughter, sighs, whispers. The voice prompt is the original line itself, so the text must fit its intonation and pace;

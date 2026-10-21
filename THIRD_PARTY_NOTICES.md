@@ -37,13 +37,15 @@ Weights are not part of BabelDub. A model's license also governs the audio it ge
 
 | Model | Purpose | Weights license | Commercial use |
 |---|---|---|---|
-| [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), [0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) (`faster-qwen3-tts` on NVIDIA GPUs, the official `qwen-tts` package otherwise) | voice cloning, default engine | Apache-2.0 | yes |
+| [VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) (OpenBMB; package [`voxcpm`](https://github.com/OpenBMB/VoxCPM), Apache-2.0) | voice cloning, default engine on GPUs with 8 GB+ | Apache-2.0 | yes |
+| RVC v2 models trained by `babeldub vc train` with [Applio](https://github.com/IAHispano/Applio) (MIT; based on [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI), MIT) and its pretrained HiFi-GAN, RMVPE and ContentVec files | timbre transfer per main character (stage `vc`) | Applio and RVC: MIT; the trained models are the user's own and reproduce the voice actors' timbre: keep them private | the tools yes; the voices belong to their actors |
+| [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), [0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) (`faster-qwen3-tts` on NVIDIA GPUs, the official `qwen-tts` package otherwise) | voice cloning on smaller GPUs and the CPU | Apache-2.0 | yes |
 | [siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf](https://huggingface.co/siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf) | Russian stress marks for Qwen3-TTS (opt-in, not installed by default) | Apache-2.0 | yes, but the author warns that part of the training texts comes from a dataset without a declared license: check before commercial use |
 | [Chatterbox Multilingual V3](https://huggingface.co/ResembleAI/chatterbox) (Resemble AI) | cloning for pl, tr and other languages | MIT | yes; every file carries an inaudible PerTh watermark |
 | [faster-whisper large-v3-turbo](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo) ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | speech recognition for QA | MIT | yes |
 | [SpeechBrain ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) ([SpeechBrain](https://github.com/speechbrain/speechbrain)) | voice similarity to the original, voice clustering | Apache-2.0 | yes |
 
-Environment packages: `qwen-tts` (Apache-2.0), `faster-qwen3-tts` (MIT) with `qwen-tts-hf` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1).
+Environment packages: `voxcpm` (Apache-2.0, installed from GitHub), Applio's `requirements-engine.txt` (installed into the separate `applio` venv; among them `faiss-cpu` (MIT), `librosa` (ISC), `torchcrepe` (MIT), `torchfcpe` (MIT), `transformers` (Apache-2.0), `onnxruntime-gpu` (MIT) and NVIDIA CUDA runtime wheels under NVIDIA's license), `qwen-tts` (Apache-2.0), `faster-qwen3-tts` (MIT) with `qwen-tts-hf` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1). The Applio source is cloned by `babeldub setup` into `BABELDUB_HOME/engines/applio` at a pinned commit; it is not part of BabelDub.
 
 ### Models that may appear as options
 
@@ -52,12 +54,12 @@ For reference: the BabelDub research also looked at other models. If any of them
 | Model | Weights license |
 |---|---|
 | OmniVoice (k2-fsa) | code Apache-2.0, **weights CC-BY-NC** (non-commercial) |
-| VoxCPM2, FireRedTTS3, Fun-CosyVoice3, MOSS-TTS | Apache-2.0 |
+| FireRedTTS3, Fun-CosyVoice3, MOSS-TTS | Apache-2.0 |
 | GigaAM-v3 (ASR for Russian), RUAccent (stress marks), UTMOSv2 | MIT |
 | F5-TTS and its Russian fine-tunes | code MIT, **weights CC-BY-NC** |
 | XTTS-v2 | **Coqui Public Model License (non-commercial)** |
 | Fish Audio S2-Pro | **Fish Audio Research License (non-commercial)** |
-| Seed-VC | **GPL-3.0** |
+| Seed-VC | **GPL-3.0** (also rejected in the listening rounds: it hallucinated words) |
 
 ## References and prototypes
 

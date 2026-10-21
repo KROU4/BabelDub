@@ -67,7 +67,7 @@ Go from top to bottom; the first matching rule decides:
 
 ## 4. After `decide apply`
 
-- `regen`, `reref` → `babeldub synth --attempt-next` → `babeldub post` → `babeldub qa` (skill `babeldub-voice`).
+- `regen`, `reref` → `babeldub synth --attempt-next` → `babeldub post` → `babeldub vc` → `babeldub qa` (skill `babeldub-voice`).
 - `shorten`, `retranslate` → `babeldub batch make --from-decisions` → translator → `batch submit` → `babeldub synth` → `post` → `qa` (skill `babeldub-translate`).
 - `accept`, `keep_original`, `skip` → terminal; `babeldub report` and the build (skill `babeldub-pack`).
 

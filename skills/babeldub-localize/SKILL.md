@@ -24,11 +24,12 @@ Every translated line must sound **in the voice of the original hero**: the same
 
 How this is achieved:
 
-1. **The voice prompt is the original line itself.** The cloning model receives the original audio of this line and its original text. This carries over not only the timbre but the intonation of this exact phrase: a shout stays a shout, a whisper stays a whisper. This is `tts.ref_strategy=line`.
-2. **The character's best reference** is used where the original line is unfit as a prompt: short lines, interjections, lines without text, lines with music or noise. This is `tts.ref_strategy=char`.
-3. **Default `auto`:** `line` if the original is at least `tts.line_ref_min_s` (1.6 s) long and has a source text; otherwise `char`.
-4. **The translation keeps the emotional shape of the original**: exclamations, stammers, laughter, cut-off phrases, register and level of profanity. Then the prompt and the text do not fight each other.
-5. **QA compares the synthesized voice with the character's original** (speaker similarity). A drifting voice, a gender flip or a foreign timbre goes back for regeneration (`regen`) or a reference change (`reref`).
+1. **The timbre comes from the original actor.** The default chain (8 GB+ NVIDIA GPU) is VoxCPM2 with `bootstrap` prompts: every line gets the character's ~15–20 s long reference of clean original lines; the first 4 lines of each character are dubbed with it alone, and once QA accepted 3 of them, those dubs become a target-language prompt for the rest (native pronunciation, the actor's timbre).
+2. **Best of N and an exact fit.** Three takes per line, the one closest to the original's speech length wins; `post` fits it within a 0.93–1.20 tempo range and outputs exactly the original's length and format.
+3. **RVC per main character.** One RVC model per main character, trained once on its original lines (`babeldub vc train`), converts its dubs (`babeldub vc`) in any target language.
+4. **Fallback engines** (smaller GPUs, CPU, languages without VoxCPM2): Qwen3-TTS or Chatterbox with the original line as the prompt (`tts.ref_strategy=line`, carrying its intonation), or the character's best reference for short, noisy or untranscribed lines (`char`); `auto` picks.
+5. **The translation keeps the emotional shape of the original**: exclamations, stammers, laughter, cut-off phrases, register and level of profanity. With an official translation the translator adapts it for speech (`adapt`).
+6. **QA compares the synthesized voice with the character's original** (speaker similarity). A drifting voice, a gender flip or a foreign timbre goes back for regeneration (`regen`) or a reference change (`reref`).
 
 Do not change `tts.ref_strategy` without a reason. If you change it, record the reason in the final report.
 
@@ -99,12 +100,13 @@ Delegate the **scout** role (following the `babeldub-recon` skill): `babeldub sc
 1. `babeldub cast`. If `uncertain[]` lists characters, delegate the **caster** role: it labels them through `cast/labels.agent.jsonl` and `babeldub cast apply-labels`.
 2. Ask question 2 and show the character table from `cast/casting_sheet.md` (name, gender, lines, minutes of speech, tier). Default: main characters.
 3. Apply the answer: `babeldub cast select --policy main`, `--policy all` or `--chars A,B`.
+4. On an 8 GB+ GPU with the `applio` env, train the RVC models of the `main` characters once: `babeldub vc train --chars <main ids>` (~15 min per character; tell the user before starting). It works for any target language; secondary characters pass through `vc` unchanged.
 
 Characters that are not selected keep their original voice.
 
 ### 4. Text
 
-1. `babeldub translate plan` — the CLI picks the mode: `official` (voice the official translation as is), `adapt` (an official text exists; adapt it to the duration), `translate` (translate from the source).
+1. `babeldub translate plan` — the CLI picks the mode: `adapt` (the default when an official translation exists: the translator turns it into spoken dub text — numbers as words, Latin names transliterated, colloquial, within the length budget; the official text stays the subtitle), `translate` (translate from the source); `official` (voice the official text as is) only when set explicitly.
 2. For `official`, run `babeldub translate use-official`. If nothing is left for the agent to translate (`need_agent` = 0), go to the voice stage.
 3. Delegate the **lexicon** role: glossary of names and terms, pronunciation for TTS, formal/informal address rules and the style bible; the role finishes with `babeldub glossary apply`. Do this before cutting batches: batches only receive the glossary that has already been applied.
 4. `babeldub batch make` cuts batches by scene. Then loop: `babeldub batch next` → **translator** role on that batch → `babeldub batch submit <bid>`. On hosts with subagents, keep up to 4 translators in parallel, each with its own batch from `batches[]` of the `batch make` output.
@@ -114,12 +116,13 @@ Characters that are not selected keep their original voice.
 
 Delegate the **voice** role: a pilot on a few lines of the main characters, then synthesis in chunks by character. Loop until every selected line reaches a terminal state:
 
-1. `babeldub synth` → `babeldub post` → `babeldub qa`. The CLI sets decisions from the thresholds on its own: a line that passes gets `accept`; an intelligibility, voice or peak defect gets `regen`; a line that is too long gets `shorten`.
-2. Exit code 3 from `qa` (`attention[]`): the **qa** role reviews these lines, writes decisions to `qa/decisions.agent.jsonl` and runs `babeldub decide apply`. For a drifting voice it prefers `reref` — switching the prompt to the character reference.
-3. `regen` and `reref` → `babeldub synth --attempt-next` → `post` → `qa`. `shorten` and `retranslate` → `babeldub batch make --from-decisions` → translator → `batch submit` → `synth` → `post` → `qa`. The `next` field of the `qa` output tells which branch is needed now.
-4. After `tts.max_attempts` (3) failed attempts the line keeps its original voice (`keep_original`) and goes into the report.
+1. `babeldub synth` → `babeldub post` → `babeldub vc` → `babeldub qa`. The CLI sets decisions from the thresholds on its own: a line that passes gets `accept`; an intelligibility, voice or peak defect gets `regen`; a line that is too long gets `shorten`.
+2. With `bootstrap`, the first round dubs only the first lines of each character; `synth`, `qa` and `status` then say to run `synth` again (`bootstrap_wait`): the rest is dubbed with the target-language prompt built from the accepted lines.
+3. Exit code 3 from `qa` (`attention[]`): the **qa** role reviews these lines, writes decisions to `qa/decisions.agent.jsonl` and runs `babeldub decide apply`. For a drifting voice it prefers `reref` — switching the prompt to the character reference.
+4. `regen` and `reref` → `babeldub synth --attempt-next` → `post` → `vc` → `qa`. `shorten` and `retranslate` → `babeldub batch make --from-decisions` → translator → `batch submit` → `synth` → `post` → `vc` → `qa`. The `next` field of the `qa` output tells which branch is needed now.
+5. After `tts.max_attempts` (3) failed attempts the line keeps its original voice (`keep_original`) and goes into the report.
 
-The loop is over when `qa` suggests `babeldub report` in `next`. Do not run GPU stages (`synth`, `qa`) in parallel: the CLI holds `state/locks/gpu.lock`. At the end: `babeldub report` → `qa/report.md`.
+The loop is over when `qa` suggests `babeldub report` in `next`. Do not run GPU stages (`synth`, `vc`, `vc train`, `qa`) in parallel: the CLI holds `state/locks/gpu.lock`. At the end: `babeldub report` → `qa/report.md`.
 
 ### 6. Build and install
 

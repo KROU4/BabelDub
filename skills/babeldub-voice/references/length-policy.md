@@ -19,24 +19,26 @@ In a game, a line is a separate file that the engine plays. Length is dangerous 
 
 ## 3. Default limits
 
-| Line type | `ratio` limit | Setting |
+| Line type / step | Limit | Setting |
 |---|---|---|
-| `fixed_length` (cutscenes, videos, timelines) | ≤ 1.03 | `post.fixed_length_tolerance` = 0.03 |
-| everything else (`dialogue`, `bark`) | ≤ 1.35 | `qa.max_duration_ratio` = 1.35 |
-| threshold at which `post` starts compressing a regular line | > 1.05 | `post.tolerance` = 0.05 |
-| maximum compression | 12% | `post.max_stretch` = 0.12 |
+| `fixed_length` (cutscenes, videos, timelines) | `ratio` ≤ 1.03 and the speech fits into the original file | `post.fixed_length_tolerance` = 0.03 |
+| everything else (`dialogue`, `bark`) | `ratio` ≤ 1.35 | `qa.max_duration_ratio` = 1.35 |
+| dead band: no tempo change | speech within ±3% of the original's | `post.tolerance` = 0.03 |
+| tempo range of `post` | 0.93 (slower) … 1.20 (faster) | `post.tempo_min`, `post.tempo_max` |
+
+Every file has exactly the original's sample count when the fitted speech fits into it (`exact: true`); otherwise the file runs longer and the line is in `not_exact[]`.
 
 The 1.35 limit for dialogue is soft: it catches obvious failures (model looping, extra words), not every long phrase. For a game where dialogue is tightly bound to timing, you can tighten it: `babeldub set qa.max_duration_ratio=1.15`. Research on dubbing pipelines suggests targets of about 1.15 for dialogue and 1.3 for "barks", but this has not been verified on games ❓.
 
 ## 4. The fitting cascade
 
 1. **Syllable budget during translation** (skill `babeldub-translate`). The translator aims for `budget_syll`; for `fixed_length` the budget is mandatory. If the full translation does not fit, they provide up to two shorter `variants`, and `batch submit` takes the fullest one that fits.
-2. **The `line` prompt.** Cloning from the original line carries over its pace, so the dub is naturally closer to the original length than with a neutral reference.
-3. **Compression in `post`** without changing pitch, no more than `post.max_stretch`. Tool: Rubber Band (R3 engine) if the user installed it; otherwise the `rubberband` filter in ffmpeg; otherwise `atempo` in ffmpeg. Rubber Band is distributed under the GPL and is not part of BabelDub.
+2. **Best of N.** `synth` generates `tts.best_of` (3) takes per line and keeps the one whose speech length is closest to the original's (log ratio of the speech spans).
+3. **Tempo fit in `post`** without changing pitch, within `post.tempo_min`..`post.tempo_max`; the rest is silence. Tool: Rubber Band (R3 engine) if the user installed it; otherwise the `rubberband` filter in ffmpeg; otherwise `atempo` in ffmpeg. Rubber Band is distributed under the GPL and is not part of BabelDub.
 4. **Regeneration.** The model sometimes speaks slower or inserts pauses; a new attempt (`regen`) is often shorter. The automatic QA decision for length is not `regen` but `shorten`; however, if a length failure coincides with an intelligibility failure, `regen` comes first.
 5. **Shortening the text** (`shorten`): the line goes back to the translator with the actual `ratio`. The CLI allows two shortenings in a row; if the line still does not fit after them, it becomes `keep_original`: the line keeps the original voice and is listed in the report.
 
-`post` cannot and should not slow speech down: a short dub is padded with the original's pauses. For `fixed_length`, the final file is no longer than the original if the speech fits.
+`post` slows a short dub down by at most 7% (`post.tempo_min` 0.93) and pads the rest with silence; the final file keeps the original's exact length whenever the speech fits.
 
 ## 5. How to resolve `over_length[]` and the `duration` reason
 
