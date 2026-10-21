@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from babeldub import __version__
+from babeldub.core.compute import detect_gpu
 from babeldub.core.jsonl import now_iso, read_json, write_json
 from babeldub.core.output import EXIT_ENV, EXIT_USAGE, BabelDubError
 from babeldub.core.paths import IS_WINDOWS, babeldub_home, hf_home, tools_dir
@@ -127,6 +128,13 @@ def run_logged(cmd: list[str], log_path: Path, timeout: float) -> int:
 
 
 def accel_for_tier(tier: str) -> str:
+    """Torch build to install: CUDA whenever an NVIDIA GPU is visible (GPU-first, contract §1.6).
+
+    The tier only picks model sizes. A small GPU (tier "cpu" by VRAM) still runs ASR, speaker
+    embeddings and the 0.6B TTS far faster than the CPU, so it still gets CUDA wheels.
+    """
+    if detect_gpu().get("available"):
+        return "cuda"
     return "cpu" if tier == "cpu" else "cuda"
 
 

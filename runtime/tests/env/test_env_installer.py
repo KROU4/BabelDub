@@ -37,7 +37,21 @@ def _fake_python(engine):
     return python
 
 
-def test_engine_commands_cuda_and_cpu(home, fake_tools):
+def _no_gpu(monkeypatch):
+    monkeypatch.setattr(installer, "detect_gpu", lambda: {"available": False})
+
+
+def test_gpu_present_always_gets_cuda_wheels(home, fake_tools, monkeypatch):
+    # GPU-first: even a small GPU (cpu model tier) runs ASR/embeddings/TTS on CUDA
+    monkeypatch.setattr(installer, "detect_gpu", lambda: {"available": True, "vram_gb": 4.0})
+    qc = load_catalog().engine("qc")
+    cmds = installer.plan_engine(qc, "cpu").commands
+    assert cmds[1][-1] == "https://download.pytorch.org/whl/cu128"
+    assert installer.accel_for_tier("cpu") == "cuda"
+
+
+def test_engine_commands_cuda_and_cpu(home, fake_tools, monkeypatch):
+    _no_gpu(monkeypatch)
     cat = load_catalog()
     qc = cat.engine("qc")
     item = installer.plan_engine(qc, "8gb")
@@ -51,7 +65,8 @@ def test_engine_commands_cuda_and_cpu(home, fake_tools):
     assert cpu[1][-1] == "https://download.pytorch.org/whl/cpu" and len(cpu) == 3
 
 
-def test_engine_skip_adopt_and_spec_change(home, fake_tools):
+def test_engine_skip_adopt_and_spec_change(home, fake_tools, monkeypatch):
+    _no_gpu(monkeypatch)
     cat = load_catalog()
     qwen = cat.engine("qwen3tts")
     _fake_python(qwen)
