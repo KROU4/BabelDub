@@ -1,67 +1,67 @@
-# Метрики QA: что они значат и где ошибаются
+# QA metrics: what they mean and where they go wrong
 
-Читай при первом разборе брака. Метрики считает воркер `qc` (окружение `BABELDUB_HOME/envs/qc`) по последнему файлу `post/audio/<uid>.wav` каждой реплики; результат — строка в `qa/qa.jsonl`.
+Read this the first time you review defects. The metrics are computed by the `qc` worker (environment `BABELDUB_HOME/envs/qc`) from the latest `post/audio/<uid>.wav` file of each line; the result is a row in `qa/qa.jsonl`.
 
-## 1. Поля `qa/qa.jsonl`
+## 1. Fields of `qa/qa.jsonl`
 
-`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `ratio`, `dur_s`, `peak_db`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Смотри через `babeldub query`, не читай файл целиком: в `query` эти поля доступны с префиксом `qa.` (`--fields id,qa.cer,qa.sim,qa.reasons`), а `verdict` и `decision` — короткими именами в `--where`.
+`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `ratio`, `dur_s`, `peak_db`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Inspect them with `babeldub query`; do not read the file whole. In `query` these fields are available with the `qa.` prefix (`--fields id,qa.cer,qa.sim,qa.reasons`), while `verdict` and `decision` use short names in `--where`.
 
-## 2. Разборчивость: `cer`
+## 2. Intelligibility: `cer`
 
-- **Как.** ASR распознаёт дубль на целевом языке (в каталоге v0.1 — faster-whisper large-v3-turbo); CER — доля символьных правок между нормализованным `dub_text` и распознанным текстом. Нормализация: нижний регистр, без пунктуации и разметки, «ё» → «е», цифры остаются цифрами.
-- **Что ловит:** пропуски и повторы слов, галлюцинации модели (лишние фразы), «съеденные» окончания, неверное чтение (латиница, числа), сильный акцент, тишину вместо речи.
-- **Где ошибается:**
-  - ASR тоже ошибается, особенно на коротких репликах («Эй!», «Хм»): один неверный символ из трёх — уже CER 0,33;
-  - числа: если в `dub_text` осталась цифра, а модель произнесла её словами, ASR вернёт слова или цифры по своему выбору — CER растёт без настоящего брака;
-  - имена и выдуманные слова игры ASR пишет как слышит («Збышек» → «збышик»);
-  - плейсхолдеры остаются в `dub_text` (CLI убирает их только перед синтезом), а в речи их нет;
-  - междометия и эмоциональные выкрики ASR распознаёт плохо.
-- **Как читать:** сравни `dub_text` и `asr_text` глазами. Если разница — в имени или числе, а остальное совпадает, это не брак произношения: `accept` с `note` или `retranslate` (числа словами). Если ASR вернул совсем другой текст или половину — настоящий брак: `regen`.
+- **How.** ASR transcribes the dub in the target language (in the v0.1 catalog — faster-whisper large-v3-turbo); CER is the share of character edits between the normalized `dub_text` and the recognized text. Normalization: lower case, no punctuation or markup, «ё» → «е», digits stay digits.
+- **What it catches:** skipped and repeated words, model hallucinations (extra phrases), "swallowed" word endings, wrong readings (Latin script, numbers), a strong accent, silence instead of speech.
+- **Where it goes wrong:**
+  - ASR makes mistakes too, especially on short lines («Эй!», «Хм»): one wrong character out of three is already CER 0.33;
+  - numbers: if a digit stayed in `dub_text` and the model spoke it as words, ASR returns words or digits at its own discretion — CER grows without a real defect;
+  - ASR spells names and invented game words as it hears them («Збышек» → «збышик»);
+  - placeholders stay in `dub_text` (the CLI strips them only before synthesis), but they are not in the speech;
+  - ASR recognizes interjections and emotional exclamations poorly.
+- **How to read it:** compare `dub_text` and `asr_text` by eye. If the difference is in a name or a number and the rest matches, it is not a pronunciation defect: `accept` with a `note`, or `retranslate` (numbers as words). If ASR returned completely different text or only half of it, it is a real defect: `regen`.
 
-Для русского исследование BabelDub рекомендует GigaAM-v3 как более точное распознавание; в v0.1 его нет — это кандидат следующей версии.
+For Russian, the BabelDub research recommends GigaAM-v3 as more accurate recognition; v0.1 does not have it — it is a candidate for the next version.
 
-## 3. Тот же ли голос: `sim`, `sim_line`, `sim_char`, `sim_ref`
+## 3. Is it the same voice: `sim`, `sim_line`, `sim_char`, `sim_ref`
 
-- **Как.** Эмбеддинги голоса SpeechBrain ECAPA (voxceleb) для дубля, для оригинальной реплики этой строки и для основного референса персонажа; косинусное сходство.
-  - `sim_line` — дубль против своего оригинала (если оригинал чистый: не короче 1 с, без флагов `has_bed`, `nonverbal`, `alt_take`, `no_audio`);
-  - `sim_char` — дубль против референса персонажа (если референс — не эта же реплика);
-  - `sim` — среднее из того, что удалось посчитать.
-- **Базовая линия `sim_ref`.** Насколько похожи друг на друга оригинальные реплики самого персонажа: среднее попарное сходство до 12 его самых длинных чистых оригиналов. Если чистых оригиналов меньше двух — медиана по другим персонажам, а без неё — 0,6. Кэш — `qa/baseline.json`.
-- **Почему относительно базовой линии.** Абсолютные значения сходства у разных голосов разные, а сходство через границу языков (английский оригинал — русский дубль) всегда ниже, чем внутри одного языка. Поэтому правило: `sim ≥ qa.min_sim_ratio × sim_ref`.
-- **Что ловит:** «чужой» голос, смену пола, «дикторский» тембр вместо героя, сильное искажение голоса.
-- **Где ошибается:**
-  - эмоциональная подача (крик, шёпот) меняет эмбеддинг: дубль крика может быть «похож» на оригинальный крик, но не на нейтральный референс — тогда `sim_line` высокий, `sim_char` низкий;
-  - короткие реплики (меньше 1–1,5 с) дают шумные эмбеддинги;
-  - эффекты в оригинале (рация, телефон, эхо) снижают `sim_line`, даже если тембр верный;
-  - персонаж, которого озвучивают несколько актёров или который меняет голос по сюжету, даёт низкую `sim_ref`.
-- **Как читать пару:**
+- **How.** SpeechBrain ECAPA (voxceleb) voice embeddings for the dub, for the original recording of this line and for the character's main reference; cosine similarity.
+  - `sim_line` — the dub against its own original (if the original is clean: at least 1 s long, without the `has_bed`, `nonverbal`, `alt_take`, `no_audio` flags);
+  - `sim_char` — the dub against the character's reference (if the reference is not this same line);
+  - `sim` — the mean of whatever could be computed.
+- **The `sim_ref` baseline.** How similar the character's own original lines are to each other: the mean pairwise similarity of up to 12 of their longest clean originals. If there are fewer than two clean originals — the median over other characters, and without it — 0.6. Cache — `qa/baseline.json`.
+- **Why relative to the baseline.** Absolute similarity values differ between voices, and similarity across a language boundary (English original — Russian dub) is always lower than within one language. Hence the rule: `sim ≥ qa.min_sim_ratio × sim_ref`.
+- **What it catches:** a "foreign" voice, a gender swap, a "narrator" timbre instead of the hero, heavy voice distortion.
+- **Where it goes wrong:**
+  - emotional delivery (shouting, whispering) changes the embedding: a dubbed shout can be "similar" to the original shout but not to the neutral reference — then `sim_line` is high and `sim_char` is low;
+  - short lines (under 1–1.5 s) give noisy embeddings;
+  - effects in the original (radio, phone, echo) lower `sim_line` even when the timbre is right;
+  - a character voiced by several actors, or one whose voice changes over the story, gets a low `sim_ref`.
+- **How to read the pair:**
 
-| `sim_line` | `sim_char` | Вероятная причина | Решение |
+| `sim_line` | `sim_char` | Likely cause | Decision |
 |---|---|---|---|
-| высокий | высокий | норма | `accept` |
-| низкий | высокий | оригинал строки с эффектом, шумом или экстремальной подачей; промпт `line` перенёс лишнее | `reref` (промпт `char`) |
-| высокий | низкий | эмоциональная реплика: дубль похож на свой оригинал, но не на нейтральный референс | обычно `accept` с `note` |
-| низкий | низкий | голос «уплыл» целиком | `regen`; при повторе `reref`; массово у персонажа — проблема референса или кастинга |
+| high | high | normal | `accept` |
+| low | high | the original line has an effect, noise or extreme delivery; the `line` prompt carried over the extra | `reref` (`char` prompt) |
+| high | low | an emotional line: the dub resembles its original but not the neutral reference | usually `accept` with a `note` |
+| low | low | the voice "drifted" entirely | `regen`; on repeat `reref`; widespread for a character — a reference or casting problem |
 
-## 4. Длина: `ratio`
+## 4. Length: `ratio`
 
-Из `post/post.jsonl`: длительность речи дубля после сжатия, делённая на длительность речи оригинала (без краевых пауз). Предел — `qa.max_duration_ratio` (1,35) или 1,03 для `fixed_length`. Огромный `ratio` (больше 2) — обычно зацикливание модели, а не длинный перевод. Подробно — скилл `babeldub-voice`, `references/length-policy.md`.
+From `post/post.jsonl`: the speech duration of the dub after time compression divided by the speech duration of the original (without edge pauses). The limit is `qa.max_duration_ratio` (1.35), or 1.03 for `fixed_length`. A huge `ratio` (above 2) is usually the model looping, not a long translation. Details — skill `babeldub-voice`, `references/length-policy.md`.
 
-## 5. Уровень: `peak_db`, клиппинг, тишина
+## 5. Level: `peak_db`, clipping, silence
 
-- Пик выше `post.true_peak_db` + 0,5 дБ (по умолчанию −0,5 дБ) или клиппированных отсчётов больше 0,05 % — причина `peak`. Обычно редкий выброс синтеза: `regen`.
-- Речь тише −50 дБ — причина `silent`; файл короче 0,1 с — `empty`. Модель выдала тишину: `regen`.
+- A peak above `post.true_peak_db` + 0.5 dB (−0.5 dB by default) or more than 0.05 % clipped samples gives the reason `peak`. Usually a rare synthesis outlier: `regen`.
+- Speech quieter than −50 dB gives the reason `silent`; a file shorter than 0.1 s gives `empty`. The model produced silence: `regen`.
 
-## 6. Служебные причины
+## 6. Service reasons
 
-| Причина | Что значит | Что делать |
+| Reason | Meaning | What to do |
 |---|---|---|
-| `missing_file` | файла `post` нет | `babeldub post`, затем `babeldub qa` |
-| `qc_error` | воркер `qc` не смог обработать файл | повторить `babeldub qa`; при повторе — лог и `troubleshooting.md` скилла `babeldub-localize` |
-| `no_dub_text` | у реплики нет перевода | вернуться к переводу |
+| `missing_file` | the `post` file is missing | `babeldub post`, then `babeldub qa` |
+| `qc_error` | the `qc` worker could not process the file | rerun `babeldub qa`; if it repeats — the log and `troubleshooting.md` of the `babeldub-localize` skill |
+| `no_dub_text` | the line has no translation | go back to translation |
 
-Для этих причин CLI решений не ставит: реплика попадает в `attention[]`.
+The CLI makes no decisions for these reasons: the line goes into `attention[]`.
 
-## 7. Чего метрики не видят
+## 7. What the metrics do not see
 
-Естественность интонации, верные ударения в отдельных словах (если ASR понял слово), уместность эмоции, сведение с музыкой в игре, липсинк. Это проверяет человек в игре; в итоговом отчёте назови 3–5 реплик главных героев для прослушивания и попроси пользователя проверить катсцены.
+Naturalness of intonation, correct stress in individual words (if ASR understood the word), whether the emotion fits, the mix with the music in the game, lip sync. A human checks these in the game; in the final report, name 3–5 lines of the main characters to listen to and ask the user to check the cutscenes.

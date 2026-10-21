@@ -1,32 +1,32 @@
-# Свой или неопознанный движок
+# Custom or unrecognized engine
 
-Читай, если ни один признак из таблицы в `SKILL.md` не подошёл или `scan` вернул неизвестный движок.
+Read this if no sign from the table in `SKILL.md` matched, or `scan` returned an unknown engine.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-Зависит от звука, а не от движка:
+It depends on the audio, not on the engine:
 
-- банки FMOD (`*.bank`) → адаптер `fmod` (см. `audio/fmod.md`; на играх не-Unity не проверялось);
-- Wwise (`*.bnk`, `*.wem`, `*.pck`) → адаптер `wwise` (см. `audio/wwise.md`);
-- отдельные аудиофайлы → адаптер `loose` (см. `audio/loose.md`);
-- собственные архивы → **C**: только описание в отчёте.
+- FMOD banks (`*.bank`) → adapter `fmod` (see `audio/fmod.md`; not tested on non-Unity games);
+- Wwise (`*.bnk`, `*.wem`, `*.pck`) → adapter `wwise` (see `audio/wwise.md`);
+- separate audio files → adapter `loose` (see `audio/loose.md`);
+- custom archives → **C**: description in the report only.
 
-## Порядок разведки
+## Recon order
 
-1. Листинг корня и первых уровней папки игры: имена, расширения, размеры. Бинарные файлы целиком не читать.
-2. Ищи middleware: `fmod*.dll`, `fmodstudio.dll`, `AkSoundEngine*.dll`, `cri_*.dll`, а также файлы `*.bank`, `*.fsb`, `*.bnk`, `*.wem`, `*.pck`, `*.acb`, `*.awb`. Middleware звука часто опознаётся раньше движка.
-3. Ищи голос по именам папок и файлов: `voice`, `vo`, `dialog`, `speech`, `dub`, языковые коды (`en`, `en-US`, `english`, `ru`) в именах.
-4. Ищи тексты: `*.csv`, `*.json`, `*.xml`, `*.po`, `*.txt`, `*.loc*`, `*.lang` с языковыми кодами в имени — см. `text/generic.md`.
-5. Видео — `audio/video.md`.
-6. Запиши в отчёт: найденные контейнеры, их размеры, языки, гипотезы о формате с пометкой «не проверено».
+1. List the root and the first levels of the game folder: names, extensions, sizes. Do not read whole binaries.
+2. Look for middleware: `fmod*.dll`, `fmodstudio.dll`, `AkSoundEngine*.dll`, `cri_*.dll`, and files `*.bank`, `*.fsb`, `*.bnk`, `*.wem`, `*.pck`, `*.acb`, `*.awb`. Audio middleware is often identified before the engine.
+3. Look for the voice by folder and file names: `voice`, `vo`, `dialog`, `speech`, `dub`, language codes (`en`, `en-US`, `english`, `ru`) in the names.
+4. Look for texts: `*.csv`, `*.json`, `*.xml`, `*.po`, `*.txt`, `*.loc*`, `*.lang` with language codes in the name; see `text/generic.md`.
+5. Video: `audio/video.md`.
+6. Write into the report: the containers found, their sizes, languages, and format hypotheses marked "not verified".
 
-## Рантайм-путь
+## Runtime path
 
-Если нативный контейнер не собрать (свой формат, шифрование), остаётся подмена в рантайме мод-лоадером (BepInEx, MelonLoader, UE4SS — по движку) или плагином подмены звука. Это уровень C: плагин пишется под конкретную игру, минусы — мод-лоадер, хрупкость к обновлениям, античит, реакция антивирусов.
+If the native container cannot be rebuilt (custom format, encryption), what remains is runtime replacement with a mod loader (BepInEx, MelonLoader, UE4SS, depending on the engine) or an audio-replacement plugin. This is level C: the plugin is written for a specific game. Downsides: the mod loader, fragility on game updates, anti-cheat, antivirus reactions.
 
-## Чего не делать
+## What not to do
 
-- Не запускать exe игры для «разведки поведением».
-- Не загружать DLL игры.
-- Не распаковывать архивы игры внутрь папки игры.
-- Не гадать о формате: неизвестное — в отчёт как неизвестное.
+- Do not run the game exe for "behavioral recon".
+- Do not load the game's DLLs.
+- Do not unpack game archives inside the game folder.
+- Do not guess the format: report the unknown as unknown.

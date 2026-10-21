@@ -1,37 +1,37 @@
-# Ren'Py: скрипты и переводы `game/tl/`
+# Ren'Py: scripts and `game/tl/` translations
 
-Читай, если игра на Ren'Py (см. `engines/renpy.md`).
+Read this if the game is on Ren'Py (see `engines/renpy.md`).
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 скрипты Ren'Py не читает; только инструкции. Ren'Py — кандидат на уровень A в v0.2: у движка родной механизм перевода текста и голоса.
+**C**: CLI v0.1 does not read Ren'Py scripts; instructions only. Ren'Py is a candidate for level A in v0.2: the engine has a native mechanism for translating both text and voice.
 
-## Как устроено (по документации Ren'Py)
+## How it works (per the Ren'Py documentation)
 
-- Реплики — в `game/*.rpy` (скомпилированные `*.rpyc`, иногда внутри `.rpa`).
-- Перевод — `game/tl/<язык>/*.rpy`:
-  - `translate <язык> <id>:` — перевод реплики диалога по её идентификатору;
-  - `translate <язык> strings:` — перевод строк интерфейса;
-  - `translate <язык> python:` — код для языка (например, свой шрифт).
-- Ren'Py SDK: Launcher → **Generate Translations** (заготовки `tl/`) и **Extract Dialogue** (идентификаторы реплик).
+- Dialogue lines are in `game/*.rpy` (compiled `*.rpyc`, sometimes inside `.rpa`).
+- Translation: `game/tl/<language>/*.rpy`:
+  - `translate <language> <id>:` translates a dialogue line by its identifier;
+  - `translate <language> strings:` translates interface strings;
+  - `translate <language> python:` holds code for the language (for example, a custom font).
+- Ren'Py SDK: Launcher → **Generate Translations** (`tl/` templates) and **Extract Dialogue** (line identifiers).
 
-## Связь с озвучкой
+## Link to the voice
 
-- `voice "file.ogg"` перед репликой — явная связь.
-- `config.auto_voice` — имя файла голоса строится из идентификатора реплики (`{id}`). Тогда идентификатор = ключ и текста, и звука.
-- Перевод файлов: файл под `game/tl/<язык>/` с тем же относительным путём используется вместо оригинала, когда активен этот язык. Озвучка дубляжа кладётся туда же, не трогая оригинал.
+- `voice "file.ogg"` before a line is an explicit link.
+- `config.auto_voice`: the voice file name is built from the line identifier (`{id}`). Then the identifier is the key of both the text and the sound.
+- File translation: a file under `game/tl/<language>/` with the same relative path is used instead of the original when that language is active. The dubbed voice goes there, without touching the original.
 
-## Чем извлечь
+## Extraction tools
 
-- unrpa или rpatool — распаковать `.rpa`.
-- unrpyc — декомпилировать `.rpyc`, если исходных `.rpy` нет (совместимость зависит от версии Ren'Py).
+- unrpa or rpatool: unpack `.rpa`.
+- unrpyc: decompile `.rpyc` when the source `.rpy` files are missing (compatibility depends on the Ren'Py version).
 
-## Подводные камни
+## Pitfalls
 
-- Модифицированные RPA.
-- Шрифты без кириллицы: задать стиль шрифта в `translate <язык> python:`.
+- Modified RPA archives.
+- Fonts without Cyrillic: set the font style in `translate <language> python:`.
 
-## Ссылки
+## Links
 
 - Ren'Py Translation — https://www.renpy.org/doc/html/translation.html
 - Ren'Py Voice — https://www.renpy.org/doc/html/voice.html

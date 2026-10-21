@@ -1,47 +1,47 @@
 # Bethesda Creation Engine (Oblivion, Fallout 3/NV/4/76, Skyrim, Starfield)
 
-Читай, если в папке игры есть `Data/*.bsa` или `*.ba2`, `*.esm`, `Data/Sound/Voice/`.
+Read this if the game folder has `Data/*.bsa` or `*.ba2`, `*.esm`, `Data/Sound/Voice/`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 эти форматы не разбирает. План — позже, уровень B/C: нужен `FonixData.cdf` из Creation Kit для липсинка.
+**C**: CLI v0.1 does not parse these formats. Planned later at level B/C: lip sync needs `FonixData.cdf` from the Creation Kit.
 
-## Как опознать
+## How to identify
 
-- Архивы BSA (Oblivion, FO3/NV, Skyrim LE/SSE) и BA2 (FO4, FO76, Starfield).
-- Loose-файлы в `Data/` перекрывают архивы (по гайдам сообщества).
+- BSA archives (Oblivion, FO3/NV, Skyrim LE/SSE) and BA2 archives (FO4, FO76, Starfield).
+- Loose files in `Data/` override the archives (per community guides).
 
-## Где голос
+## Where the voice is
 
 - `Data/Sound/Voice/<Plugin>/<VoiceType>/<topic>_<FormID>_<n>.fuz`.
-- FUZ — контейнер `FUZE` с `.lip` (липсинк) и `.xwm` (xWMA) (по гайдам сообщества; побайтовая раскладка заголовка не проверена).
-- Несколько NPC делят один voice type: персонаж ≠ папка голоса.
+- FUZ is a `FUZE` container holding `.lip` (lip sync) and `.xwm` (xWMA) (per community guides; the byte layout of the header is not verified).
+- Several NPCs share one voice type: a character is not the same as a voice folder.
 
-## Где текст
+## Where the text is
 
-Локализованные плагины: `Data/Strings/<plugin>_<язык>.STRINGS`, `.DLSTRINGS`, `.ILSTRINGS`. Стандартный редактор сообщества — xTranslator.
+Localized plugins: `Data/Strings/<plugin>_<language>.STRINGS`, `.DLSTRINGS`, `.ILSTRINGS`. The standard community editor is xTranslator.
 
-## Чем извлечь
+## Extraction tools
 
-BSArch (xEdit), Bethesda Archive Extractor, Unfuzer, Yakitori Audio Converter (по гайдам сообщества).
+BSArch (xEdit), Bethesda Archive Extractor, Unfuzer, Yakitori Audio Converter (per community guides).
 
-## Нативный путь пересборки
+## Native rebuild path
 
-- Loose-файлы в `Data/Sound/Voice/...` с теми же именами.
-- `.xwm` — `xWMAEncode` из DirectX SDK (по гайдам сообщества).
-- `.lip` — Creation Kit или FaceFXWrapper («generate native LIP files … without … Creation Kit»; типы Skyrim и Fallout4, язык `USEnglish`; нужен `FonixData.cdf` из Creation Kit).
-- Насколько хорош липсинк для русской речи при английской фонемной модели, не проверено.
-- Пример конвейера сообщества: Mantella генерирует нативные `.lip`/`.fuz` через FaceFX/LipGen; xVASynth — ИИ-голоса для модов.
+- Loose files in `Data/Sound/Voice/...` with the same names.
+- `.xwm`: `xWMAEncode` from the DirectX SDK (per community guides).
+- `.lip`: the Creation Kit or FaceFXWrapper ("generate native LIP files … without … Creation Kit"; Skyrim and Fallout4 types, language `USEnglish`; needs `FonixData.cdf` from the Creation Kit).
+- How good the lip sync is for non-English speech (for example, Russian) with the English phoneme model is not verified.
+- A community pipeline example: Mantella generates native `.lip`/`.fuz` via FaceFX/LipGen; xVASynth makes AI voices for mods.
 
-## Подводные камни
+## Pitfalls
 
-- Заранее посчитанный липсинк: без новых `.lip` губы не совпадут с речью.
-- Voice type общий для многих NPC.
-- Длительность реплики записана в связанных файлах.
+- Precomputed lip sync: without new `.lip` files the lips will not match the speech.
+- A voice type is shared by many NPCs.
+- The line duration is stored in related files.
 
-## Ссылки
+## Links
 
 - FaceFXWrapper — https://github.com/Nukem9/FaceFXWrapper
 - xVA-Synth — https://github.com/DanRuta/xVA-Synth
 - Mantella — https://github.com/art-from-the-machine/Mantella
-- CK wiki: пакетная генерация голоса — https://ck.uesp.net/wiki/How_to_generate_voice_files_by_batch
+- CK wiki: batch voice generation — https://ck.uesp.net/wiki/How_to_generate_voice_files_by_batch

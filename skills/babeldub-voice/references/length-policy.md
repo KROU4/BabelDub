@@ -1,55 +1,55 @@
-# Длина реплики: сколько можно и как подгонять
+# Line length: how much is allowed and how to fit it
 
-Читай при `over_length[]` из `post`, при причине `duration` в QA, для катсцен и видео (`fixed_length`) и перед решением `shorten`.
+Read this on `over_length[]` from `post`, on the `duration` reason in QA, for cutscenes and videos (`fixed_length`), and before a `shorten` decision.
 
-## 1. Почему длина важна
+## 1. Why length matters
 
-В игре реплика — отдельный файл, который проигрывает движок. Опасна длина там, где звук привязан ко времени:
+In a game, a line is a separate file that the engine plays. Length is dangerous where the audio is tied to time:
 
-- **Катсцены, таймлайны, видео.** Клип таймлайна или видео имеет фиксированную длину: длинная реплика обрежется или наложится на следующую. CLI помечает такие реплики `fixed_length: true`.
-- **Синхронные инструменты middleware.** В FMOD синхронный инструмент играет только ту часть звука, что под курсором таймлайна; асинхронный в режиме Cut тоже может оборвать длинный звук. Асинхронный programmer instrument играет реплику целиком: в Low-Budget Repairs замена 6,0 с вместо 1,92 с проиграна полностью (эксперимент на рантайме FMOD, сама игра не запускалась).
-- **Обычные диалоги**, где следующая реплика ждёт окончания звука, переносят удлинение мягко, но субтитры и анимации лица могут разойтись со звуком.
-- **Длина, записанная в метаданных** (Bethesda `.lip`, фонемы Source), при замене звука не обновляется.
+- **Cutscenes, timelines, videos.** A timeline clip or a video has a fixed length: a long line gets cut off or overlaps the next one. The CLI marks such lines `fixed_length: true`.
+- **Synchronous middleware instruments.** In FMOD, a synchronous instrument plays only the part of the sound under the timeline cursor; an asynchronous one in Cut mode may also cut off a long sound. An asynchronous programmer instrument plays the line in full: in Low-Budget Repairs, a 6.0 s replacement for a 1.92 s line played completely (an experiment on the FMOD runtime; the game itself was not launched).
+- **Regular dialogue**, where the next line waits for the sound to end, tolerates longer lines gracefully, but subtitles and facial animation may drift from the audio.
+- **Length stored in metadata** (Bethesda `.lip`, Source phonemes) is not updated when the audio is replaced.
 
-## 2. Что считает CLI
+## 2. What the CLI computes
 
-- Цель — **длительность речи оригинала** без пауз в начале и конце (`target_s` в `post/post.jsonl`).
-- `ratio` = длительность речи дубля после подгонки / `target_s`. Его же проверяет QA.
-- Бюджет перевода в слогах: `budget_syll` = длительность файла оригинала × темп языка (для русского 5,5 слога в секунду, для английского 5,8, для испанского 7,2). В русском слогов столько же, сколько гласных.
+- The target is the **speech duration of the original** without leading and trailing pauses (`target_s` in `post/post.jsonl`).
+- `ratio` = speech duration of the dub after fitting / `target_s`. QA checks the same value.
+- The translation budget in syllables: `budget_syll` = duration of the original file × the language's pace (5.5 syllables per second for Russian, 5.8 for English, 7.2 for Spanish). In Russian the number of syllables equals the number of vowels.
 
-## 3. Пределы по умолчанию
+## 3. Default limits
 
-| Тип реплики | Предел `ratio` | Настройка |
+| Line type | `ratio` limit | Setting |
 |---|---|---|
-| `fixed_length` (катсцены, видео, таймлайны) | ≤ 1,03 | `post.fixed_length_tolerance` = 0,03 |
-| остальные (`dialogue`, `bark`) | ≤ 1,35 | `qa.max_duration_ratio` = 1,35 |
-| порог, с которого `post` начинает сжимать обычную реплику | > 1,05 | `post.tolerance` = 0,05 |
-| максимальное сжатие | 12 % | `post.max_stretch` = 0,12 |
+| `fixed_length` (cutscenes, videos, timelines) | ≤ 1.03 | `post.fixed_length_tolerance` = 0.03 |
+| everything else (`dialogue`, `bark`) | ≤ 1.35 | `qa.max_duration_ratio` = 1.35 |
+| threshold at which `post` starts compressing a regular line | > 1.05 | `post.tolerance` = 0.05 |
+| maximum compression | 12% | `post.max_stretch` = 0.12 |
 
-Предел 1,35 для диалогов — мягкий: он ловит явные провалы (зацикливание модели, лишние слова), а не каждую длинную фразу. Для игры, где диалоги жёстко привязаны к таймингу, его можно ужесточить: `babeldub set qa.max_duration_ratio=1.15`. Исследования конвейеров дубляжа советуют ориентиры около 1,15 для диалогов и 1,3 для «барков», но это не проверено на играх ❓.
+The 1.35 limit for dialogue is soft: it catches obvious failures (model looping, extra words), not every long phrase. For a game where dialogue is tightly bound to timing, you can tighten it: `babeldub set qa.max_duration_ratio=1.15`. Research on dubbing pipelines suggests targets of about 1.15 for dialogue and 1.3 for "barks", but this has not been verified on games ❓.
 
-## 4. Каскад подгонки
+## 4. The fitting cascade
 
-1. **Бюджет слогов при переводе** (скилл `babeldub-translate`). Переводчик целится в `budget_syll`; для `fixed_length` бюджет обязателен. Если полный перевод не влезает, он даёт до двух более коротких `variants`, а `batch submit` берёт самый полный из влезающих.
-2. **Промпт `line`.** Клонирование по оригинальной реплике переносит её темп, поэтому дубль естественно ближе к длине оригинала, чем при нейтральном референсе.
-3. **Сжатие в `post`** без смены высоты тона, не больше `post.max_stretch`. Инструмент: Rubber Band (движок R3), если пользователь его установил; иначе фильтр `rubberband` в ffmpeg; иначе `atempo` в ffmpeg. Rubber Band распространяется под GPL и в BabelDub не входит.
-4. **Перегенерация.** Модель иногда говорит медленнее или вставляет паузы; новая попытка (`regen`) часто короче. Авто-решение QA по длине — не `regen`, а `shorten`, но если провал по длине совпал с провалом по разборчивости, сначала идёт `regen`.
-5. **Сокращение текста** (`shorten`): реплика возвращается переводчику с фактическим `ratio`. CLI допускает два сокращения подряд; если и после них не влезло — `keep_original`, реплика остаётся с оригинальным голосом и попадает в отчёт.
+1. **Syllable budget during translation** (skill `babeldub-translate`). The translator aims for `budget_syll`; for `fixed_length` the budget is mandatory. If the full translation does not fit, they provide up to two shorter `variants`, and `batch submit` takes the fullest one that fits.
+2. **The `line` prompt.** Cloning from the original line carries over its pace, so the dub is naturally closer to the original length than with a neutral reference.
+3. **Compression in `post`** without changing pitch, no more than `post.max_stretch`. Tool: Rubber Band (R3 engine) if the user installed it; otherwise the `rubberband` filter in ffmpeg; otherwise `atempo` in ffmpeg. Rubber Band is distributed under the GPL and is not part of BabelDub.
+4. **Regeneration.** The model sometimes speaks slower or inserts pauses; a new attempt (`regen`) is often shorter. The automatic QA decision for length is not `regen` but `shorten`; however, if a length failure coincides with an intelligibility failure, `regen` comes first.
+5. **Shortening the text** (`shorten`): the line goes back to the translator with the actual `ratio`. The CLI allows two shortenings in a row; if the line still does not fit after them, it becomes `keep_original`: the line keeps the original voice and is listed in the report.
 
-Замедлять речь `post` не умеет и не должен: короткий дубль дополняется паузами оригинала. Для `fixed_length` итоговый файл не длиннее оригинала, если речь влезла.
+`post` cannot and should not slow speech down: a short dub is padded with the original's pauses. For `fixed_length`, the final file is no longer than the original if the speech fits.
 
-## 5. Как решать `over_length[]` и причину `duration`
+## 5. How to resolve `over_length[]` and the `duration` reason
 
-| Ситуация | Решение |
+| Situation | Decision |
 |---|---|
-| `fixed_length`, `ratio` чуть выше 1,03, текст можно сжать | `shorten` с `note`: «ratio 1.08, срезать ~8 % (≈2 слога)» |
-| обычный диалог, `ratio` 1,35–1,5 | CLI сам назначает `shorten` (не больше двух раз, затем `keep_original`). Если звук в этой игре не привязан к таймингу (асинхронные инструменты, следующая реплика ждёт конца звука) и смысл не терпит сокращения, роль qa может дать `accept` с `note`; причину — в отчёт |
-| огромный `ratio` (больше 2) | почти всегда сбой модели (повтор, зацикливание): `regen` |
-| `ratio` < 0,7 | дубль заметно короче: обычно нормально (паузы оригинала сохранены); если похоже на пропуск слов — смотри `cer`, при высоком `cer` `regen` |
+| `fixed_length`, `ratio` slightly above 1.03, the text can be compressed | `shorten` with a `note`: "ratio 1.08, cut ~8% (≈2 syllables)" |
+| regular dialogue, `ratio` 1.35–1.5 | the CLI assigns `shorten` itself (at most twice, then `keep_original`). If in this game the audio is not bound to timing (asynchronous instruments, the next line waits for the sound to end) and the meaning cannot bear shortening, the qa role may give `accept` with a `note`; put the reason in the report |
+| a huge `ratio` (above 2) | almost always a model failure (repetition, looping): `regen` |
+| `ratio` < 0.7 | the dub is noticeably shorter: usually fine (the original's pauses are kept); if it looks like skipped words, check `cer`, and with a high `cer` use `regen` |
 
-Сколько срезать: слоги ≈ `budget_syll` × (1 − 1/`ratio`). Например, при бюджете 12 слогов и `ratio` 1,2 нужно убрать около 2 слогов.
+How much to cut: syllables ≈ `budget_syll` × (1 − 1/`ratio`). For example, with a budget of 12 syllables and `ratio` 1.2, remove about 2 syllables.
 
-## 6. Что сказать в отчёте
+## 6. What to say in the report
 
-- Сколько реплик сжато `post` и насколько (`stretch` в `post/post.jsonl`), сколько сокращено переводчиком, сколько осталось с оригинальным голосом из-за длины.
-- Для катсцен и видео: «проверьте в игре, что реплики не обрываются и не наезжают на следующие». Автоматически поведение запущенной игры не проверяется.
+- How many lines `post` compressed and by how much (`stretch` in `post/post.jsonl`), how many the translator shortened, how many kept the original voice because of length.
+- For cutscenes and videos: "check in the game that lines are not cut off and do not overlap the next ones". The behaviour of the running game is not checked automatically.

@@ -14,22 +14,22 @@ import gen_agents  # noqa: E402
 
 TRANSLATOR = """---
 name: babeldub-translator
-description: "Переводчик дубляжа: переводит один пакет реплик; сдаёт через babeldub batch submit."
+description: "Dub translator: translates one batch of lines — submits via babeldub batch submit."
 tools: "Bash, Read, Write"
 model: opus
 ---
 
-# Роль: translator
+# Role: translator
 
-Текст роли.
+Role text.
 """
 
 PACKER = """---
 name: packer
-description: Сборщик BabelDub
+description: BabelDub packer
 tools: [Bash, Read]
 ---
-# Роль: packer
+# Role: packer
 """
 
 
@@ -72,16 +72,17 @@ def test_generates_claude_subagents(tmp_path: Path) -> None:
     meta = _frontmatter(out / "babeldub-translator.md")
     assert meta == {
         "name": "babeldub-translator",
-        "description": "Переводчик дубляжа: переводит один пакет реплик; сдаёт через babeldub batch submit.",
+        "description": "Dub translator: translates one batch of lines — submits via babeldub batch submit.",
         "tools": "Bash, Read, Write",
         "model": "opus",
     }
     body = (out / "babeldub-translator.md").read_text(encoding="utf-8")
-    assert "скилле `babeldub-localize`" in body
-    assert "скилле `babeldub-translate`" in body
-    assert "оригинального героя" in body
-    assert body.rstrip().endswith("Текст роли.")
-    assert "# Роль: translator" in body
+    assert "`babeldub-localize` skill" in body
+    assert "`babeldub-translate` skill" in body
+    assert "original hero's voice" in body
+    assert "user's language" in body
+    assert body.rstrip().endswith("Role text.")
+    assert "# Role: translator" in body
     assert not (out / "babeldub-translator.md").read_bytes().startswith(b"\xef\xbb\xbf")
 
     packer = _frontmatter(out / "babeldub-packer.md")
@@ -98,7 +99,7 @@ def test_check_passes_after_generation_and_is_idempotent(
     assert _run(roles, out, plugin) == 0
     before = {p.name: p.read_bytes() for p in out.iterdir()}
     assert _run(roles, out, plugin) == 0
-    assert "записано 0" in capsys.readouterr().out
+    assert "written 0" in capsys.readouterr().out
     assert {p.name: p.read_bytes() for p in out.iterdir()} == before
     assert _run(roles, out, plugin, "--check") == 0
 
@@ -113,7 +114,7 @@ def test_check_detects_hand_edits_and_role_changes(
     assert _run(roles, out, plugin, "--check") == 1
     assert "babeldub-translator.md" in capsys.readouterr().err
     _run(roles, out, plugin)
-    (roles / "packer.md").write_text(PACKER.replace("Сборщик", "Упаковщик"), encoding="utf-8")
+    (roles / "packer.md").write_text(PACKER.replace("BabelDub packer", "BabelDub repacker"), encoding="utf-8")
     assert _run(roles, out, plugin, "--check") == 1
 
 

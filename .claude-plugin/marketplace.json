@@ -9,7 +9,7 @@
     {
       "name": "babeldub",
       "source": "./",
-      "description": "Localize a game end to end: extract voice-over and text, translate, re-voice each line in the original character's voice with local voice cloning, repack and install with rollback.",
+      "description": "Localize a game end to end: extract voice-over and text, translate, re-voice each line in the original character's voice with local voice cloning, check quality, repack and install with rollback.",
       "category": "localization",
       "tags": [
         "games",

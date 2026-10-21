@@ -1,53 +1,53 @@
-# Плейсхолдеры, теги и Unity Smart Strings
+# Placeholders, tags and Unity Smart Strings
 
-Читай перед первым пакетом и при ошибке `batch submit` вида «placeholders differ from src».
+Read this before the first batch and when `batch submit` fails with "placeholders differ from src".
 
-## 1. Что CLI считает плейсхолдером
+## 1. What the CLI treats as a placeholder
 
-`babeldub batch make` кладёт в каждую реплику пакета поле `placeholders` — всё, что найдено в исходном тексте. `batch submit` сверяет то же самое в `dub_text`, `sub_text` и каждом варианте из `variants`.
+`babeldub batch make` puts a `placeholders` field into every line of the batch: everything found in the source text. `batch submit` checks the same items in `dub_text`, `sub_text` and every variant in `variants`.
 
-| Вид | Примеры | Где встречается |
+| Kind | Examples | Where it occurs |
 |---|---|---|
-| фигурные скобки | `{0}`, `{name}`, `{ColorStart}`, `{b}`, `{/b}`, `{w=0.5}` | .NET-форматирование, Unity Localization, Ren'Py |
-| Smart Strings и форматтеры | `{count:plural:…}`, `{0:choose(1\|2\|3):…}` | Unity Localization |
-| printf | `%s`, `%d`, `%.2f`, `%1$s` (`%%` — просто знак процента) | C/C++, Unreal, многие движки |
-| угловые теги | `<b>`, `</b>`, `<color=#fff>`, `<br>`, `<sprite name=x>`, `<link=id>` | TextMeshPro, uGUI, HTML-подобная разметка |
-| квадратные теги без пробелов | `[b]`, `[/color]`, `[player]`, `[29]` | BBCode, переменные Ren'Py |
-| переносы строк | `\n` (два символа), настоящий перевод строки, `<br>` | везде |
+| curly braces | `{0}`, `{name}`, `{ColorStart}`, `{b}`, `{/b}`, `{w=0.5}` | .NET formatting, Unity Localization, Ren'Py |
+| Smart Strings and formatters | `{count:plural:…}`, `{0:choose(1\|2\|3):…}` | Unity Localization |
+| printf | `%s`, `%d`, `%.2f`, `%1$s` (`%%` is just a percent sign) | C/C++, Unreal, many engines |
+| angle-bracket tags | `<b>`, `</b>`, `<color=#fff>`, `<br>`, `<sprite name=x>`, `<link=id>` | TextMeshPro, uGUI, HTML-like markup |
+| square-bracket tags without spaces | `[b]`, `[/color]`, `[player]`, `[29]` | BBCode, Ren'Py variables |
+| line breaks | `\n` (two characters), a real newline, `<br>` | everywhere |
 
-Правила проверки:
+Check rules:
 
-- **Ошибка** (код 2): плейсхолдер потерян, добавлен лишний или изменён (`{name}` → `{имя}`, `%s` → `% s`, `<color=red>` → `<цвет=red>`).
-- **Предупреждение** (не блокирует): число переносов строк (`\n`, `<br>`) отличается — перевод вправе переносить строки иначе.
-- Порядок позиционных `%s` без номера менять нельзя: значения подставятся не туда. Если грамматика требует другого порядка, а в исходнике `%1$s`/`{0}`, порядок менять можно — номер сохраняет связь.
+- **Error** (exit code 2): a placeholder is lost, an extra one is added, or one is changed (`{name}` → `{имя}`, `%s` → `% s`, `<color=red>` → `<цвет=red>`).
+- **Warning** (does not block): the number of line breaks (`\n`, `<br>`) differs; a translation may break lines differently.
+- Never change the order of positional `%s` without an index: the values would land in the wrong places. If the grammar needs a different order and the source uses `%1$s`/`{0}`, you may reorder: the index keeps the link.
 
 ## 2. Smart Strings (Unity Localization)
 
-`{Var:formatter:…}` CLI сравнивает только по имени переменной и форматтеру (`{count:plural}`): формы внутри зависят от языка, их пишешь ты.
+The CLI compares `{Var:formatter:…}` only by variable name and formatter (`{count:plural}`): the forms inside depend on the language, and you write them.
 
-- **plural** для русского требует трёх форм: один / несколько / много — `{count:plural:{} яблоко|{} яблока|{} яблок}`. Как Smart Strings выбирает форму для локали, на строках конкретной игры не проверено ❓: сохраняй структуру исходника и число форм для целевого языка.
-- **choose** (`{0:choose(1|2|3):a|b|c}`): ключи выбора в скобках не переводятся, переводятся только варианты.
-- Вложенные области (`{Player.Name}`, `{0:{}}`) не трогай.
+- **plural** for Russian needs three forms (one / few / many): `{count:plural:{} яблоко|{} яблока|{} яблок}`. How Smart Strings picks the form for a locale has not been verified on a specific game's strings ❓: keep the structure of the source and the number of forms the target language needs.
+- **choose** (`{0:choose(1|2|3):a|b|c}`): do not translate the choice keys in parentheses, only the options.
+- Do not touch nested scopes (`{Player.Name}`, `{0:{}}`).
 
-## 3. `dub_text` против `sub_text`
+## 3. `dub_text` versus `sub_text`
 
-- `dub_text` — то, что произносится. **Плейсхолдеры и теги из исходника в нём сохраняются**: `batch submit` сверяет их и в `dub_text`, и в `variants`. Перед синтезом CLI сам удаляет разметку и плейсхолдеры, чтобы они не прозвучали. Поэтому разметка в `dub_text` голосу не вредит, а её потеря — ошибка проверки (код 2).
-- `sub_text` — субтитр. Пиши его, только если он должен отличаться от `dub_text`: CLI возьмёт `dub_text`, если `sub_text` нет. В v0.1 субтитры в игру не записываются.
+- `dub_text` is what gets spoken. **It keeps the placeholders and tags of the source**: `batch submit` checks them in both `dub_text` and `variants`. Before synthesis the CLI strips markup and placeholders itself so they are not spoken. So markup in `dub_text` does not harm the voice, while losing it is a validation error (exit code 2).
+- `sub_text` is the subtitle. Write it only if it must differ from `dub_text`: the CLI uses `dub_text` when there is no `sub_text`. In v0.1 subtitles are not written into the game.
 
-## 4. Частые ошибки
+## 4. Common mistakes
 
-| Ошибка | Как правильно |
+| Mistake | Correct |
 |---|---|
-| перевели имя переменной: `{name}` → `{имя}` | имя переменной не переводится никогда |
-| «исправили» регистр: `{ColorStart}` → `{colorstart}` | байт в байт |
-| теги перепутаны местами: `<b>…<i>…</b></i>` | вложенность как в исходнике |
-| добавили пробел внутрь: `% s`, `{ 0 }` | без изменений |
-| удалили «лишний» `\n` | можно перенести, но лучше сохранить: UI игры может рассчитывать на него |
-| перевели текст внутри `<link=id>` в атрибуте | переводится только видимый текст между тегами |
+| translated a variable name: `{name}` → `{имя}` | never translate variable names |
+| "fixed" the case: `{ColorStart}` → `{colorstart}` | byte for byte |
+| swapped tags: `<b>…<i>…</b></i>` | nesting as in the source |
+| added a space inside: `% s`, `{ 0 }` | unchanged |
+| deleted a "redundant" `\n` | you may move it, but better keep it: the game UI may rely on it |
+| translated text inside the `<link=id>` attribute | translate only the visible text between tags |
 
-## 5. Плейсхолдер внутри произносимой фразы
+## 5. A placeholder inside a spoken phrase
 
-Перед синтезом из `dub_text` удаляются все плейсхолдеры, поэтому прозвучит фраза без подставленного значения.
+Before synthesis all placeholders are removed from `dub_text`, so the phrase is spoken without the substituted value.
 
-- **Чистая разметка** (`<b>`, `{ColorStart}{CharacterName}:{ColorEnd}` перед репликой) — ничего делать не нужно.
-- **Значение со смыслом** (`{0}` монет, `{item}`, `{name}`). Звук записан один на всех, поэтому в оригинальной озвучке значение обычно не звучит — сверь с `src` и контекстом. Построй фразу так, чтобы без значения она звучала естественно, а плейсхолдер оставь на его месте в тексте. Плохо: «У тебя {0} монет» (прозвучит «У тебя монет»). Лучше: «Вот твои монеты: {0}» (прозвучит «Вот твои монеты:»). Если естественно не получается, отметь в `notes`: QA проверит произношение по CER, а в отчёте будет видно, какие реплики спорные.
+- **Pure markup** (`<b>`, `{ColorStart}{CharacterName}:{ColorEnd}` before a line): nothing to do.
+- **A meaningful value** (`{0}` coins, `{item}`, `{name}`). There is one recording for every value, so the original voice-over usually does not speak the value; check against `src` and the context. Build the phrase so that it sounds natural without the value, and keep the placeholder in its place in the text. Bad: «У тебя {0} монет» ("You have {0} coins"), which is spoken as «У тебя монет» ("You have coins"). Better: «Вот твои монеты: {0}» ("Here are your coins: {0}"), spoken as «Вот твои монеты:». If no natural phrasing works, mark it in `notes`: QA checks pronunciation by CER, and the report shows which lines are questionable.

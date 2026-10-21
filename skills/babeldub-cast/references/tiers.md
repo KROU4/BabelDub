@@ -1,30 +1,30 @@
-# Уровни персонажей и выбор, кого озвучивать
+# Character tiers and choosing whom to dub
 
-Читай перед вопросом 2 пользователю (персонажи) и при настройке `cast.policy`.
+Read this before question 2 to the user (characters) and when configuring `cast.policy`.
 
-## 1. Уровни (`tier`)
+## 1. Tiers (`tier`)
 
-`babeldub cast` ранжирует персонажей по суммарной длительности речи (если длительности неизвестны — по числу реплик):
+`babeldub cast` ranks characters by total speech duration (if durations are unknown, by number of lines):
 
-| Уровень | Как считается | Что это обычно |
+| Tier | How it is computed | What it usually is |
 |---|---|---|
-| `main` | минимальный набор самых «разговорчивых» персонажей, который покрывает `cast.main_share` всей речи (по умолчанию 0,7 — 70 %) | герой, напарник, главный антагонист |
-| `secondary` | следующие персонажи с долей речи не меньше 2 % | заметные NPC, продавцы, заказчики |
-| `minor` | остальные | эпизодические роли, прохожие, «барки» |
+| `main` | the smallest set of the most "talkative" characters that covers `cast.main_share` of all speech (default 0.7, i.e. 70%) | the hero, the sidekick, the main antagonist |
+| `secondary` | the next characters with a speech share of at least 2% | prominent NPCs, merchants, quest givers |
+| `minor` | everyone else | bit parts, passers-by, "barks" |
 
-Группа `unknown` (реплики без говорящего, которые не удалось сравнить по голосу) в ранжировании не участвует: это смесь голосов.
+The `unknown` group (lines without a speaker that could not be compared by voice) takes no part in ranking: it is a mix of voices.
 
-Пример: в Low-Budget Repairs по данным разбора 996 реплик привязаны к 34 персонажам; Збышек — 49,7 мин речи, Мачек — 16,0 мин, у остальных до 3 мин. При `main_share` = 0,7 главными окажутся двое-трое, и они дадут большую часть озвучки. Это только иллюстрация: у другой игры распределение будет своим.
+Example: in Low-Budget Repairs, according to the game analysis, 996 lines are tied to 34 characters; Zbyszek has 49.7 min of speech, Maciek 16.0 min, everyone else up to 3 min. With `main_share` = 0.7, two or three characters become main, and they account for most of the dub. This is only an illustration: another game will have its own distribution.
 
-## 2. Политика выбора (`cast.policy`)
+## 2. Selection policy (`cast.policy`)
 
-| Политика | Кого озвучиваем | Когда |
+| Policy | Whom we dub | When |
 |---|---|---|
-| `main` (по умолчанию) | только `main` | быстрый результат, минимум брака; остальные звучат в оригинале |
-| `all` | всех, кроме `unknown` | полная локализация; дольше синтез и больше реплик на проверку |
-| `list` | персонажей из `cast.list` | пользователь назвал конкретных героев |
+| `main` (default) | only `main` | a quick result with minimal defects; everyone else sounds in the original |
+| `all` | everyone except `unknown` | full localization; longer synthesis and more lines to review |
+| `list` | the characters in `cast.list` | the user named specific characters |
 
-Команды:
+Commands:
 
 ```text
 babeldub cast select --policy main
@@ -32,20 +32,20 @@ babeldub cast select --policy all
 babeldub cast select --chars zbyszek,maciek
 ```
 
-`--chars` принимает `char_id` или имена через запятую и переводит политику в `list`. Доля для `main` настраивается заранее: `babeldub set cast.main_share=0.8`, затем `babeldub cast` (уровни пересчитаются).
+`--chars` takes `char_id` values or names separated by commas and switches the policy to `list`. The share for `main` is set beforehand: `babeldub set cast.main_share=0.8`, then `babeldub cast` (tiers are recomputed).
 
-## 3. Как задать вопрос пользователю
+## 3. How to ask the user
 
-Вопрос задаёт оркестратор (скилл `babeldub-localize`, `references/questions-defaults.md`). Подготовь ему из листа кастинга короткую таблицу:
+The orchestrator asks the question (skill `babeldub-localize`, `references/questions-defaults.md`), in the user's language. Prepare a short table for it from the casting sheet:
 
-| Персонаж | Пол | Реплик | Минут | Уровень |
+| Character | Gender | Lines | Minutes | Tier |
 |---|---|---|---|---|
 
-и три варианта: «главные (по умолчанию, N персонажей, X % речи)», «все (M персонажей)», «список». Не пересказывай технические детали кластеров.
+and three options: "main (default, N characters, X% of speech)", "all (M characters)", "a list". Do not retell the technical details of clustering.
 
-## 4. Что учесть при выборе
+## 4. What to consider when choosing
 
-- **Смешанный дубляж.** При `main` второстепенные персонажи звучат на языке оригинала. Это нормально для фанатской локализации, но в отчёте об этом нужно сказать.
-- **Мало реплик — хуже клонирование.** У эпизодических персонажей 2–10 реплик: референс короткий или ослабленный, сходство голоса ниже. При `all` ожидай больше `keep_original` у `minor`.
-- **Один актёр — несколько персонажей.** Кластер может объединить разных персонажей одного актёра: тембр совпадёт, а имя и стиль речи — нет. Такое разделение делает разметка (`labels`), а не выбор.
-- **`unknown` никогда не озвучивается целиком.** Если в ней много речи, это повод установить `qc` и повторить `cast`, а не выбирать её.
+- **Mixed dub.** With `main`, secondary characters sound in the original language. That is normal for a fan localization, but the report must say so.
+- **Few lines mean worse cloning.** Bit-part characters have 2–10 lines: the reference is short or relaxed, and voice similarity is lower. With `all`, expect more `keep_original` among `minor` characters.
+- **One actor, several characters.** A cluster may merge different characters voiced by the same actor: the timbre matches, but the name and speech style do not. Separating them is a job for labelling (`labels`), not for selection.
+- **`unknown` is never dubbed as a whole.** If it holds a lot of speech, install `qc` and re-run `cast` instead of selecting it.

@@ -145,15 +145,16 @@ def build_agent(path: Path) -> Agent:
         "",
         f"{MARKER} from {source}. Edit the role file, not this one. -->",
         "",
-        "> Ты работаешь внутри конвейера BabelDub. Процедура, порядок стадий, коды выхода и общие правила — "
-        "в скилле `babeldub-localize` (`skills/babeldub-localize/SKILL.md`, команды — "
+        "> You work inside the BabelDub pipeline. The procedure, stage order, exit codes and shared rules "
+        "are in the `babeldub-localize` skill (`skills/babeldub-localize/SKILL.md`; commands are in "
         "`skills/babeldub-localize/references/pipeline.md`).",
     ]
     if stage_skill:
-        reminder.append(f"> Подробные правила твоей стадии — в скилле `{stage_skill}`.")
+        reminder.append(f"> The detailed rules for your stage are in the `{stage_skill}` skill.")
     reminder += [
-        "> Главный принцип: дубляж голосом оригинального героя — тот же тембр, та же эмоция и подача, "
-        "только на целевом языке.",
+        "> Core principle: dub in the original hero's voice, with the same timbre, emotion and delivery, "
+        "only in the target language.",
+        "> Talk to the user in the user's language.",
         "",
     ]
     text = "\n".join(lines + reminder) + "\n" + body.strip("\r\n").replace("\r\n", "\n") + "\n"
@@ -230,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
         "--plugin-json", type=Path, default=PLUGIN_JSON, help="manifest that lists the agents"
     )
     args = parser.parse_args(argv)
-    for stream in (sys.stdout, sys.stderr):  # Cyrillic messages must not crash cp1252 CI consoles
+    for stream in (sys.stdout, sys.stderr):  # non-ASCII role text must not crash cp1252 CI consoles
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
         except (AttributeError, ValueError, OSError):
@@ -239,23 +240,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         agents = collect(args.roles)
     except (RoleError, OSError, UnicodeDecodeError) as exc:
-        print(f"gen_agents: ошибка роли: {exc}", file=sys.stderr)
+        print(f"gen_agents: role error: {exc}", file=sys.stderr)
         return 2
     changed, stale = plan(agents, args.out)
     manifest_problem = plugin_agents_problem(agents, args.out, args.plugin_json)
 
     if args.check:
-        problems = [f"устарел или отсутствует: {_rel(args.out / a.filename)}" for a in changed]
-        problems += [f"лишний сгенерированный файл: {_rel(p)}" for p in stale]
+        problems = [f"outdated or missing: {_rel(args.out / a.filename)}" for a in changed]
+        problems += [f"stale generated file: {_rel(p)}" for p in stale]
         if manifest_problem:
             problems.append(manifest_problem)
         if problems:
-            print("gen_agents --check: агенты расходятся с ролями", file=sys.stderr)
+            print("gen_agents --check: agents differ from the roles", file=sys.stderr)
             for line in problems:
                 print(f"  - {line}", file=sys.stderr)
-            print("Исправление: python scripts/gen_agents.py", file=sys.stderr)
+            print("Fix: python scripts/gen_agents.py", file=sys.stderr)
             return 1
-        print(f"gen_agents --check: {len(agents)} агентов совпадают с ролями")
+        print(f"gen_agents --check: all {len(agents)} agents match their roles")
         return 0
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -263,9 +264,9 @@ def main(argv: list[str] | None = None) -> int:
         (args.out / agent.filename).write_bytes(agent.text.encode("utf-8"))
     for path in stale:
         path.unlink()
-    print(f"gen_agents: ролей {len(agents)}, записано {len(changed)}, удалено устаревших {len(stale)}")
+    print(f"gen_agents: roles {len(agents)}, written {len(changed)}, stale removed {len(stale)}")
     if manifest_problem:
-        print(f"gen_agents: внимание — {manifest_problem}", file=sys.stderr)
+        print(f"gen_agents: warning: {manifest_problem}", file=sys.stderr)
     return 0
 
 

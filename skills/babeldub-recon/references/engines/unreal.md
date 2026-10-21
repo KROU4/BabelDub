@@ -1,63 +1,63 @@
 # Unreal Engine 4/5
 
-Читай, если в папке игры есть `<Game>/Content/Paks/*.pak` (и, возможно, `.utoc`/`.ucas`) и `<Game>-Win64-Shipping.exe`.
+Read this if the game folder has `<Game>/Content/Paks/*.pak` (possibly with `.utoc`/`.ucas`) and `<Game>-Win64-Shipping.exe`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-| Что | Уровень | Комментарий |
+| What | Level | Comment |
 |---|---|---|
-| голос в банках FMOD внутри UE (`Content/FMOD/Desktop/*.bank`) | см. `audio/fmod.md` | формат банка от движка не зависит; на играх не-Unity не проверялось |
-| голос в Wwise | см. `audio/wwise.md` | |
-| тексты `.locres` | C в v0.1 (план — B, v0.3) | см. `text/unreal-locres.md` |
-| SoundWave (родной звук UE) | C | нужен cook в UE Editor той же версии |
+| voice in FMOD banks inside UE (`Content/FMOD/Desktop/*.bank`) | see `audio/fmod.md` | the bank format does not depend on the engine; not tested on non-Unity games |
+| voice in Wwise | see `audio/wwise.md` | |
+| `.locres` texts | C in v0.1 (planned B, v0.3) | see `text/unreal-locres.md` |
+| SoundWave (native UE audio) | C | needs a cook in the UE Editor of the same version |
 
-## Как опознать
+## How to identify
 
-- `Content/Paks/*.pak` — паки (версии v1–v11).
-- `.utoc` + `.ucas` рядом с «пустым» `.pak` — **IoStore** (UE5 и поздний UE4).
-- Шифрование AES-256 (ключ в exe), подписи `.sig`.
-- `Content/FMOD/Desktop/*.bank` — FMOD; `.bnk`/`.wem` или uasset-медиа — Wwise.
+- `Content/Paks/*.pak`: paks (versions v1–v11).
+- `.utoc` + `.ucas` next to an "empty" `.pak`: **IoStore** (UE5 and late UE4).
+- AES-256 encryption (the key is in the exe), `.sig` signatures.
+- `Content/FMOD/Desktop/*.bank`: FMOD; `.bnk`/`.wem` or uasset media: Wwise.
 
-## Где голос
+## Where the voice is
 
-- `SoundWave` (`.uasset/.uexp`, данные в `.ubulk` или внутри; форматы OGG, ADPCM, Opus, Bink Audio в UE5 — детали по версиям не проверены).
+- `SoundWave` (`.uasset/.uexp`, data in `.ubulk` or inline; formats OGG, ADPCM, Opus, Bink Audio in UE5; per-version details not verified).
 - `DialogueWave` + `DialogueVoice`.
-- Локализованные ассеты в `Content/L10N/<culture>/...` — родной механизм голоса по культурам (по гайдам сообщества).
-- Часто middleware: Wwise или FMOD.
+- Localized assets in `Content/L10N/<culture>/...`: the native per-culture voice mechanism (per community guides).
+- Often middleware: Wwise or FMOD.
 
-## Где текст
+## Where the text is
 
-`Content/Localization/<Target>/<culture>/<Target>.locres` (+ `.locmeta`); ключи — namespace + key + hash. Строки субтитров могут лежать и в `SoundWave.Subtitles`. Подробно — `text/unreal-locres.md`.
+`Content/Localization/<Target>/<culture>/<Target>.locres` (+ `.locmeta`); keys are namespace + key + hash. Subtitle strings may also sit in `SoundWave.Subtitles`. Details: `text/unreal-locres.md`.
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение | Состояние на 2026-10 |
+| Tool | Purpose | Status as of 2026-10 |
 |---|---|---|
-| FModel / CUE4Parse | просмотр и экспорт (`.locres` → JSON, звук), работа с AES-ключами | активны |
-| repak | `.pak` unpack/pack/list, AES; mount point по умолчанию `../../../`; чтение и запись версий 2–5, 7, 8A/8B, 9, 11 (UE 4.0–5.3), версии 1, 6, 10 не проверены авторами | v0.2.3, Apache-2.0 |
-| retoc | IoStore: `unpack`, `unpack-raw`, `pack-raw`, `list`, `verify`; сборка мода — `to-zen` (legacy → IoStore), обратно — `to-legacy`; отдельной команды `pack` нет | v0.1.5, MIT |
-| UnrealLocres, UnrealLocresEditor, LocRes-Builder, UEExtractor | `.locres` ↔ CSV, редактор, извлечение текста | активны (UE4LocalizationsTool архивирован) |
-| RE-UE4SS | рантайм: Lua/C++ моды, хуки функций | v3.0.1 + experimental |
+| FModel / CUE4Parse | viewing and export (`.locres` → JSON, audio), AES key handling | active |
+| repak | `.pak` unpack/pack/list, AES; default mount point `../../../`; reads and writes versions 2–5, 7, 8A/8B, 9, 11 (UE 4.0–5.3); versions 1, 6, 10 not verified by the authors | v0.2.3, Apache-2.0 |
+| retoc | IoStore: `unpack`, `unpack-raw`, `pack-raw`, `list`, `verify`; mod build with `to-zen` (legacy → IoStore), back with `to-legacy`; there is no separate `pack` command | v0.1.5, MIT |
+| UnrealLocres, UnrealLocresEditor, LocRes-Builder, UEExtractor | `.locres` ↔ CSV, editor, text extraction | active (UE4LocalizationsTool is archived) |
+| RE-UE4SS | runtime: Lua/C++ mods, function hooks | v3.0.1 + experimental |
 
-## Нативный путь пересборки
+## Native rebuild path
 
-- **Пак мода:** папка `ModName_P/<Game>/Content/...` → `repak pack` → файл `ModName_P.pak` в `Content/Paks/` или `~mods/`. **Суффикс `_P` обязателен.** Для UE ≤ 4.27 с `.sig` копируют любой `.sig` под именем мода (по гайдам сообщества).
-- **IoStore-игры:** мод тоже в IoStore (`.pak` + `.utoc` + `.ucas`); сборка `retoc to-zen` или UnrealReZen (по гайдам сообщества).
-- **Звук:** cook SoundWave в UE Editor **той же версии** (редактор бесплатен) с тем же путём пакета. Звук через Wwise или FMOD собирается по справочникам middleware.
-- **Текст:** заменить `.locres` существующей культуры в `_P`-паке. Новая культура должна быть разрешена игрой.
+- **Mod pak:** folder `ModName_P/<Game>/Content/...` → `repak pack` → file `ModName_P.pak` in `Content/Paks/` or `~mods/`. **The `_P` suffix is mandatory.** For UE ≤ 4.27 with `.sig`, modders copy any `.sig` under the mod's name (per community guides).
+- **IoStore games:** the mod is also IoStore (`.pak` + `.utoc` + `.ucas`); build it with `retoc to-zen` or UnrealReZen (per community guides).
+- **Audio:** cook the SoundWave in the UE Editor of **the same version** (the editor is free) with the same package path. Audio through Wwise or FMOD is rebuilt per the middleware references.
+- **Text:** replace the `.locres` of an existing culture in the `_P` pak. A new culture must be allowed by the game.
 
-## Подводные камни
+## Pitfalls
 
-- AES-шифрование паков (ключ извлекают из exe), подписи `.sig`.
-- EasyAntiCheat во многих UE-играх → по умолчанию не модифицировать.
-- FaceFX и кривые липсинка, тайминги субтитров в SoundWave.
-- Совпадение версии cook с игрой.
+- AES encryption of paks (the key is extracted from the exe), `.sig` signatures.
+- EasyAntiCheat in many UE games → do not modify by default.
+- FaceFX and lip-sync curves, subtitle timings in SoundWave.
+- The cook version must match the game.
 
-## Ссылки
+## Links
 
 - FModel — https://github.com/4sval/FModel ; CUE4Parse — https://github.com/FabianFG/CUE4Parse
 - repak — https://github.com/trumank/repak ; retoc — https://github.com/trumank/retoc
 - UnrealLocres — https://github.com/akintos/UnrealLocres ; UnrealLocresEditor — https://github.com/Snoozeds/UnrealLocresEditor ; LocRes-Builder — https://github.com/matyalatte/LocRes-Builder ; UEExtractor — https://github.com/SolicenTEAM/UEExtractor
 - RE-UE4SS — https://github.com/UE4SS-RE/RE-UE4SS
-- Гайды Dmgvol (`BasicModding/UnrealPak.md`, `BasicModding/IoStorePacking.md`) — https://github.com/Dmgvol/UE_Modding
-- Форум Epic: Loading Content and Pak Files at Runtime — https://forums.unrealengine.com/t/knowledge-base-primer-loading-content-and-pak-files-at-runtime/536669
+- Dmgvol guides (`BasicModding/UnrealPak.md`, `BasicModding/IoStorePacking.md`) — https://github.com/Dmgvol/UE_Modding
+- Epic forum: Loading Content and Pak Files at Runtime — https://forums.unrealengine.com/t/knowledge-base-primer-loading-content-and-pak-files-at-runtime/536669

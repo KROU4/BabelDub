@@ -233,23 +233,24 @@ def release_notes(version: str, changes: str) -> str:
 
 {changes}
 
-## Файлы релиза
+## Release files
 
-| Файл | Для чего |
+| File | What it is for |
 |---|---|
-| `babeldub-plugin-{version}.zip` | Весь плагин в одной папке `babeldub/`. claude.ai и Claude Desktop: Customize → Plugins → Upload plugin. Claude Code без маркетплейса: `claude --plugin-dir babeldub-plugin-{version}.zip`. Для Codex и Gemini CLI — распаковать и поставить из папки |
-| `babeldub-skills-{version}.zip` | Только скиллы. В `skills/` — папки для копирования в `~/.agents/skills`, `~/.claude/skills` и т. п. В `claude-ai/` — **по одному zip на скилл**: claude.ai, Claude Desktop и Skills API принимают ровно один скилл за загрузку (`<имя>/SKILL.md` внутри архива). Начните с `babeldub-localize.zip` |
-| `babeldub-kit-{version}.zip` | Готовая рабочая папка `BabelDub-Workspace/`: распакуйте **рядом** с игрой (не внутрь) и откройте в ней любого агента. Внутри `AGENTS.md`, скиллы для всех хостов, исходники CLI и `README-KIT.md` |
-| `SHA256SUMS` | Контрольные суммы архивов: `sha256sum -c SHA256SUMS` |
+| `babeldub-plugin-{version}.zip` | The whole plugin in one `babeldub/` folder. claude.ai and Claude Desktop: Customize → Plugins → Upload plugin. Claude Code without the marketplace: `claude --plugin-dir babeldub-plugin-{version}.zip`. Codex and Gemini CLI: unpack and install from the folder |
+| `babeldub-skills-{version}.zip` | Skills only. `skills/` holds folders to copy into `~/.agents/skills`, `~/.claude/skills` and similar. `claude-ai/` holds **one zip per skill**: claude.ai, Claude Desktop and the Skills API accept exactly one skill per upload (`<name>/SKILL.md` inside the archive). Start with `babeldub-localize.zip` |
+| `babeldub-kit-{version}.zip` | A ready `BabelDub-Workspace/` folder: unpack it **next to** the game (not inside it) and open any agent in it. Contains `AGENTS.md`, skills for every host, the CLI source and `README-KIT.md` |
+| `SHA256SUMS` | Archive checksums: `sha256sum -c SHA256SUMS` |
 
-Модели и окружения в архивы не входят: при первом запуске `babeldub setup` скачивает их в `BABELDUB_HOME` с показом лицензий.
+Models and environments are not in the archives: on first run `babeldub setup` downloads them into `BABELDUB_HOME` (default `~/.babeldub`) and shows their licenses. When an NVIDIA GPU is present, all neural compute runs on it.
 
-## Установка
+## Install
 
-- Claude Code: `/plugin marketplace add KROU4/BabelDub`, затем `/plugin install babeldub@babeldub`
-- Codex CLI: `codex plugin marketplace add KROU4/BabelDub --ref v{version}`, затем `codex plugin add babeldub@babeldub`
+- Claude Code: `/plugin marketplace add KROU4/BabelDub`, then `/plugin install babeldub@babeldub`
+- Codex CLI: `codex plugin marketplace add KROU4/BabelDub --ref v{version}`, then `codex plugin add babeldub@babeldub`
 - Gemini CLI: `gemini extensions install https://github.com/KROU4/BabelDub --ref v{version}`
-- Остальные хосты и веб-чаты: [docs/HOSTS.md](https://github.com/KROU4/BabelDub/blob/v{version}/docs/HOSTS.md)
+- Other hosts and web chats: [docs/HOSTS.md](https://github.com/KROU4/BabelDub/blob/v{version}/docs/HOSTS.md)
+- Supported engines: [docs/ENGINES.md](https://github.com/KROU4/BabelDub/blob/v{version}/docs/ENGINES.md); models and hardware: [docs/MODELS.md](https://github.com/KROU4/BabelDub/blob/v{version}/docs/MODELS.md)
 """
 
 
@@ -259,12 +260,13 @@ This folder is a BabelDub workspace: AI localization and dubbing of a video game
 its original characters**. It is meant to sit next to the game folder (not inside it), for example
 `D:\\Games\\MyGame` and `D:\\Games\\BabelDub-Workspace`.
 
-Reply to the user in their language.
+Always talk to the user in the user's language.
 
 ## What to do
 
-When the user asks to translate, localize, dub or re-voice a game (or to roll a localization back),
-use the `babeldub-localize` skill and follow it step by step. Stage skills: {skills}.
+When the user asks to translate, localize, dub or re-voice a game, or to roll a localization back
+(for example "localize this game", "dub the voices", "переведи игру", "сделай русскую озвучку",
+"doblar el juego"), use the `babeldub-localize` skill and follow it step by step. Stage skills: {skills}.
 Skills live in `.agents/skills/` (Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode) and
 `.claude/skills/` (Claude Code); both copies are identical.
 
@@ -293,7 +295,10 @@ bootstrap script so it installs from this folder instead of GitHub.
 Every command prints exactly one JSON object. Exit codes: 0 done, 1 error, 2 bad arguments or a
 missing previous stage, 3 done but needs a decision, 4 environment missing (`babeldub doctor`, then
 `babeldub setup`). Environments, model weights and projects live in `BABELDUB_HOME` (default
-`%LOCALAPPDATA%\\BabelDub` on Windows, `~/.local/share/babeldub` on Linux), never in this folder.
+`~/.babeldub`, which is `C:\\Users\\<user>\\.babeldub` on Windows), never in this folder.
+
+GPU-first: when an NVIDIA GPU is present, all neural compute (TTS, ASR, speaker embeddings) runs on
+it (`compute.device=auto`).
 
 ## Safety rules
 
@@ -311,61 +316,62 @@ missing previous stage, 3 done but needs a decision, 4 environment missing (`bab
   `babeldub-localize/references/roles/*.md`.
 """
 
-KIT_README = """# BabelDub: рабочая папка (kit) {version}
+KIT_README = """# BabelDub workspace (kit) {version}
 
-BabelDub переводит и переозвучивает игры **голосами оригинальных героев**: тот же тембр, те же
-эмоции и подача, только на вашем языке. Эта папка — готовое рабочее место для любого ИИ-агента
-(Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode).
+BabelDub translates and re-voices games **in the voices of their original characters**: the same
+timbre, emotion and delivery, only in your language. This folder is a ready workspace for any AI
+agent (Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode).
 
-## Что внутри
+## What is inside
 
-| Путь | Назначение |
+| Path | Purpose |
 |---|---|
-| `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | инструкции для агента (одно и то же содержание для разных хостов) |
-| `.agents/skills/` | скиллы для Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode |
-| `.claude/skills/`, `.claude/agents/` | скиллы и субагенты для Claude Code |
-| `runtime/` | исходники CLI `babeldub` |
-| `install.ps1`, `install.sh` | установка CLI из `runtime/` и проверка окружения |
-| `LEGAL.md`, `THIRD_PARTY_NOTICES.md`, `LICENSE` | правила использования и лицензии |
+| `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` | instructions for the agent (the same content for different hosts) |
+| `.agents/skills/` | skills for Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode |
+| `.claude/skills/`, `.claude/agents/` | skills and subagents for Claude Code |
+| `runtime/` | source of the `babeldub` CLI |
+| `install.ps1`, `install.sh` | install the CLI from `runtime/` and check the environment |
+| `LEGAL.md`, `THIRD_PARTY_NOTICES.md`, `LICENSE` | terms of use and licenses |
 
-## Как начать
+## Getting started
 
-1. Распакуйте архив **рядом** с папкой игры, а не внутрь неё. Например: `D:\\Games\\MyGame` и
-   `D:\\Games\\BabelDub-Workspace`. Так файлы игры не засоряются, а проверка целостности в Steam их
-   не трогает.
-2. Поставьте [uv](https://docs.astral.sh/uv/), если его ещё нет:
+1. Unpack the archive **next to** the game folder, not inside it. For example: `D:\\Games\\MyGame` and
+   `D:\\Games\\BabelDub-Workspace`. This keeps the game files clean, and the Steam integrity check
+   does not touch the workspace.
+2. Install [uv](https://docs.astral.sh/uv/) if you do not have it yet:
    - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
    - Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-3. Установите CLI из этой папки:
+3. Install the CLI from this folder:
    - Windows: `powershell -ExecutionPolicy Bypass -File .\\install.ps1`
    - Linux: `bash ./install.sh`
 
-   Скрипт ставит `babeldub` через `uv tool install` и запускает `babeldub doctor`. Код 4 у doctor
-   означает, что окружение ещё не готово: агент сам предложит `babeldub setup` (скачает движки и
-   модели, покажет их лицензии).
-4. Откройте агента в этой папке (`claude`, `codex`, `gemini`, `agy`, Cursor, VS Code с Copilot) и
-   напишите, например: «Переозвучь игру из ..\\MyGame на русский». Агент задаст два вопроса (язык и
-   каких персонажей озвучивать) и дальше будет работать сам.
+   The script installs `babeldub` with `uv tool install` and runs `babeldub doctor`. Exit code 4
+   from doctor means the environment is not ready yet: the agent will offer `babeldub setup` itself
+   (it downloads the engines and models and shows their licenses).
+4. Open your agent in this folder (`claude`, `codex`, `gemini`, `agy`, Cursor, VS Code with Copilot)
+   and ask in any language, for example: "Dub the game in ..\\MyGame into Russian" or
+   "Переозвучь игру из ..\\MyGame на русский". The agent asks two questions (the language and which
+   characters to re-voice) and then works on its own.
 
-## Что нужно знать
+## Good to know
 
-- Для озвучки нужна видеокарта NVIDIA с 8+ ГБ видеопамяти. На CPU работает, но очень медленно.
-- Модели, окружения и проекты весят десятки гигабайт и лежат в `BABELDUB_HOME`
-  (по умолчанию `%LOCALAPPDATA%\\BabelDub` в Windows и `~/.local/share/babeldub` в Linux).
-  Чтобы перенести их на другой диск, задайте переменную окружения `BABELDUB_HOME`.
-- Файлы игры меняются только командой установки, с резервной копией. Откат: попросите агента
-  «откати локализацию» или выполните `babeldub uninstall`.
-- Cursor, Copilot и OpenCode читают и `.agents/skills`, и `.claude/skills`, поэтому скиллы могут
-  показаться дважды. Это одни и те же файлы, на работу это не влияет.
-- В Claude Code субагенты из `.claude/agents/` и скиллы из `.claude/skills/` подхватываются после
-  того, как вы доверите папку. Если удобнее плагин, поставьте его из маркетплейса
-  `KROU4/BabelDub` (см. https://github.com/KROU4/BabelDub/blob/main/docs/HOSTS.md).
+- The voice work needs an NVIDIA GPU with 8+ GB of VRAM. When a GPU is present, all neural compute
+  runs on it; the CPU works, but very slowly.
+- Models, environments and projects take tens of gigabytes and live in `BABELDUB_HOME`
+  (default `~/.babeldub`, which is `C:\\Users\\<user>\\.babeldub` on Windows).
+  To move them to another drive, set the `BABELDUB_HOME` environment variable.
+- Game files change only through the install command, with a backup. Rollback: ask the agent to
+  "roll back the localization" or run `babeldub uninstall`.
+- Cursor, Copilot and OpenCode read both `.agents/skills` and `.claude/skills`, so the skills may
+  appear twice. They are the same files; this does not affect the work.
+- Claude Code picks up the subagents from `.claude/agents/` and the skills from `.claude/skills/`
+  after you trust the folder. If you prefer the plugin, install it from the `KROU4/BabelDub`
+  marketplace (see https://github.com/KROU4/BabelDub/blob/main/docs/HOSTS.md).
 
-## Ответственное использование
+## Responsible use
 
-Используйте BabelDub только с легально купленными играми и только для личного использования или
-некоммерческих фан-переводов. Не распространяйте файлы игры и синтезированные голоса актёров.
-Подробности в `LEGAL.md`.
+Use BabelDub only with legally purchased games and only for personal use or non-commercial fan
+translations. Do not distribute game files or synthesized actor voices. Details in `LEGAL.md`.
 """
 
 
@@ -380,18 +386,18 @@ def build_skills_entries(root: Path, files: list[str], skills: list[str], versio
         # one skill per zip, the skill folder at the zip root: `<name>/SKILL.md`
         single = file_entries(root, under(files, f"skills/{name}"), "skills/", "")
         entries.append(Entry(arcname=f"{top}claude-ai/{name}.zip", data=zip_bytes(single, epoch, f"{name}.zip")))
-    readme = f"""# Скиллы BabelDub {version}
+    readme = f"""# BabelDub skills {version}
 
-- `skills/<имя>/` — папки скиллов по стандарту Agent Skills. Скопируйте их в каталог скиллов вашего
-  агента: `~/.agents/skills/` (Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode),
-  `~/.claude/skills/` (Claude Code), `.github/skills/` (Copilot в репозитории).
-- `claude-ai/<имя>.zip` — по одному архиву на скилл для загрузки в claude.ai и Claude Desktop
-  (Customize → Skills) или в Skills API. Каждый архив содержит папку `<имя>/` с `SKILL.md`.
-  Начните с `babeldub-localize.zip`, затем загрузите остальные.
+- `skills/<name>/`: skill folders following the Agent Skills standard. Copy them into your agent's
+  skills folder: `~/.agents/skills/` (Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode),
+  `~/.claude/skills/` (Claude Code), `.github/skills/` (Copilot in a repository).
+- `claude-ai/<name>.zip`: one archive per skill to upload to claude.ai and Claude Desktop
+  (Customize → Skills) or to the Skills API. Each archive contains a `<name>/` folder with `SKILL.md`.
+  Start with `babeldub-localize.zip`, then upload the rest.
 
-В веб-чатах нет доступа к папке игры и к видеокарте, поэтому там доступен только перевод
-выгруженных пакетов реплик. Полный конвейер (извлечение, клонирование голосов, сборка) работает
-только у локального агента. Подробнее: https://github.com/KROU4/BabelDub/blob/v{version}/docs/HOSTS.md
+Web chats have no access to the game folder or to a GPU, so only translation of exported line
+batches is available there. The full pipeline (extraction, voice cloning, build) works only with a
+local agent. More: https://github.com/KROU4/BabelDub/blob/v{version}/docs/HOSTS.md
 """
     entries.append(Entry(arcname=f"{top}README.md", data=readme.encode("utf-8")))
     return entries

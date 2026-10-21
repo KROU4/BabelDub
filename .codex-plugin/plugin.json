@@ -1,7 +1,7 @@
 {
   "name": "babeldub",
   "version": "0.1.0",
-  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local voice-cloning TTS, repack into native engine formats.",
+  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local GPU voice-cloning TTS, repack into native engine formats with backup and rollback.",
   "author": {
     "name": "KROU4",
     "url": "https://github.com/KROU4"
@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "BabelDub",
     "shortDescription": "Dub games into your language in the original characters' voices",
-    "longDescription": "BabelDub localizes a game from its folder: it finds voice-over and text tables, translates them and re-voices every line with local voice-cloning models so each character keeps the same timbre, emotion and delivery in the new language. The result is repacked into the engine's native formats and installed with a backup and one-command rollback. Voice work needs a local NVIDIA GPU; in cloud chats only text translation is available.",
+    "longDescription": "BabelDub localizes a game from its folder: it finds voice-over and text tables, translates them and re-voices every line with local voice-cloning models so each character keeps the same timbre, emotion and delivery in the new language. Quality control checks every line (speech recognition, voice similarity to the original, duration). The result is repacked into the engine's native formats and installed with a backup and one-command rollback. Voice work runs on a local NVIDIA GPU (the CPU works, but slowly); in cloud chats only text translation is available.",
     "developerName": "KROU4",
     "category": "Productivity",
     "capabilities": [

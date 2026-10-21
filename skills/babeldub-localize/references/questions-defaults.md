@@ -1,126 +1,129 @@
-# Два вопроса, умолчания и итоговый отчёт
+# The two questions, defaults and the final report
 
-Читай этот файл перед первым вопросом пользователю, при выборе любого умолчания и перед итоговым отчётом.
+Read this file before the first question to the user, when choosing any default and before the final report.
 
-## 1. Правило двух вопросов
+## 1. The two-question rule
 
-Пользователю задаются ровно два вопроса: **язык** и **персонажи**. Всё остальное решается по умолчаниям из этого файла и записывается в отчёт.
+The user is asked exactly two questions: **language** and **characters**. Everything else is decided by the defaults in this file and recorded in the report.
 
-- Вопрос задаёт только главная сессия. Роли (субагенты) к человеку не обращаются: неоднозначное они возвращают в `human_pending`.
-- Если ответ уже есть в запросе пользователя («переведи на русский, только главных героев»), вопрос не задаётся.
-- Если хост не умеет задавать вопросы (фоновый запуск, CI, нет интерактива), берутся умолчания.
-- Ответ «не знаю» или «как лучше» означает умолчание.
-- Вопросы с вариантами задавай инструментом выбора, если он есть у хоста, иначе обычным сообщением с вариантами.
+- Ask in the user's language (the language of their messages). The wording below is a template: translate it, keep its meaning. Write the final report in the user's language too.
+- Only the main session asks. Roles (subagents) never address the human: they return anything ambiguous in `human_pending`.
+- If the user's request already contains the answer ("dub it into Russian, main characters only"), do not ask.
+- If the host cannot ask questions (background run, CI, no interactivity), take the defaults.
+- "I don't know" or "whatever is best" means the default.
+- Ask questions with options through the host's choice tool if it has one; otherwise as a plain message listing the options.
 
-Ворота «прослушать пилот» и «ставить ли в игру» по умолчанию не блокируют работу: пилот проверяется метриками, установка идёт с бэкапом, откат одной командой.
+The "listen to the pilot" and "install into the game?" gates do not block work by default: the pilot is checked by metrics, installation goes with a backup, rollback is one command.
 
-## 2. Вопрос 1: целевой язык
+## 2. Question 1: target language
 
-**Когда:** в самом начале, до `babeldub init`.
+**When:** at the very start, before `babeldub init`.
 
-**Формулировка:**
+**Wording (template):**
 
-> На какой язык озвучиваем игру? Голоса героев сохраню: тембр, эмоции и подача будут как в оригинале, только на новом языке.
+> Which language should the game be dubbed into? I will keep the characters' voices: timbre, emotion and delivery stay as in the original, only the language changes.
 
-**Варианты:** русский (по умолчанию); другой — пользователь вводит название или код.
+**Options:** the user's language (default); another — the user types a name or a code.
 
-**Как применить:** `babeldub init "<папка игры>" --lang <код>`. Код двухбуквенный: `ru`, `en`, `de`, `fr`, `es`, `it`, `pt`, `ja`, `ko`, `zh` …
+**How to apply:** `babeldub init "<game folder>" --lang <code>`. The code is two letters: `ru`, `en`, `de`, `fr`, `es`, `it`, `pt`, `ja`, `ko`, `zh` …
 
-**Умолчание без ответа:** язык из запроса пользователя; если его нет — `ru`.
+**Default without an answer:** the language named in the user's request; otherwise the language the user writes in; if neither is known, `ru`.
 
-Если движок по умолчанию не поддерживает язык (у Qwen3-TTS 10 языков: zh, en, ja, ko, de, fr, ru, pt, es, it), проверь `babeldub models list`. Подходящей модели с разрешительной лицензией нет — честно скажи об этом. Модель с некоммерческой лицензией (NC) предлагай только с показом лицензии; включай её только после явного «да».
+If the default engine does not support the language (Qwen3-TTS has 10 languages: zh, en, ja, ko, de, fr, ru, pt, es, it), check `babeldub models list`. If there is no suitable model with a permissive license, say so honestly. Offer a model with a non-commercial (NC) license only together with its license text; enable it only after an explicit "yes".
 
-## 3. Вопрос 2: персонажи
+## 3. Question 2: characters
 
-**Когда:** после `babeldub cast` (и разметки caster, если она была), до перевода.
+**When:** after `babeldub cast` (and the caster's labeling, if there was any), before translation.
 
-**Что показать:** короткую таблицу из `cast/casting_sheet.md`: имя, пол, число реплик, минут речи, уровень (`main`/`secondary`/`minor`). Не больше 15 строк; остальных персонажей сверни в строку «и ещё N второстепенных, всего M минут».
+**What to show:** a short table from `cast/casting_sheet.md`: name, gender, number of lines, minutes of speech, tier (`main`/`secondary`/`minor`). At most 15 rows; fold the remaining characters into one row: "and N more secondary characters, M minutes in total".
 
-**Формулировка:**
+**Wording (template):**
 
-> Кого озвучиваем? Главные персонажи дают ~70 % всей речи. Остальные останутся с оригинальными голосами.
+> Whom should I dub? The main characters carry ~70 % of all speech. Everyone else keeps their original voice.
 
-**Варианты:**
+**Options:**
 
-| Ответ | Команда |
+| Answer | Command |
 |---|---|
-| главные (по умолчанию) | `babeldub cast select --policy main` |
-| все | `babeldub cast select --policy all` |
-| список (имена или номера из таблицы) | `babeldub cast select --chars A,B,C` |
+| main characters (default) | `babeldub cast select --policy main` |
+| all | `babeldub cast select --policy all` |
+| a list (names or numbers from the table) | `babeldub cast select --chars A,B,C` |
 
-**Умолчание без ответа:** главные. Это минимальный набор персонажей, покрывающий `cast.main_share` = 0,7 всей речи.
+**Default without an answer:** main characters. This is the smallest set of characters that covers `cast.main_share` = 0.7 of all speech.
 
-## 4. Умолчания (без вопросов)
+## 4. Defaults (no questions)
 
-Значения из `project.json`, которые создаёт `babeldub init`. Меняй их через `babeldub set <section.key>=<value>` только с причиной и записывай причину в отчёт.
+Values from `project.json`, created by `babeldub init`. Change them with `babeldub set <section.key>=<value>` only with a reason, and record the reason in the report.
 
-| Настройка | Умолчание | Смысл |
+| Setting | Default | Meaning |
 |---|---|---|
-| `translation.mode` | `auto` | `official`, если официальный перевод на целевой язык есть у ≥ 95 % связанных озвучиваемых реплик; иначе `translate`; CLI решает в `translate plan` |
-| `cast.policy` | `main` | главные персонажи (`cast.main_share` = 0,7) |
-| `tts.engine` | `qwen3tts` | Qwen3-TTS, лицензия Apache-2.0 |
-| `tts.model` | `null` | модель выбирается по тиру из `babeldub doctor` |
-| `tts.ref_strategy` | `auto` | `line` (оригинал строки с её текстом) при длительности ≥ `tts.line_ref_min_s` и наличии текста, иначе `char` (лучший референс персонажа) |
-| `tts.line_ref_min_s` | 1,6 | минимальная длительность оригинала для `line` |
-| `tts.best_of` | 1 | кандидатов на реплику (в CLI v0.1 не используется: повторы делает цикл QA) |
-| `tts.max_attempts` | 3 | попыток до `keep_original` |
-| `post.max_stretch` | 0,12 | предел растяжения или сжатия по времени |
-| `post.fixed_length_tolerance` | 0,03 | допуск для реплик с фиксированной длиной (катсцены) |
-| `post.true_peak_db` | −1,0 | потолок пика |
-| `qa.max_cer` | 0,15 | максимальная доля ошибок распознавания синтеза |
-| `qa.min_sim_ratio` | 0,75 | минимальное сходство голоса синтеза с оригиналом персонажа относительно его базовой линии |
-| `qa.max_duration_ratio` | 1,35 | максимальное отношение длительности дубля к оригиналу |
-| `build.codec` | `auto` | кодек сборки выбирает адаптер |
-| `install.backup` | `true` | установка только с бэкапом |
+| `compute.device` | `auto` | GPU-first: every neural workload runs on the NVIDIA GPU when present; `cuda` requires a GPU; `cpu` only on the user's explicit request |
+| `translation.mode` | `auto` | `official` if an official translation into the target language exists for ≥ 95 % of the linked voiced lines; otherwise `translate`; the CLI decides in `translate plan` |
+| `cast.policy` | `main` | main characters (`cast.main_share` = 0.7) |
+| `tts.engine` | `qwen3tts` | Qwen3-TTS, Apache-2.0 license |
+| `tts.model` | `null` | the model is picked by the tier from `babeldub doctor` |
+| `tts.ref_strategy` | `auto` | `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` (the character's best reference) |
+| `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |
+| `tts.best_of` | 1 | candidates per line (not used in CLI v0.1: retries are done by the QA loop) |
+| `tts.max_attempts` | 3 | attempts before `keep_original` |
+| `post.max_stretch` | 0.12 | limit of time stretching or compression |
+| `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
+| `post.true_peak_db` | −1.0 | peak ceiling |
+| `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |
+| `qa.min_sim_ratio` | 0.75 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline |
+| `qa.max_duration_ratio` | 1.35 | maximum ratio of the dub's duration to the original's |
+| `build.codec` | `auto` | the adapter picks the build codec |
+| `install.backup` | `true` | install only with a backup |
 
-Решения, которые оркестратор принимает сам:
+Decisions the orchestrator takes on its own:
 
-- **Установка:** после успешного `verify` ставить в игру с бэкапом. Не ставить, если игра запущена или `verify` нашёл проблемы.
-- **Субтитры:** в v0.1 не меняются. Переводится и озвучивается речь; при режиме `translate` игрок услышит новый язык, а субтитры останутся прежними (запись текстовых таблиц — в следующих версиях).
-- **Реплики без текста, междометия без транскрипта, музыка и SFX** не озвучиваются: оригинал остаётся.
-- **Онлайн-игры и античит:** не модифицировать, сообщить.
-- **Некоммерческие модели:** не включать.
-- **Скачивание моделей и окружений** с разрешительными лицензиями идёт без вопроса, но с печатью плана (`babeldub setup --dry-run`): размер и лицензии видны в отчёте.
-- **`human_pending`:** не блокирует сборку. Нерешённое остаётся с оригинальным голосом и перечисляется в отчёте (не больше 30 строк, остальное — файлом).
+- **Installation:** after a successful `verify`, install into the game with a backup. Do not install if the game is running or `verify` found problems.
+- **Subtitles:** not changed in v0.1. The speech is translated and voiced; in `translate` mode the player hears the new language while the subtitles stay as they were (writing text tables comes in later versions).
+- **Lines without text, interjections without a transcript, music and SFX** are not voiced: the original stays.
+- **Online games and anti-cheat:** do not modify; tell the user.
+- **Non-commercial models:** do not enable.
+- **Downloading models and environments** with permissive licenses happens without asking, but with the plan printed (`babeldub setup --dry-run`): size and licenses are visible in the report.
+- **Compute device:** keep `compute.device=auto` (GPU when present). If a stage warns that a worker runs on CPU although a GPU is present, fix it (see `troubleshooting.md`) instead of accepting hours of CPU synthesis.
+- **`human_pending`:** does not block the build. Anything unresolved keeps the original voice and is listed in the report (at most 30 lines, the rest as a file).
 
-## 5. Итоговый отчёт
+## 5. Final report
 
-Пиши по-человечески, коротко, без пересказа JSON. Шаблон:
+Write it in the user's language, in plain words, briefly, without retelling JSON. Template (shown in English; translate the headings and text into the user's language):
 
 ```markdown
-## BabelDub: <игра> → <язык>
+## BabelDub: <game> → <language>
 
-**Итог:** озвучено N реплик из M выбранных (X мин речи). Установлено в игру с бэкапом.
+**Result:** N of M selected lines dubbed (X min of speech). Installed into the game with a backup.
 
-### Что сделано
-- Движок и звук: <движок>, <middleware>; уровень поддержки <A/B/C>.
-- Текст: режим <official/adapt/translate>; источник — <официальный перевод / перевод с <языка>>.
-- Персонажи: <список озвученных с минутами>; остальные звучат оригинальными голосами.
-- Голос: <модель>, дубляж голосом оригинального героя (промпт — оригинальная реплика; для коротких — референс персонажа).
+### What was done
+- Engine and audio: <engine>, <middleware>; support level <A/B/C>.
+- Text: mode <official/adapt/translate>; source — <official translation / translation from <language>>.
+- Characters: <list of dubbed characters with minutes>; everyone else keeps the original voice.
+- Voice: <model>, dubbed in the original hero's voice (prompt — the original line; for short lines — the character reference); device <GPU name / CPU>.
 
-### Качество
-- Прошли QA с первой попытки: N; после повторов: N; оставлены оригиналом: N (причины: …).
-- Персонажи с проблемами: <имя — что не так (сходство голоса, разборчивость, длина)>.
-- Полная таблица: `qa/report.md` в папке проекта <путь>.
+### Quality
+- Passed QA on the first attempt: N; after retries: N; kept original: N (reasons: …).
+- Characters with problems: <name — what is wrong (voice similarity, intelligibility, length)>.
+- Full table: `qa/report.md` in the project folder <path>.
 
-### Решения по умолчанию
-- <каждое отступление от умолчаний и его причина>
+### Default decisions
+- <every deviation from the defaults and its reason>
 
-### Что проверить в игре
-- Голоса совпадают с персонажами, нет смены пола.
-- Громкость ровная относительно музыки и эффектов.
-- Длинные реплики не обрезаются; катсцены не наезжают друг на друга.
-- Субтитры идут в такт речи.
+### What to check in the game
+- Voices match the characters, no gender flips.
+- Loudness is even relative to music and effects.
+- Long lines are not cut off; cutscenes do not overlap.
+- Subtitles stay in sync with the speech.
 
-### Откат и обновления
-- Вернуть оригинал: `babeldub uninstall`.
-- После обновления игры или «Проверить целостность файлов» в Steam: `babeldub reapply`.
+### Rollback and updates
+- Restore the original: `babeldub uninstall`.
+- After a game update or "Verify integrity of game files" in Steam: `babeldub reapply`.
 
-### Ограничения и права
-- <не проверено в запущенной игре / кодек / акцент межъязыкового клонирования / субтитры не менялись>.
-- Модели: <названия и лицензии из build/build_manifest.json>.
-- Это личная фанатская локализация. Не распространяйте собранные файлы игры: в них чужие ассеты.
+### Limitations and rights
+- <not checked in the running game / codec / accent from cross-lingual cloning / subtitles not changed>.
+- Models: <names and licenses from build/build_manifest.json>.
+- This is a personal fan localization. Do not distribute the built game files: they contain other people's assets.
 
-### Требует решения человека (не блокирует)
-- <до 30 строк: персонаж, ключ, причина>; полный список — <файл>.
+### Needs a human decision (not blocking)
+- <up to 30 lines: character, key, reason>; full list — <file>.
 ```

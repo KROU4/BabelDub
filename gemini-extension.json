@@ -1,12 +1,12 @@
 {
   "name": "babeldub",
   "version": "0.1.0",
-  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local voice-cloning TTS, repack into native engine formats.",
+  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local GPU voice-cloning TTS, repack into native engine formats with backup and rollback.",
   "contextFileName": "GEMINI.md",
   "settings": [
     {
       "name": "BabelDub home",
-      "description": "Folder for engine environments, model weights, tools and projects (tens of GB). Leave empty for the default: %LOCALAPPDATA%\\BabelDub on Windows, ~/.local/share/babeldub on Linux.",
+      "description": "Folder for engine environments, model weights, tools and projects (tens of GB). Leave empty for the default: ~/.babeldub (C:\\Users\\<user>\\.babeldub on Windows).",
       "envVar": "BABELDUB_HOME",
       "sensitive": false
     }

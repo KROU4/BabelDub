@@ -1,50 +1,50 @@
-# Пост-обработка: как `babeldub post` превращает синтез в «родную» реплику
+# Post-processing: how `babeldub post` turns synthesis into a "native" line
 
-Читай при вопросах о громкости, паузах, частоте и каналах, при ошибках `post` и при репликах с эффектами (рация, телефон, эхо).
+Read this for questions about loudness, pauses, sample rate and channels, on `post` errors, and for lines with effects (radio, phone, echo).
 
-## 1. Порядок операций (CLI v0.1)
+## 1. Order of operations (CLI v0.1)
 
-Для последней удачной попытки каждой реплики:
+For the latest successful attempt of every line:
 
-1. **Края.** Тишина в начале и конце синтеза обрезается до 30 мс.
-2. **Цель по длине.** У оригинала находится участок речи (без краевых пауз); его длительность — `target_s`.
-3. **Сжатие**, если речь дубля длиннее цели больше чем на `post.tolerance` (5 %; для `fixed_length` — на `post.fixed_length_tolerance`, 3 %): без смены высоты тона, не больше `post.max_stretch` (12 %). Инструмент — Rubber Band (R3), иначе `rubberband` в ffmpeg, иначе `atempo`; какой сработал, видно в поле `stretch` вывода и `stretch_method` в `post/post.jsonl`.
-4. **Плавные края**: короткий fade, чтобы не было щелчков.
-5. **Громкость под оригинальную реплику**, а не под общий стандарт: игра сводит голоса на своих шинах, важна относительная громкость. Для реплик от 0,4 с — интегральная громкость BS.1770 (LUFS), для более коротких — RMS. Эталон — речевая часть оригинала, сведённая в моно.
-6. **Потолок пиков**: true peak не выше `post.true_peak_db` (−1 дБ), проверка ещё раз после ресемплинга.
-7. **Формат как у оригинала**: частота дискретизации и число каналов оригинала (моно дубль дублируется в нужное число каналов), запись PCM 16 бит в `post/audio/<uid>.wav`. Кодек контейнера (FADPCM, PCM16, Vorbis и т. д.) выбирается позже, на сборке (скилл `babeldub-pack`).
-8. **Паузы оригинала** в начале и конце восстанавливаются. Для `fixed_length` итог не длиннее оригинала, если речь влезла.
+1. **Edges.** Silence at the start and end of the synthesis is trimmed to 30 ms.
+2. **Length target.** The speech segment of the original (without edge pauses) is located; its duration is `target_s`.
+3. **Compression**, if the dub's speech is longer than the target by more than `post.tolerance` (5%; for `fixed_length`, by more than `post.fixed_length_tolerance`, 3%): without changing pitch, no more than `post.max_stretch` (12%). The tool is Rubber Band (R3), otherwise `rubberband` in ffmpeg, otherwise `atempo`; which one worked is shown in the `stretch` field of the output and in `stretch_method` in `post/post.jsonl`.
+4. **Smooth edges**: a short fade so there are no clicks.
+5. **Loudness matched to the original line**, not to a general standard: the game mixes voices on its own buses, so relative loudness is what matters. For lines of 0.4 s and longer, BS.1770 integrated loudness (LUFS); for shorter ones, RMS. The reference is the speech part of the original, downmixed to mono.
+6. **Peak ceiling**: true peak no higher than `post.true_peak_db` (−1 dB), checked again after resampling.
+7. **Format of the original**: the original's sample rate and channel count (a mono dub is duplicated into the required number of channels), written as 16-bit PCM to `post/audio/<uid>.wav`. The container codec (FADPCM, PCM16, Vorbis, etc.) is chosen later, at build time (skill `babeldub-pack`).
+8. **The original's pauses** at the start and end are restored. For `fixed_length`, the result is no longer than the original if the speech fits.
 
-Если оригинального звука нет, цель берётся из `audio.dur_s` в `lines.jsonl`, громкость — −20 LUFS, частота и каналы — из метаданных реплики.
+If there is no original audio, the target comes from `audio.dur_s` in `lines.jsonl`, loudness is −20 LUFS, and sample rate and channels come from the line's metadata.
 
-## 2. Поля `post/post.jsonl`
+## 2. Fields of `post/post.jsonl`
 
-`id`, `attempt`, `wav`, `dur_s`, `target_s`, `ratio` (после подгонки), `ratio_raw` (до неё), `stretch` (коэффициент, 1 — без сжатия), `stretch_method`, `lufs_in`, `lufs_out`, `level_ref` (уровень оригинала), `measure` (`lufs` или `rms`), `peak_db`, `lead_s`, `trail_s`, `sr`, `ch`, `fixed_length`, `over_length`. Смотри их через `babeldub query`, не читай файл целиком.
+`id`, `attempt`, `wav`, `dur_s`, `target_s`, `ratio` (after fitting), `ratio_raw` (before it), `stretch` (factor; 1 means no compression), `stretch_method`, `lufs_in`, `lufs_out`, `level_ref` (level of the original), `measure` (`lufs` or `rms`), `peak_db`, `lead_s`, `trail_s`, `sr`, `ch`, `fixed_length`, `over_length`. Look at them through `babeldub query`; do not read the whole file.
 
-## 3. Ошибки и что делать
+## 3. Errors and what to do
 
-| Вывод `post` | Причина | Действие |
+| `post` output | Cause | Action |
 |---|---|---|
-| код 4, «rubberband not found» или «ffmpeg not found» | нет инструмента растяжения | `babeldub-doctor`: `babeldub setup --tools` или установка ffmpeg в PATH |
-| `errors[]`: «synthesized audio is silent» | синтез — тишина | QA даст `regen`; при повторе смотри промпт (`references/ref-strategy.md`) |
-| `errors[]`: «synth file missing» | файл попытки удалён или не записан | повторить `babeldub synth` для этих `--ids` |
-| `over_length[]` | не влезло даже после сжатия | решает QA (`references/length-policy.md`) |
-| `orphans` | синтез есть, а реплики в `lines.jsonl` нет (инвентарь пересобран) | пересинтезировать не нужно; разобраться, почему изменился инвентарь (`babeldub status`) |
+| exit code 4, "rubberband not found" or "ffmpeg not found" | no stretching tool | `babeldub-doctor`: `babeldub setup --tools` or install ffmpeg on the PATH |
+| `errors[]`: "synthesized audio is silent" | the synthesis is silence | QA gives `regen`; if it repeats, look at the prompt (`references/ref-strategy.md`) |
+| `errors[]`: "synth file missing" | the attempt's file was deleted or never written | rerun `babeldub synth` for these `--ids` |
+| `over_length[]` | did not fit even after compression | QA decides (`references/length-policy.md`) |
+| `orphans` | synthesis exists, but the line is not in `lines.jsonl` (the inventory was rebuilt) | no need to resynthesize; find out why the inventory changed (`babeldub status`) |
 
-`post` идемпотентен: уже обработанные попытки пропускаются (`up_to_date`), `--force` обрабатывает заново.
+`post` is idempotent: attempts already processed are skipped (`up_to_date`); `--force` processes them again.
 
-## 4. Эффекты в оригинале: рация, телефон, эхо
+## 4. Effects in the original: radio, phone, echo
 
-CLI v0.1 эффекты **не добавляет**. Сначала пойми, запечён ли эффект в файл:
+CLI v0.1 does **not add** effects. First, work out whether the effect is baked into the file:
 
-- если игра накладывает эффект сама (шины и снапшоты FMOD или Wwise, микшер движка), исходники сухие — ничего делать не нужно, дубль получит тот же эффект в игре;
-- если эффект запечён в файл (у реплики «узкая» полоса частот или хвост реверберации, а у других реплик персонажа нет), промпт `line` перенесёт его в тембр частично и непредсказуемо.
+- if the game applies the effect itself (FMOD or Wwise buses and snapshots, the engine's mixer), the source files are dry, and nothing needs doing: the dub gets the same effect in the game;
+- if the effect is baked into the file (the line has a "narrow" frequency band or a reverb tail that the character's other lines lack), the `line` prompt carries it into the timbre partially and unpredictably.
 
-Что делать в v0.1: такие реплики обычно проваливают сходство голоса; роль qa может назначить `reref` (промпт `char` — чистый голос без эффекта) и отметить в `note`, что эффект не воспроизведён. Добавлять эффект своим кодом (фильтры, ревербератор) — вне объёма v0.1; если пользователю это критично, отметь реплики в отчёте как «требует ручной обработки».
+What to do in v0.1: such lines usually fail voice similarity; the qa role may assign `reref` (a `char` prompt, a clean voice without the effect) and note in `note` that the effect is not reproduced. Adding the effect with your own code (filters, a reverb) is out of scope for v0.1; if it is critical to the user, mark the lines in the report as "needs manual processing".
 
-## 5. Чего не делать
+## 5. What not to do
 
-- Не нормализовать всё к одному уровню громкости вроде −23 LUFS: громкость реплик в игре задаёт микс разработчика.
-- Не менять число каналов или частоту на «лучшие»: контейнер и движок рассчитаны на исходные.
-- Не обрезать паузы оригинала: некоторые события и субтитры привязаны к краям звука.
-- Не обрабатывать файлы `post/audio` своими скриптами: канон пишет CLI, и QA проверяет именно его файлы.
+- Do not normalize everything to one loudness level such as −23 LUFS: the loudness of lines in the game is set by the developer's mix.
+- Do not change the channel count or sample rate to "better" ones: the container and the engine expect the original ones.
+- Do not trim the original's pauses: some events and subtitles are tied to the edges of the sound.
+- Do not process `post/audio` files with your own scripts: only the CLI writes the canon, and QA checks exactly its files.

@@ -1,156 +1,163 @@
 ---
 name: babeldub-localize
-description: "Localize and dub a video game end to end in the voices of its original characters: find voice-over and subtitles, translate, clone each hero's timbre, emotion and delivery with local TTS, repack into native engine formats and install with a backup. Use when the user gives a game folder and asks to localize game, dub, revoice or translate it: переведи игру, переозвучь, сделай русскую озвучку, нейроозвучка, локализуй игру."
+description: "Localize and dub any video game end to end in the voices of its original characters: find the voice-over and subtitles, translate, clone each hero's timbre, emotion and delivery with local TTS on the GPU, check every line (speech recognition, voice similarity, duration), repack into native engine formats and install with a backup and one-command rollback. Use when the user points at a game folder and asks to localize, translate, dub or revoice the game, e.g. 'localize this game', 'dub the voices', 'translate the game into Polish', 'revoice the characters', 'переведи игру', 'сделай русскую озвучку', 'переозвучь', 'нейроозвучка', 'doblar el juego', 'traduire le jeu', 'lokalisiere das Spiel'."
 license: MIT
-compatibility: "Local agent with shell access; Windows 10/11 or Linux; Python 3.10+ with uv; ffmpeg; NVIDIA GPU with 8+ GB VRAM for voice cloning (CPU works but is slow). Web chats without file access can only translate exported batches."
+compatibility: "Local agent with shell access; Windows 10/11 or Linux; Python 3.10+ with uv; ffmpeg. GPU-first: an NVIDIA GPU with 8+ GB VRAM runs all neural work (voice cloning, speech recognition, voice similarity); CPU works but is slow. Web chats without file access can only translate exported batches."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: локализация и дубляж игры голосами оригинальных героев
+# BabelDub: localize and dub a game in the voices of its original characters
 
-Скилл ведёт игру от папки с файлами до установленной озвучки на целевом языке. Ты оркестратор: запускаешь стадии CLI `babeldub`, делегируешь суждения ролям, реагируешь на коды выхода и в конце отчитываешься пользователю. Скилл универсален для любых движков. Low-Budget Repairs (Unity + FMOD) в примерах только иллюстрация.
+This skill takes a game from its folder to an installed dub in the target language. You are the orchestrator: you run the stages of the `babeldub` CLI, delegate judgment calls to roles, react to exit codes and report to the user at the end. The skill works for any engine; the examples use Low-Budget Repairs (Unity + FMOD) only as an illustration.
 
-## Главный принцип: дубляж, а не синтез речи
+## Up front: how you work with the user
 
-Каждая переведённая реплика должна звучать **голосом оригинального героя**: тот же тембр, та же эмоция, тот же темп и подача, только на целевом языке. Мимику и липсинк не перестраиваем.
+1. **Ask the user exactly two questions**: the target language, and which characters to revoice (all / main / a list). Everything else is automatic: decide using the defaults and record each decision in the final report.
+2. **Talk to the user in the user's language** (the language of their messages): questions, short progress notes and the final report. Keep commands, paths, identifiers and agent files exactly as they are.
+3. **GPU-first.** All neural compute (voice cloning, speech recognition, voice similarity, voice clustering) runs on the NVIDIA GPU when one is present: `compute.device=auto`, the default. CPU is used only when there is no usable GPU or the user explicitly asks for it (`babeldub set compute.device=cpu`). A CPU fallback while a GPU is present is never silent: the CLI warns, and you pass the warning on in the report.
+4. **Original-hero voice.** Every dubbed line sounds like the original hero: same timbre, same emotion, same delivery, only in the target language. See the next section.
 
-Как это достигается:
+## Core principle: dubbing, not text-to-speech
 
-1. **Голосовой промпт — сама оригинальная реплика.** Модель клонирования получает исходный звук этой строки и её исходный текст. Так переносится не только тембр, но и интонация именно этой фразы: крик остаётся криком, шёпот шёпотом. Это `tts.ref_strategy=line`.
-2. **Лучший референс персонажа** берётся там, где оригинал не годится в промпт: короткие реплики, междометия, строки без текста, реплики с музыкой или шумом. Это `tts.ref_strategy=char`.
-3. **По умолчанию `auto`:** `line`, если оригинал не короче `tts.line_ref_min_s` (1,6 с) и у него есть исходный текст; иначе `char`.
-4. **Перевод сохраняет эмоциональную форму оригинала**: восклицания, запинки, смех, обрывы фраз, регистр и уровень брани. Тогда промпт и текст не спорят друг с другом.
-5. **QA сравнивает голос синтеза с оригиналом персонажа** (speaker similarity). «Уплывший» голос, смена пола, чужой тембр уходят на перегенерацию (`regen`) или смену референса (`reref`).
+Every translated line must sound **in the voice of the original hero**: the same timbre, emotion, pace and delivery, only in the target language. Facial animation and lip sync are not rebuilt.
 
-Не меняй `tts.ref_strategy` без причины. Если меняешь, запиши причину в итоговый отчёт.
+How this is achieved:
 
-## Правила, которые действуют всегда
+1. **The voice prompt is the original line itself.** The cloning model receives the original audio of this line and its original text. This carries over not only the timbre but the intonation of this exact phrase: a shout stays a shout, a whisper stays a whisper. This is `tts.ref_strategy=line`.
+2. **The character's best reference** is used where the original line is unfit as a prompt: short lines, interjections, lines without text, lines with music or noise. This is `tts.ref_strategy=char`.
+3. **Default `auto`:** `line` if the original is at least `tts.line_ref_min_s` (1.6 s) long and has a source text; otherwise `char`.
+4. **The translation keeps the emotional shape of the original**: exclamations, stammers, laughter, cut-off phrases, register and level of profanity. Then the prompt and the text do not fight each other.
+5. **QA compares the synthesized voice with the character's original** (speaker similarity). A drifting voice, a gender flip or a foreign timbre goes back for regeneration (`regen`) or a reference change (`reref`).
 
-1. **Папка игры только для чтения** до `babeldub install`. Не копируй, не переименовывай и не правь там ничего руками. Установку и откат делает только CLI (`install`, `uninstall`, `reapply`) с бэкапом и sha1.
-2. **Исполняемые файлы игры не запускать** и DLL игры не загружать. Проверка рантаймом игры (`babeldub verify --game-runtime`) только по явной просьбе пользователя.
-3. **Канон пишет только CLI.** Агенты пишут `*.agent.jsonl`, `*.out.jsonl` и `translate/style_bible.md`. В канон их переносят `cast apply-labels`, `batch submit`, `decide apply`.
-4. **Файлы проекта целиком не читать.** Данные смотри через `babeldub status`, `babeldub query`, `babeldub sample`; отчёты `*.md` читай по разделам. Целиком можно читать только пакет перевода, выданный роли.
-5. **Каждая команда печатает один JSON** и возвращает код выхода. Решение о следующем шаге принимай по коду и полям `next`, `hint`.
-6. **Онлайн-игры и античит** (EasyAntiCheat, BattlEye, VAC в мультиплеере): по умолчанию не модифицировать. Если `scan` выдал такое предупреждение, остановись и сообщи пользователю.
-7. **Права и лицензии.** Позиционирование — личная фанатская локализация. Собранные игровые контейнеры не распространять. По умолчанию только модели с лицензиями Apache-2.0 и MIT; некоммерческие (NC) — только после показа лицензии и явного «да» пользователя.
+Do not change `tts.ref_strategy` without a reason. If you change it, record the reason in the final report.
 
-## Вопросы пользователю: ровно два
+## Rules that always apply
 
-Задай только два вопроса и больше ни о чём не спрашивай. Формулировки, варианты и все умолчания — в [references/questions-defaults.md](references/questions-defaults.md); прочитай его перед первым вопросом.
+1. **The game folder is read-only** until `babeldub install`. Do not copy, rename or edit anything there by hand. Only the CLI installs and rolls back (`install`, `uninstall`, `reapply`), with a backup and sha1 checks.
+2. **Never run the game's executables** and never load the game's DLLs. Run a check with the game's own runtime (`babeldub verify --game-runtime`) only when the user explicitly asks for it.
+3. **Only the CLI writes the canon.** Agents write `*.agent.jsonl`, `*.out.jsonl` and `translate/style_bible.md`. `cast apply-labels`, `batch submit` and `decide apply` merge them into the canon.
+4. **Never read project files whole.** Look at data through `babeldub status`, `babeldub query`, `babeldub sample`; read `*.md` reports by section. The only file you may read whole is a translation batch handed to a role.
+5. **Every command prints one JSON object** and returns an exit code. Decide the next step from the code and the `next` and `hint` fields.
+6. **Online games and anti-cheat** (EasyAntiCheat, BattlEye, VAC in multiplayer): do not modify by default. If `scan` reports such a warning, stop and tell the user.
+7. **Rights and licenses.** BabelDub is meant for personal fan localization. Do not distribute the built game containers. By default use only models under Apache-2.0 and MIT licenses; non-commercial (NC) models only after showing the license and getting an explicit "yes" from the user.
 
-1. **Целевой язык** — в начале, если пользователь его не назвал.
-2. **Персонажи** (все / главные / список) — после стадии `cast`, когда известен список персонажей, если пользователь не ответил заранее.
+## Questions to the user: exactly two
 
-Всё остальное решай сам по умолчаниям и фиксируй в итоговом отчёте. Неоднозначное не превращай в вопросы: записывай в `human_pending` и в отчёт. Если хост не умеет задавать вопросы (фоновый запуск, CI), бери умолчания.
+Ask only two questions and nothing else. The wording, options and all defaults are in [references/questions-defaults.md](references/questions-defaults.md); read it before the first question. Ask in the user's language.
 
-## Роли и хост
+1. **Target language** — at the start, if the user has not named it.
+2. **Characters** (all / main / a list) — after the `cast` stage, when the character list is known, if the user has not answered in advance.
 
-Суждения выполняют роли. Описание каждой роли: вход, выход, правила, формат JSON-ответа.
+Decide everything else yourself using the defaults and record it in the final report. Do not turn ambiguity into questions: put it in `human_pending` and in the report. If the host cannot ask questions (background run, CI), take the defaults.
 
-| Роль | Когда | Файл |
+## Roles and host
+
+Roles make the judgment calls. Each role file describes the input, output, rules and the JSON answer format.
+
+| Role | When | File |
 |---|---|---|
-| scout | `scan`, `extract`, `link`, разбор неизвестных контейнеров | [references/roles/scout.md](references/roles/scout.md) |
-| caster | персонажи, метки, проверка референсов | [references/roles/caster.md](references/roles/caster.md) |
-| lexicon | глоссарий, произношение, «ты/вы», style bible | [references/roles/lexicon.md](references/roles/lexicon.md) |
-| translator | перевод или адаптация одного пакета | [references/roles/translator.md](references/roles/translator.md) |
-| voice | пилот, синтез, пост-обработка | [references/roles/voice.md](references/roles/voice.md) |
-| qa | решения по браку по метрикам | [references/roles/qa.md](references/roles/qa.md) |
-| packer | сборка, проверка, установка, откат | [references/roles/packer.md](references/roles/packer.md) |
+| scout | `scan`, `extract`, `link`, analysis of unknown containers | [references/roles/scout.md](references/roles/scout.md) |
+| caster | characters, labels, reference checks | [references/roles/caster.md](references/roles/caster.md) |
+| lexicon | glossary, pronunciation, formal/informal address, style bible | [references/roles/lexicon.md](references/roles/lexicon.md) |
+| translator | translating or adapting one batch | [references/roles/translator.md](references/roles/translator.md) |
+| voice | pilot, synthesis, post-processing | [references/roles/voice.md](references/roles/voice.md) |
+| qa | decisions on defects by metrics | [references/roles/qa.md](references/roles/qa.md) |
+| packer | build, verify, install, rollback | [references/roles/packer.md](references/roles/packer.md) |
 
-Если хост умеет запускать субагентов, делегируй роль субагенту `babeldub-<роль>`. Если не умеет, выполни роль сам: прочитай её файл и действуй по нему, затем вернись к этому скиллу. Если у хоста установлены скиллы стадий (`babeldub-recon`, `babeldub-cast`, `babeldub-translate`, `babeldub-voice`, `babeldub-qa`, `babeldub-pack`), их правила дополняют файл роли той же стадии. Прежде чем начать, прочитай файл своего хоста:
+If the host can run subagents, delegate the role to the `babeldub-<role>` subagent. If it cannot, perform the role yourself: read its file, follow it, then return to this skill. If the host has the stage skills installed (`babeldub-recon`, `babeldub-cast`, `babeldub-translate`, `babeldub-voice`, `babeldub-qa`, `babeldub-pack`), their rules extend the role file of the same stage. Before you start, read the file for your host:
 
 - Claude Code — [references/hosts/claude-code.md](references/hosts/claude-code.md);
-- Codex CLI и desktop — [references/hosts/codex.md](references/hosts/codex.md);
-- Gemini CLI и Antigravity — [references/hosts/gemini-antigravity.md](references/hosts/gemini-antigravity.md);
-- веб-чаты (claude.ai, ChatGPT) и прочие агенты — [references/hosts/generic.md](references/hosts/generic.md).
+- Codex CLI and desktop — [references/hosts/codex.md](references/hosts/codex.md);
+- Gemini CLI and Antigravity — [references/hosts/gemini-antigravity.md](references/hosts/gemini-antigravity.md);
+- web chats (claude.ai, ChatGPT) and other agents — [references/hosts/generic.md](references/hosts/generic.md).
 
-## Ход работы
+## Workflow
 
-Подробности по каждой стадии (команды, поля вывода, артефакты, критерии перехода) — в [references/pipeline.md](references/pipeline.md). Прочитай его перед стадией 1. Ниже — порядок и решения оркестратора.
+Details for every stage (commands, output fields, artifacts, exit criteria) are in [references/pipeline.md](references/pipeline.md). Read it before stage 1. Below are the order and the orchestrator's decisions.
 
-### 0. Окружение
+### 0. Environment
 
-1. Выполни `babeldub --version`. Если команды нет или версия не равна `metadata.babeldub-cli` этого скилла (`0.1.0`), примени скилл `babeldub-doctor`: он ставит CLI нужной версии.
-2. Выполни `babeldub doctor`. Код 4 (нет обязательных утилит) или код 3 (нет движков и моделей, `todo[]`) — примени `babeldub-doctor`. Без GPU работа возможна, но синтез займёт часы; предупреди об этом в отчёте.
+1. Run `babeldub --version`. If the command is missing or the version differs from this skill's `metadata.babeldub-cli` (`0.1.0`), apply the `babeldub-doctor` skill: it installs the right CLI version.
+2. Run `babeldub doctor`. On exit code 4 (required tools missing) or 3 (engines or models missing, `todo[]`), apply `babeldub-doctor`. Working without a GPU is possible, but synthesis then takes hours; say so in the report.
 
-### 1. Проект
+### 1. Project
 
-1. Если пользователь не назвал язык, задай вопрос 1.
-2. Проверь, нет ли уже проекта для этой игры: `babeldub games`. Если есть, продолжай его (`babeldub status --project <slug>`), а не создавай новый.
-3. Создай проект: `babeldub init "<папка игры>" --lang <код>`. Если пользователь уже сказал про персонажей, добавь `--cast all|main` или `--cast list --chars A,B`.
+1. If the user has not named the language, ask question 1.
+2. Check whether a project for this game already exists: `babeldub games`. If it does, continue it (`babeldub status --project <slug>`) instead of creating a new one.
+3. Create the project: `babeldub init "<game folder>" --lang <code>`. If the user has already said which characters, add `--cast all|main` or `--cast list --chars A,B`.
 
-### 2. Разведка: что внутри игры
+### 2. Recon: what is inside the game
 
-Делегируй роль **scout** (по скиллу `babeldub-recon`): `babeldub scan` → `babeldub extract` → `babeldub link`.
+Delegate the **scout** role (following the `babeldub-recon` skill): `babeldub scan` → `babeldub extract` → `babeldub link`.
 
-- Уровень поддержки из `scan` (`level`): **A** — дальше автоматически; **B** — нужен инструмент, который ставит пользователь, или мод-лоадер; **C** — CLI v0.1 этот формат не собирает. При B и C прочитай справочник движка в `babeldub-recon` и честно опиши пользователю, что возможно. Ничего не правь в папке игры вручную.
-- Если реплик для озвучки нет (`lines` = 0) или все контейнеры неизвестны, остановись с отчётом от scout.
+- Support level from `scan` (`level`): **A** — fully automatic from here; **B** — needs a tool the user installs, or a mod loader; **C** — CLI v0.1 cannot build this format. For B and C read the engine reference in `babeldub-recon` and describe honestly to the user what is possible. Do not edit anything in the game folder by hand.
+- If there are no voiced lines (`lines` = 0) or all containers are unknown, stop with the scout's report.
 
-### 3. Персонажи
+### 3. Characters
 
-1. `babeldub cast`. Если в `uncertain[]` есть персонажи, делегируй роль **caster**: она размечает их через `cast/labels.agent.jsonl` и `babeldub cast apply-labels`.
-2. Задай вопрос 2, показав из `cast/casting_sheet.md` таблицу персонажей (имя, пол, реплик, минут речи, уровень). По умолчанию «главные».
-3. Применяй ответ: `babeldub cast select --policy main`, `--policy all` или `--chars A,B`.
+1. `babeldub cast`. If `uncertain[]` lists characters, delegate the **caster** role: it labels them through `cast/labels.agent.jsonl` and `babeldub cast apply-labels`.
+2. Ask question 2 and show the character table from `cast/casting_sheet.md` (name, gender, lines, minutes of speech, tier). Default: main characters.
+3. Apply the answer: `babeldub cast select --policy main`, `--policy all` or `--chars A,B`.
 
-Невыбранные персонажи остаются с оригинальным голосом.
+Characters that are not selected keep their original voice.
 
-### 4. Текст
+### 4. Text
 
-1. `babeldub translate plan` — CLI выбирает режим: `official` (озвучиваем официальный перевод как есть), `adapt` (официальный текст есть, адаптируем под длительность), `translate` (переводим с исходного).
-2. При `official` выполни `babeldub translate use-official`. Если после этого агенту переводить нечего (`need_agent` = 0), переходи к голосу.
-3. Делегируй роль **lexicon**: глоссарий имён и терминов, произношение для TTS, правила «ты/вы» и style bible; роль завершает `babeldub glossary apply`. Это делается до нарезки пакетов: в пакеты попадает только уже применённый глоссарий.
-4. `babeldub batch make` нарезает пакеты по сценам. Затем цикл: `babeldub batch next` → роль **translator** на этот пакет → `babeldub batch submit <bid>`. На хостах с субагентами держи до 4 переводчиков параллельно, каждому — свой пакет из `batches[]` вывода `batch make`.
-5. Когда `batch next` вернёт `done: true`, выполни `babeldub glossary check`. Нарушения: `babeldub batch make --ids <id,...>` и снова переводчик.
+1. `babeldub translate plan` — the CLI picks the mode: `official` (voice the official translation as is), `adapt` (an official text exists; adapt it to the duration), `translate` (translate from the source).
+2. For `official`, run `babeldub translate use-official`. If nothing is left for the agent to translate (`need_agent` = 0), go to the voice stage.
+3. Delegate the **lexicon** role: glossary of names and terms, pronunciation for TTS, formal/informal address rules and the style bible; the role finishes with `babeldub glossary apply`. Do this before cutting batches: batches only receive the glossary that has already been applied.
+4. `babeldub batch make` cuts batches by scene. Then loop: `babeldub batch next` → **translator** role on that batch → `babeldub batch submit <bid>`. On hosts with subagents, keep up to 4 translators in parallel, each with its own batch from `batches[]` of the `batch make` output.
+5. When `batch next` returns `done: true`, run `babeldub glossary check`. For violations: `babeldub batch make --ids <id,...>` and the translator again.
 
-### 5. Голос
+### 5. Voice
 
-Делегируй роль **voice**: пилот на нескольких репликах главных персонажей, затем синтез чанками по персонажам. Цикл до терминального состояния всех выбранных реплик:
+Delegate the **voice** role: a pilot on a few lines of the main characters, then synthesis in chunks by character. Loop until every selected line reaches a terminal state:
 
-1. `babeldub synth` → `babeldub post` → `babeldub qa`. CLI сам ставит решения по порогам: прошло — `accept`; брак разборчивости, голоса, пиков — `regen`; слишком длинно — `shorten`.
-2. Код 3 у `qa` (`attention[]`): роль **qa** разбирает эти реплики, пишет решения в `qa/decisions.agent.jsonl` и выполняет `babeldub decide apply`. Для «уплывшего» голоса она предпочитает `reref` — смену промпта на референс персонажа.
-3. `regen` и `reref` → `babeldub synth --attempt-next` → `post` → `qa`. `shorten` и `retranslate` → `babeldub batch make --from-decisions` → переводчик → `batch submit` → `synth` → `post` → `qa`. Какая ветка нужна сейчас, подсказывает `next` в выводе `qa`.
-4. После `tts.max_attempts` (3) неудачных попыток реплика остаётся с оригинальным голосом (`keep_original`) и попадает в отчёт.
+1. `babeldub synth` → `babeldub post` → `babeldub qa`. The CLI sets decisions from the thresholds on its own: a line that passes gets `accept`; an intelligibility, voice or peak defect gets `regen`; a line that is too long gets `shorten`.
+2. Exit code 3 from `qa` (`attention[]`): the **qa** role reviews these lines, writes decisions to `qa/decisions.agent.jsonl` and runs `babeldub decide apply`. For a drifting voice it prefers `reref` — switching the prompt to the character reference.
+3. `regen` and `reref` → `babeldub synth --attempt-next` → `post` → `qa`. `shorten` and `retranslate` → `babeldub batch make --from-decisions` → translator → `batch submit` → `synth` → `post` → `qa`. The `next` field of the `qa` output tells which branch is needed now.
+4. After `tts.max_attempts` (3) failed attempts the line keeps its original voice (`keep_original`) and goes into the report.
 
-Цикл закончен, когда `qa` в `next` советует `babeldub report`. GPU-стадии (`synth`, `qa`) не запускай параллельно: CLI держит `state/locks/gpu.lock`. В конце: `babeldub report` → `qa/report.md`.
+The loop is over when `qa` suggests `babeldub report` in `next`. Do not run GPU stages (`synth`, `qa`) in parallel: the CLI holds `state/locks/gpu.lock`. At the end: `babeldub report` → `qa/report.md`.
 
-### 6. Сборка и установка
+### 6. Build and install
 
-Делегируй роль **packer**: `babeldub build` → `babeldub verify` → `babeldub install`. Установка идёт по умолчанию, с бэкапом оригиналов, если `verify` прошёл без проблем. CLI сам не пишет в папку игры, пока игра запущена или найден античит; эти проверки не обходи. Если `verify` нашёл проблемы или установка заблокирована, опиши причину и следующий шаг в отчёте.
+Delegate the **packer** role: `babeldub build` → `babeldub verify` → `babeldub install`. If `verify` passes without problems, install by default; the CLI backs up the originals first. The CLI refuses to write to the game folder while the game is running or anti-cheat is detected; do not bypass these checks. If `verify` found problems or the installation is blocked, describe the reason and the next step in the report.
 
-### 7. Итоговый отчёт
+### 7. Final report
 
-Составь отчёт по шаблону из [references/questions-defaults.md](references/questions-defaults.md): что озвучено, что оставлено оригиналом и почему, какие решения приняты по умолчанию, риски, как откатить (`babeldub uninstall`) и как вернуть озвучку после обновления игры или проверки целостности в Steam (`babeldub reapply`).
+Write the report from the template in [references/questions-defaults.md](references/questions-defaults.md), in the user's language: what was dubbed, what kept the original voice and why, which decisions were taken by default, risks, how to roll back (`babeldub uninstall`) and how to restore the dub after a game update or a Steam file integrity check (`babeldub reapply`).
 
-## Коды выхода
+## Exit codes
 
-| Код | Что значит | Что делать |
+| Code | Meaning | What to do |
 |---|---|---|
-| 0 | стадия завершена | следующая стадия (сверяйся с `next`) |
-| 1 | неожиданная ошибка (`error`, `where`) | смотри `logs/` проекта и [references/troubleshooting.md](references/troubleshooting.md); одна повторная попытка, если сбой похож на разовый (падение воркера, обрыв сети) |
-| 2 | неверные аргументы, не пройдена прошлая стадия, невалидный файл агента | прочитай `hint`; выполни недостающую стадию или исправь файл агента (до 3 итераций) |
-| 3 | стадия завершена, есть элементы на решение | передай их роли этой стадии (caster, translator, qa, packer); человеку только итог в отчёте |
-| 4 | не хватает окружения | скилл `babeldub-doctor`: `babeldub doctor` → `babeldub setup` |
+| 0 | stage complete | next stage (check `next`) |
+| 1 | unexpected error (`error`, `where`) | look at the project's `logs/` and [references/troubleshooting.md](references/troubleshooting.md); retry once if the failure looks transient (worker crash, network drop) |
+| 2 | bad arguments, previous stage not done, invalid agent file | read `hint`; run the missing stage or fix the agent file (up to 3 iterations) |
+| 3 | stage complete, items need a decision | hand them to the role of this stage (caster, translator, qa, packer); the human only gets the outcome in the report |
+| 4 | environment missing | `babeldub-doctor` skill: `babeldub doctor` → `babeldub setup` |
 
-Подробная реакция по стадиям — в [references/pipeline.md](references/pipeline.md).
+The detailed reaction per stage is in [references/pipeline.md](references/pipeline.md).
 
-## Возобновление
+## Resuming
 
-Проект живёт в `BABELDUB_HOME/projects/<slug>` (Windows: `%LOCALAPPDATA%\BabelDub`). Стадии идемпотентны: повторный запуск не повторяет сделанную работу без `--force`. После перерыва, сжатия контекста или смены сессии:
+The project lives in `BABELDUB_HOME/projects/<slug>`. `BABELDUB_HOME` defaults to `~/.babeldub` (`C:\Users\<user>\.babeldub` on Windows); the `BABELDUB_HOME` environment variable overrides it. Stages are idempotent: a rerun does not repeat finished work without `--force`. After a break, context compaction or a new session:
 
-1. `babeldub status` — стадии (`stages`), счётчики (`counts`) и `next`.
-2. Продолжай с первой стадии в состоянии `pending`, `running` или `failed`. Стадия в `attention` уже пройдена, просто с оставшимися элементами на решение (код 3 у `status`): разбери их, если они важны, и иди дальше по таблице `stages`.
+1. `babeldub status` — stages (`stages`), counters (`counts`) and `next`.
+2. Continue from the first stage in the `pending`, `running` or `failed` state. A stage in `attention` has passed but still has items to decide (exit code 3 from `status`): review them if they matter, then move on through the `stages` table.
 
-## Откат
+## Rollback
 
-- `babeldub uninstall` возвращает оригиналы по бэкапу и сверяет sha1.
-- После обновления игры или «Проверить целостность файлов» в Steam оригиналы возвращаются сами; повторно поставить озвучку: `babeldub reapply`.
+- `babeldub uninstall` restores the originals from the backup and checks sha1.
+- A game update or Steam's "Verify integrity of game files" brings the original files back; to reinstall the dub, run `babeldub reapply`.
 
-## Когда что читать
+## When to read what
 
-- Перед первым вопросом пользователю, при выборе умолчаний и перед итоговым отчётом — [references/questions-defaults.md](references/questions-defaults.md).
-- Перед стадией 1 и при любом непонятном выводе стадии — [references/pipeline.md](references/pipeline.md).
-- При кодах 1 и 4, нехватке памяти GPU, странных метриках QA, проблемах установки — [references/troubleshooting.md](references/troubleshooting.md).
-- Перед делегированием роли или её выполнением в основной сессии — файл роли в `references/roles/`.
-- Один раз в начале работы — файл своего хоста в `references/hosts/`.
-- Когда `scan` показал движок или формат — скилл `babeldub-recon` и его справочники.
+- Before the first question to the user, when choosing defaults and before the final report — [references/questions-defaults.md](references/questions-defaults.md).
+- Before stage 1 and whenever a stage output is unclear — [references/pipeline.md](references/pipeline.md).
+- On exit codes 1 and 4, GPU out of memory, odd QA metrics, installation problems — [references/troubleshooting.md](references/troubleshooting.md).
+- Before delegating a role or performing it in the main session — the role file in `references/roles/`.
+- Once at the start of work — the file for your host in `references/hosts/`.
+- When `scan` has shown the engine or format — the `babeldub-recon` skill and its references.

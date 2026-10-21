@@ -1,40 +1,40 @@
 # GameMaker
 
-Читай, если в папке игры есть `data.win`, `audiogroup*.dat`, `options.ini`.
+Read this if the game folder has `data.win`, `audiogroup*.dat`, `options.ini`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 GameMaker не разбирает; только инструкции. План — позже, уровень B (скрипты UndertaleModTool нужно адаптировать к пакетному запуску).
+**C**: CLI v0.1 does not parse GameMaker; instructions only. Planned later at level B (UndertaleModTool scripts must be adapted for batch runs).
 
-## Как опознать
+## How to identify
 
-`data.win` — IFF-контейнер `FORM` с чанками GEN8, OPTN, LANG, EXTN, SOND, AGRP, SPRT, BGND, PATH, SCPT, GLOB, SHDR, FONT, TMLN, OBJT, ROOM, TPAG, CODE, VARI, FUNC, STRG, TXTR, **AUDO** и др. (по гайдам сообщества).
+`data.win` is an IFF `FORM` container with chunks GEN8, OPTN, LANG, EXTN, SOND, AGRP, SPRT, BGND, PATH, SCPT, GLOB, SHDR, FONT, TMLN, OBJT, ROOM, TPAG, CODE, VARI, FUNC, STRG, TXTR, **AUDO** and others (per community guides).
 
-## Где голос
+## Where the voice is
 
-- Чанк `AUDO` в `data.win`.
-- `audiogroupN.dat` — свой `FORM` с `AUDO`.
-- Внешние `.ogg` для стримов.
+- The `AUDO` chunk in `data.win`.
+- `audiogroupN.dat`: its own `FORM` with `AUDO`.
+- External `.ogg` files for streams.
 
-## Где текст
+## Where the text is
 
-Чанк `STRG` в `data.win` или включённые файлы (`datafiles/*.json`, `*.csv`, `*.ini`). Шрифты часто растровые: кириллицу нужно импортировать. См. `text/generic.md`.
+The `STRG` chunk in `data.win`, or included files (`datafiles/*.json`, `*.csv`, `*.ini`). Fonts are often bitmap fonts: a new alphabet (for example, Cyrillic) has to be imported. See `text/generic.md`.
 
-## Чем извлечь и собрать
+## Extraction and rebuild tools
 
-**UndertaleModTool** 0.9.2.0, есть CLI `UndertaleModCli`. Скрипты:
+**UndertaleModTool** 0.9.2.0, with the CLI `UndertaleModCli`. Scripts:
 
-- строки: пары `ExportAllStrings.csx` / `ImportAllStrings.csx` (TXT) и `ExportAllStringsJSON.csx` / `ImportAllStringsJSON.csx` (JSON);
-- звук: `ExportAllSounds`; `ImportSounds` и `ImportSingleSound` (OGG внешний или встроенный, выбор audiogroup; «WAV cannot be external»).
+- strings: the pairs `ExportAllStrings.csx` / `ImportAllStrings.csx` (TXT) and `ExportAllStringsJSON.csx` / `ImportAllStringsJSON.csx` (JSON);
+- audio: `ExportAllSounds`; `ImportSounds` and `ImportSingleSound` (external or embedded OGG, audiogroup selection; "WAV cannot be external").
 
-Скрипты интерактивные (`ScriptQuestion`, `PromptLoadFile`): для пакетного запуска агентом через `UndertaleModCli` их придётся адаптировать (не проверено).
+The scripts are interactive (`ScriptQuestion`, `PromptLoadFile`): to run them in batch from an agent through `UndertaleModCli` they would have to be adapted (not verified).
 
-## Подводные камни
+## Pitfalls
 
-- YYC-сборки: код нативный и не декомпилируется, но `STRG` и `AUDO` доступны (по гайдам сообщества).
-- Версия байткода.
-- Растровые шрифты без кириллицы.
+- YYC builds: the code is native and cannot be decompiled, but `STRG` and `AUDO` are accessible (per community guides).
+- Bytecode version.
+- Bitmap fonts without the target alphabet (for example, Cyrillic).
 
-## Ссылки
+## Links
 
 - UndertaleModTool — https://github.com/UnderminersTeam/UndertaleModTool

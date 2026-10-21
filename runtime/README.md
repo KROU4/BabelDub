@@ -1,3 +1,3 @@
 # babeldub (runtime)
 
-CLI-инструментарий BabelDub. Документация: ../README.md и ../docs/dev/CONTRACT.md.
+The BabelDub CLI toolkit. Documentation: ../README.md and ../docs/dev/CONTRACT.md.

@@ -57,7 +57,7 @@ def test_cast_with_qc_clusters_tiers_and_refs(project, fake_qc, make_lines, run)
         assert project.path(r["wav"]).exists()
         assert r["centroid_cos"] is not None
     sheet = project.path(layout.CASTING_SHEET).read_text(encoding="utf-8")
-    assert "Лист кастинга" in sheet and "cluster_01" in sheet and "Voice A" in sheet
+    assert "Casting sheet" in sheet and "cluster_01" in sheet and "Voice A" in sheet
     assert fake_qc.loads and fake_qc.loads[0]["sv_model"].endswith("spkrec-ecapa-voxceleb")
     assert "asr_model" not in fake_qc.loads[0]
     assert fake_qc.closed == 1

@@ -1,36 +1,36 @@
-# Прочие источники текста (CSV, JSON, XML, диалоговые системы, свои форматы)
+# Other text sources (CSV, JSON, XML, dialogue systems, custom formats)
 
-Читай, если тексты игры не в Unity Localization, I2, `.locres`, Godot, Ren'Py или RPG Maker.
+Read this if the game's texts are not in Unity Localization, I2, `.locres`, Godot, Ren'Py or RPG Maker.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-В v0.1 CLI читает тексты только через адаптеры из `babeldub scan` (`text_assets[]`). Если текстов там нет, `babeldub link` свяжет реплики разве что по именам файлов, а реплики без текста останутся с оригинальным голосом. Свой формат — уровень **C**: опиши его в отчёте.
+In v0.1 the CLI reads texts only through the adapters reported by `babeldub scan` (`text_assets[]`). If there are no texts there, `babeldub link` can link lines by file names at most, and lines without text keep the original voice. A custom format is level **C**: describe it in the report.
 
-## Где искать
+## Where to look
 
-- Файлы с языковыми кодами в имени или пути: `en`, `en-US`, `english`, `ru`, `ru-RU`, `russian`, самоназвания языков.
-- Расширения: `*.csv`, `*.tsv`, `*.json`, `*.xml`, `*.po`, `*.txt`, `*.ini`, `*.loc*`, `*.lang`, `*.strings`.
-- Диалоговые системы в Unity: Yarn, Ink, Pixel Crushers Dialogue System, Articy — их данные лежат в TextAsset или MonoBehaviour (UnityPy).
-- Данные игры с полями `audio` и `text` рядом (диалоговые графы, ScriptableObject).
-- GameMaker: чанк `STRG` в `data.win`, `datafiles/*.json|csv|ini` (см. `engines/gamemaker.md`).
-- Source: `resource/closecaption_<язык>.txt` (см. `engines/source.md`).
-- Bethesda: `Data/Strings/*.STRINGS|DLSTRINGS|ILSTRINGS` (см. `engines/bethesda.md`).
+- Files with language codes in the name or path: `en`, `en-US`, `english`, `ru`, `ru-RU`, `russian`, native language names.
+- Extensions: `*.csv`, `*.tsv`, `*.json`, `*.xml`, `*.po`, `*.txt`, `*.ini`, `*.loc*`, `*.lang`, `*.strings`.
+- Dialogue systems in Unity: Yarn, Ink, Pixel Crushers Dialogue System, Articy; their data sits in a TextAsset or MonoBehaviour (UnityPy).
+- Game data with `audio` and `text` fields side by side (dialogue graphs, ScriptableObjects).
+- GameMaker: the `STRG` chunk in `data.win`, `datafiles/*.json|csv|ini` (see `engines/gamemaker.md`).
+- Source: `resource/closecaption_<language>.txt` (see `engines/source.md`).
+- Bethesda: `Data/Strings/*.STRINGS|DLSTRINGS|ILSTRINGS` (see `engines/bethesda.md`).
 
-## Как связать текст с голосом
+## How to link text to voice
 
-1. Общий ключ: имя аудиофайла или записи = ключ строки (самый частый случай).
-2. Ключ в метаданных звукового события.
-3. Таблица диалогов игры с полями звука и текста.
-4. Распознавание речи оригинала и нечёткое сопоставление (в CLI v0.1 нет).
+1. Shared key: the audio file or entry name = the string key (the most common case).
+2. A key in the sound event metadata.
+3. The game's dialogue table with sound and text fields.
+4. Speech recognition of the original plus fuzzy matching (not in CLI v0.1).
 
-## Что проверить в найденном тексте
+## What to check in the texts found
 
-- Есть ли **официальный перевод** на целевой язык: тогда режим `official` или `adapt`, а термины берутся из него.
-- Плейсхолдеры и разметка: `{0}`, `{name}`, `%s`, `%d`, `\n`, `<color=…>`, `[tag]`, собственные теги игры.
-- Кодировка (UTF-8, UTF-16 у Source, старые кодировки у RPG Maker).
-- Шрифты игры: есть ли глифы целевого алфавита (важно только при записи текста, в v0.1 тексты в игре не меняются).
+- Whether there is an **official translation** into the target language: then use mode `official` or `adapt`, and take the terminology from it.
+- Placeholders and markup: `{0}`, `{name}`, `%s`, `%d`, `\n`, `<color=…>`, `[tag]`, the game's own tags.
+- Encoding (UTF-8, UTF-16 in Source, legacy encodings in RPG Maker).
+- Game fonts: whether they have glyphs of the target alphabet (matters only when writing text; in v0.1 the texts in the game do not change).
 
-## Чего не делать
+## What not to do
 
-- Не распаковывать архивы игры внутрь папки игры.
-- Не переписывать текстовые файлы игры: в v0.1 тексты в игре не меняются.
+- Do not unpack game archives inside the game folder.
+- Do not rewrite the game's text files: in v0.1 the texts in the game do not change.

@@ -1,80 +1,80 @@
-# Установка, откат и повторное применение
+# Install, rollback and reapply
 
-Читай перед первой установкой и при любом сбое `install`, `uninstall`, `reapply`.
+Read this before the first install and on any failure of `install`, `uninstall` or `reapply`.
 
-## 1. Где что лежит
+## 1. Where things live
 
-| Путь (в папке проекта) | Что это |
+| Path (in the project folder) | What it is |
 |---|---|
-| `build/out/<relpath>` | собранные файлы, повторяют путь внутри папки игры |
-| `build/build_manifest.json` | что собрано: контейнеры, sha1 исходника (`src_sha1`) и результата (`out_sha1`), кодек, заменено/оставлено, модели и лицензии, `build_id` |
-| `build/backup/<relpath>` | копии оригиналов, сделанные перед заменой |
-| `build/install.json` | журнал установки: по каждому файлу `relpath`, `orig_sha1`, `new_sha1`, путь бэкапа; `state` (`installing`, `installed`, `uninstalled`), `build_id` |
+| `build/out/<relpath>` | built files; they mirror the path inside the game folder |
+| `build/build_manifest.json` | what was built: containers, sha1 of the source (`src_sha1`) and the result (`out_sha1`), codec, replaced/kept, models and licenses, `build_id` |
+| `build/backup/<relpath>` | copies of the originals made before replacement |
+| `build/install.json` | install log: for each file `relpath`, `orig_sha1`, `new_sha1`, backup path; `state` (`installing`, `installed`, `uninstalled`), `build_id` |
 
-Папка проекта — `BABELDUB_HOME/projects/<slug>` (Windows: `%LOCALAPPDATA%\BabelDub`). Бэкап живёт там же, а не в папке игры: проверка целостности Steam его не тронет, но **удаление папки проекта удаляет и бэкап**.
+The project folder is `BABELDUB_HOME/projects/<slug>`; `BABELDUB_HOME` defaults to `~/.babeldub` (Windows: `C:\Users\<user>\.babeldub`) and can be overridden with the `BABELDUB_HOME` environment variable. The backup lives there too, not in the game folder: a Steam integrity check will not touch it, but **deleting the project folder deletes the backup as well**.
 
-## 2. Что делает `install`
+## 2. What `install` does
 
-1. Отказ, если текущая сборка не прошла `verify` (сверяется `build_id`).
-2. Отказ, если запущен процесс из папки игры (игра, лаунчер, обработчик сбоев): на Windows открытый файл не заменить, а запущенная игра держит старые данные. Процессы только перечисляются, ничего не запускается.
-3. Отказ, если найден античит (EasyAntiCheat, BattlEye, XIGNCODE3, nProtect GameGuard, PunkBuster, EQU8 и др.): изменённые файлы могут стоить игроку бана. `--force` снимает этот запрет и запрет на запущенную игру — только для заведомо офлайн-одиночной игры и только по решению пользователя.
-4. Для каждого файла сборки — план по sha1:
-   - файл игры — тот оригинал, из которого собрано → бэкап и замена;
-   - в игре уже наша сборка этого же оригинала → замена новой сборкой;
-   - в игре уже то, что нужно → ничего;
-   - файл игры не оригинал и не наша сборка (обновление игры, другой мод) → **отказ всей установки** с подсказкой пересобрать.
-5. Проверка места на диске, затем запись: сначала журнал `install.json` (состояние `installing`), потом бэкап с проверкой sha1, потом атомарная замена (временный файл рядом и переименование). Сбой посреди установки возвращает уже заменённые файлы.
-6. Файлы контейнеров, которые были установлены раньше, но выпали из новой сборки, возвращаются к оригиналам.
+1. Refuses if the current build has not passed `verify` (checked by `build_id`).
+2. Refuses if a process from the game folder is running (the game, the launcher, the crash handler): on Windows an open file cannot be replaced, and a running game keeps the old data. Processes are only listed; nothing is started.
+3. Refuses if anti-cheat is found (EasyAntiCheat, BattlEye, XIGNCODE3, nProtect GameGuard, PunkBuster, EQU8 and others): modified files can get the player banned. `--force` lifts this ban and the running-game ban — only for a game known to be offline single-player, and only by the user's decision.
+4. For each build file — a plan based on sha1:
+   - the game file is the original the build was made from → back it up and replace it;
+   - the game already has our build of the same original → replace it with the new build;
+   - the game already has what is needed → nothing;
+   - the game file is neither the original nor our build (a game update, another mod) → **the whole install is refused**, with a hint to rebuild.
+5. Checks disk space, then writes: first the `install.json` log (state `installing`), then the backup with a sha1 check, then the atomic replacement (a temporary file next to the target plus a rename). A failure in the middle of the install restores the files already replaced.
+6. Container files that were installed earlier but dropped out of the new build are restored to the originals.
 
-Вывод: `installed[]`, `unchanged`, `files`, `backup`, `backed_up`, `rollback`; при проблемах — `attention[]` (например, «no valid backup» — бэкап файла не удалось подтвердить).
+Output: `installed[]`, `unchanged`, `files`, `backup`, `backed_up`, `rollback`; on problems — `attention[]` (for example, "no valid backup" — the file's backup could not be confirmed).
 
-`--dry-run` показывает план (`plan`, `write`, `stale`) без записи — полезно перед первой установкой.
+`--dry-run` shows the plan (`plan`, `write`, `stale`) without writing anything — useful before the first install.
 
-## 3. Что делает `uninstall`
+## 3. What `uninstall` does
 
-Для каждого файла из журнала:
+For each file in the log:
 
-| Состояние файла в игре | Действие |
+| State of the file in the game | Action |
 |---|---|
-| наша сборка | вернуть оригинал из бэкапа; бэкап сначала сверяется по sha1, повреждённый или пропавший бэкап — `failed[]` |
-| уже оригинал | ничего (`already_original`) |
-| файл, которого в игре не было, добавлен сборкой | удалить |
-| такого добавленного файла уже нет | ничего |
-| ни оригинал, ни наша сборка (игра обновилась поверх) | **оставить как есть** (`left_changed`): это новая версия файла игры, её нельзя затирать старым бэкапом. `--force` всё же вернёт проверенный бэкап |
+| our build | restore the original from the backup; the backup is checked by sha1 first, a damaged or missing backup goes to `failed[]` |
+| already the original | nothing (`already_original`) |
+| a file the game did not have, added by the build | delete it |
+| such an added file is already gone | nothing |
+| neither the original nor our build (the game updated on top) | **leave it as is** (`left_changed`): this is a new version of the game file and must not be overwritten with an old backup. `--force` restores the verified backup anyway |
 
-Вывод: `restored[]`, `already_original`, `state`; при проблемах — `left_changed[]`, `failed[]` и `hint`. Код 3, если что-то осталось.
+Output: `restored[]`, `already_original`, `state`; on problems — `left_changed[]`, `failed[]` and `hint`. Exit code 3 if anything is left.
 
-Если `uninstall` не может вернуть файл (бэкап повреждён или удалён, файл занят): закрыть игру и повторить; если бэкапа нет — восстановить оригиналы средствами лаунчера («Проверить целостность файлов» в Steam и аналоги).
+If `uninstall` cannot restore a file (the backup is damaged or deleted, the file is locked): close the game and retry; if there is no backup, restore the originals with the launcher's tools ("Verify integrity of game files" in Steam and its equivalents).
 
-## 4. Что делает `reapply`
+## 4. What `reapply` does
 
-Нужен, когда оригиналы вернулись сами: обновление игры, «Проверить целостность файлов» в Steam, переустановка.
+Needed when the originals came back on their own: a game update, "Verify integrity of game files" in Steam, a reinstall.
 
-- Для каждого контейнера сборки: если в игре снова оригинал, из которого делалась сборка, — поставить сборку снова (с бэкапом); если там уже наша сборка — ничего (`current`).
-- Если игра выпустила **новую версию** контейнера (sha1 не совпадает ни с оригиналом, ни со сборкой) — `changed[]` и код 3. Озвучку для него нужно собрать заново из новых оригиналов: по подсказке из вывода `build` (только изменённые контейнеры) → `verify` → `install`. Если обновление меняло реплики, может понадобиться заново пройти `extract` и последующие стадии для новых строк.
-- Отказ, если озвучка не установлена (`nothing to reapply`): тогда нужен `install`.
+- For each build container: if the game again has the original the build was made from, install the build again (with a backup); if it already has our build, do nothing (`current`).
+- If the game shipped a **new version** of a container (its sha1 matches neither the original nor the build) — `changed[]` and exit code 3. The dub for it must be rebuilt from the new originals: follow the hint from the output — `build` (changed containers only) → `verify` → `install`. If the update changed lines, you may need to run `extract` and the following stages again for the new lines.
+- Refuses if the dub is not installed (`nothing to reapply`): then `install` is needed.
 
-## 5. Сценарии
+## 5. Scenarios
 
-| Ситуация | Что делать |
+| Situation | What to do |
 |---|---|
-| пользователь хочет вернуть оригинальную озвучку | `babeldub uninstall` |
-| игра обновилась, озвучка пропала | `babeldub reapply`; при `changed[]` — пересборка этих контейнеров |
-| Steam «Проверить целостность» вернул оригиналы | `babeldub reapply` |
-| в игре нет звука в репликах или игра падает после установки | `babeldub uninstall`; для FMOD — пересобрать с другим кодеком (`babeldub build --codec pcm16`), `verify`, `install` |
-| установка прервалась (выключение ПК) | повторить `babeldub install`: журнал `installing` и sha1 покажут, какие файлы уже заменены |
-| антивирус блокирует замену | сообщить пользователю, какой файл не заменён (`failed[]` или ошибка `install`); решение об исключениях антивируса принимает он сам; затем повторить команду |
-| папку проекта удалили | бэкапа больше нет: вернуть оригиналы только через лаунчер игры |
+| the user wants the original voices back | `babeldub uninstall` |
+| the game updated and the dub is gone | `babeldub reapply`; on `changed[]` — rebuild those containers |
+| Steam "Verify integrity" restored the originals | `babeldub reapply` |
+| lines have no sound in the game, or the game crashes after install | `babeldub uninstall`; for FMOD — rebuild with a different codec (`babeldub build --codec pcm16`), `verify`, `install` |
+| the install was interrupted (the PC shut down) | rerun `babeldub install`: the `installing` log and sha1 show which files were already replaced |
+| an antivirus blocks the replacement | tell the user which file was not replaced (`failed[]` or the `install` error); the user decides on antivirus exclusions; then rerun the command |
+| the project folder was deleted | the backup is gone: restore the originals only through the game's launcher |
 
-## 6. Хук-охранник (Claude Code)
+## 6. Guard hook (Claude Code)
 
-Плагин BabelDub в Claude Code ставит хук `PreToolUse`: он блокирует запись, удаление и перемещение файлов внутри папок игр из реестра `BABELDUB_HOME/games.json` (туда игру добавляет `babeldub init`) любыми инструментами агента — кроме команд `babeldub install`, `babeldub uninstall`, `babeldub reapply`. Проверка эвристическая (разбор командной строки, без выполнения) и при любой собственной ошибке пропускает действие. Отключить её для сессии можно переменной окружения `BABELDUB_GUARD=off` — только по явной просьбе пользователя.
+In Claude Code, the BabelDub plugin installs a `PreToolUse` hook: it blocks writing, deleting and moving files inside game folders from the `BABELDUB_HOME/games.json` registry (`babeldub init` adds the game there) by any agent tool — except the `babeldub install`, `babeldub uninstall` and `babeldub reapply` commands. The check is heuristic (it parses the command line without executing it) and lets the action through on any error of its own. It can be disabled for the session with the environment variable `BABELDUB_GUARD=off` — only at the user's explicit request.
 
-На других хостах хуков нет; защиту обеспечивает сам CLI: в папку игры он пишет только этими тремя командами.
+Other hosts have no hooks; protection comes from the CLI itself: it writes to the game folder only with these three commands.
 
-## 7. Чего не делать
+## 7. What not to do
 
-- Не копировать файлы из `build/out` в игру руками: так не будет бэкапа и журнала, и `uninstall` не сможет откатить.
-- Не удалять `build/backup` и папку проекта, пока озвучка установлена.
-- Не «чинить» `install.json` руками.
-- Не распространять `build/out` и бэкапы: в них ассеты игры.
+- Do not copy files from `build/out` into the game by hand: there will be no backup and no log, and `uninstall` will not be able to roll back.
+- Do not delete `build/backup` or the project folder while the dub is installed.
+- Do not "fix" `install.json` by hand.
+- Do not distribute `build/out` or the backups: they contain game assets.

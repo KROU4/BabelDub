@@ -1,63 +1,63 @@
-# Голосовые референсы персонажа
+# Character voice references
 
-Читай при проверке референсов главных персонажей, при `no_ref[]` и предупреждениях об ослабленных правилах.
+Read this when checking the references of the main characters, when `no_ref[]` is not empty, and when you see warnings about relaxed rules.
 
-## 1. Зачем референс, если промпт — сама реплика
+## 1. Why a reference, if the prompt is the line itself
 
-Главный голосовой промпт дубляжа — оригинальная реплика той же строки (`tts.ref_strategy=line`, скилл `babeldub-voice`): она переносит и тембр, и эмоцию этой фразы. Референс персонажа (`char`) нужен там, где реплика в промпт не годится:
+The main voice prompt of the dub is the original recording of the same line (`tts.ref_strategy=line`, skill `babeldub-voice`): it carries both the timbre and the emotion of that phrase. The character reference (`char`) is needed where the line cannot serve as a prompt:
 
-- короткие реплики («Да», «Эй!») — меньше `tts.line_ref_min_s` (1,6 с);
-- реплики с музыкой или шумом под голосом (`has_bed`) и нечленораздельные (`nonverbal`);
-- реплики без текста оригинала;
-- перегенерация с другим промптом после решения QA `reref`.
+- short lines ("Yes", "Hey!") below `tts.line_ref_min_s` (1.6 s);
+- lines with music or noise under the voice (`has_bed`) and non-verbal lines (`nonverbal`);
+- lines without original text;
+- regeneration with a different prompt after the QA decision `reref`.
 
-QA также сравнивает голос каждого дубля с референсом персонажа (`sim_char`). Значит, плохой референс портит и синтез, и оценку качества.
+QA also compares the voice of every dubbed line with the character reference (`sim_char`). So a bad reference spoils both the synthesis and the quality score.
 
-## 2. Как CLI выбирает референсы
+## 2. How the CLI picks references
 
-Для каждого **выбранного** персонажа `babeldub cast` берёт его оригинальные реплики и фильтрует:
+For every **selected** character, `babeldub cast` takes the character's original lines and filters them:
 
-1. **Флаги:** без `has_bed`, `nonverbal`, `alt_take`, `no_text`, `no_audio`.
-2. **Длительность:** от `--min-ref-s` (3 с) до `--max-ref-s` (12 с); идеал около 7 с.
-3. **Текст оригинала известен** — он станет `ref_text` промпта.
-4. **Уровень:** нет клиппинга, пик не ниже −40 дБ, громкость речи не ниже −40 дБ.
-5. **Оценка:** близость длительности к 7 с и нормальный уровень речи (от −30 до −8 дБ); если установлен воркер `qc` — ещё и близость к «центроиду» голоса персонажа (самые типичные для него реплики выигрывают). Итог: 0,4 × эвристика + 0,6 × сходство с центроидом.
-6. **Ослабление правил**, если ничего не нашлось: сначала длительность 1,5–20 с, потом без требования текста, потом оба. Тогда в `warnings` будет «no ideal reference, rules relaxed (…)».
+1. **Flags:** no `has_bed`, `nonverbal`, `alt_take`, `no_text`, `no_audio`.
+2. **Duration:** from `--min-ref-s` (3 s) to `--max-ref-s` (12 s); the ideal is about 7 s.
+3. **Known original text**: it becomes the `ref_text` of the prompt.
+4. **Level:** no clipping, peak not below −40 dB, speech loudness not below −40 dB.
+5. **Score:** closeness of the duration to 7 s and a normal speech level (−30 to −8 dB); if the `qc` worker is installed, also closeness to the "centroid" of the character's voice (the most typical lines win). Total: 0.4 × heuristic + 0.6 × similarity to the centroid.
+6. **Relaxing the rules** if nothing qualifies: first duration 1.5–20 s, then no text requirement, then both. In that case `warnings` contains "no ideal reference, rules relaxed (…)".
 
-Лучшие `--refs` (до 3) кандидатов копируются в `cast/refs/<char_id>/<uid>.wav` и записываются в `cast/refs.jsonl`: `ref_id`, `char_id`, `line_id`, `wav`, `text`, `lang`, `dur_s`, `score`, `chosen`, `rank`. Первый по рангу — основной (`chosen`).
+The best `--refs` (up to 3) candidates are copied to `cast/refs/<char_id>/<uid>.wav` and recorded in `cast/refs.jsonl`: `ref_id`, `char_id`, `line_id`, `wav`, `text`, `lang`, `dur_s`, `score`, `chosen`, `rank`. The top-ranked one is the primary reference (`chosen`).
 
-## 3. Что делает референс хорошим
+## 3. What makes a good reference
 
-| Признак | Почему | Плохой пример |
+| Property | Why | Bad example |
 |---|---|---|
-| нейтральная подача | `char` используют для коротких и «грязных» реплик любой эмоции; нейтральный тембр переносится в них предсказуемо | крик, шёпот, смех, плач, пение |
-| чистый звук | модель клонирует и фон | музыка, эхо, рация, шум улицы |
-| 3–12 с речи | короче — тембр нестабилен; длиннее 15 с — CLI обрежет промпт и потеряет транскрипт | «Хм.», монолог на 25 с |
-| текст точно совпадает с аудио | транскрипт выравнивает промпт | субтитр сокращён или переписан относительно озвучки |
-| типичный голос персонажа | QA сравнивает дубли с ним | реплика, где персонаж изображает другого, говорит с набитым ртом, по телефону |
-| тот же актёр | — | реплика, ошибочно приписанная персонажу |
+| neutral delivery | `char` is used for short and "dirty" lines of any emotion; a neutral timbre transfers into them predictably | shouting, whispering, laughing, crying, singing |
+| clean sound | the model clones the background too | music, echo, radio, street noise |
+| 3–12 s of speech | shorter: the timbre is unstable; longer than 15 s: the CLI trims the prompt and loses the transcript | "Hmm.", a 25-second monologue |
+| text matches the audio exactly | the transcript aligns the prompt | the subtitle is shortened or rewritten relative to the voice-over |
+| the character's typical voice | QA compares dubbed lines with it | a line where the character imitates someone else, talks with a full mouth, or speaks over the phone |
+| the same actor | — | a line wrongly attributed to the character |
 
-## 4. Как проверить (роль caster)
+## 4. How to check (caster role)
 
-Звук ты не слышишь. Проверка — по тексту, флагам и числам:
+You cannot hear audio. Check by text, flags and numbers:
 
-1. Найди раздел персонажа в `cast/casting_sheet.md` или запроси референсы: `babeldub query --where char=<char_id> --fields id,text.src,audio.dur_s,flags --limit 20` и сверь с `ref_id` из листа кастинга.
-2. **Текст референса.** Восклицательные знаки подряд, капслок, «Аааа!», «*шёпотом*», смех в тексте, ремарки — признаки эмоциональной подачи. Короткие вопросы и спокойные повествовательные фразы — хорошие кандидаты.
-3. **Сцена и ключ.** Ключи вроде `_shout`, `_whisper`, `_radio`, `_phone`, `_scream`, сцены боя и погони — подозрительны для нейтрального референса.
-4. **Флаги** `has_bed`, `nonverbal` у референса быть не должно (если правила ослаблены — может; это предупреждение).
+1. Find the character's section in `cast/casting_sheet.md`, or query the references: `babeldub query --where char=<char_id> --fields id,text.src,audio.dur_s,flags --limit 20`, and match them against the `ref_id` values in the casting sheet.
+2. **Reference text.** Repeated exclamation marks, all caps, "Aaaah!", "*whispering*", laughter in the text, stage directions are signs of emotional delivery. Short questions and calm narrative sentences are good candidates.
+3. **Scene and key.** Keys like `_shout`, `_whisper`, `_radio`, `_phone`, `_scream`, and fight or chase scenes are suspicious for a neutral reference.
+4. **Flags** `has_bed` and `nonverbal` must not be on a reference (if the rules were relaxed, they may be; that is a warning).
 
-Что делать с плохим референсом в v0.1:
+What to do with a bad reference in v0.1:
 
-- если у персонажа несколько референсов, а плох только первый — отметь в `notes`: QA при `reref` перейдёт к следующему;
-- если плохи все — `notes` персонажа, `warnings` в ответе, строка в отчёте. Можно повторить `babeldub cast --refs 3 --min-ref-s 4` с другими границами длительности; выбирать конкретный файл вручную v0.1 не позволяет;
-- если у главного персонажа вообще нет хорошего референса, это повод держать для него `tts.ref_strategy=line` (по умолчанию `auto` и так возьмёт `line` для всех пригодных реплик) и не переходить на `char`.
+- if the character has several references and only the first is bad, record it in `notes`: on `reref`, QA moves on to the next one;
+- if all of them are bad, record it in the character's `notes`, in `warnings` of your answer, and as a line in the report. You can re-run `babeldub cast --refs 3 --min-ref-s 4` with different duration bounds; v0.1 does not let you pick a specific file by hand;
+- if a main character has no good reference at all, keep `tts.ref_strategy=line` for them (the default `auto` already takes `line` for every usable line) and do not switch to `char`.
 
-## 5. Язык референса
+## 5. Reference language
 
-Референс несёт фонетику своего языка; при синтезе на другом языке возможен акцент (скилл `babeldub-voice`, `references/ref-strategy.md`, раздел про акцент). Если в игре несколько языков озвучки, референсы берутся из той локали, которую извлёк `extract`. Сравнение языков референса — ручной эксперимент пилота; его итог фиксируется в отчёте.
+A reference carries the phonetics of its language; synthesis in another language may come out with an accent (skill `babeldub-voice`, `references/ref-strategy.md`, the accent section). If the game has voice-overs in several languages, references come from the locale that `extract` extracted. Comparing reference languages is a manual pilot experiment; record its outcome in the report.
 
-## 6. Чего не делать
+## 6. What not to do
 
-- Не «чистить» референсы (шумодав, эквалайзер, нормализация): промпт должен звучать, как герой в игре.
-- Не склеивать несколько реплик в один референс вручную.
-- Не брать референсом реплику другого персонажа «с похожим голосом»: QA сравнивает с оригиналом этого персонажа, и такой дубль провалит сходство.
+- Do not "clean" references (denoising, EQ, normalization): the prompt must sound like the character in the game.
+- Do not splice several lines into one reference by hand.
+- Do not use another character's line "with a similar voice" as a reference: QA compares against this character's originals, and such a dubbed line fails the similarity check.

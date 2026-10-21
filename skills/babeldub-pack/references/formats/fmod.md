@@ -1,66 +1,66 @@
-# FMOD Studio: банки `.bank` и FSB5
+# FMOD Studio: `.bank` banks and FSB5
 
-Уровень в v0.1: **A** — CLI сам извлекает, пересобирает, проверяет и ставит. Зашифрованный банк — уровень C (только сообщение). Разведка формата (как CLI находит реплики, ключи и говорящих) — в скилле `babeldub-recon`, `references/audio/fmod.md`; здесь — сборка.
+Level in v0.1: **A** — the CLI extracts, rebuilds, verifies and installs on its own. An encrypted bank is level C (a message only). Format recon (how the CLI finds lines, keys and speakers) is in the `babeldub-recon` skill, `references/audio/fmod.md`; this file covers the build.
 
-Пометки: [проверено] — первоисточник или эксперимент; [по гайдам] — вторичный источник; [не проверено] — гипотеза.
+Markers: [verified] — a primary source or an experiment; [per guides] — a secondary source; [not verified] — a hypothesis.
 
-## 1. Устройство
+## 1. Structure
 
-- `.bank` — RIFF-файл формы `FEV `: чанк `FMT` (версия формата), `LIST 'PROJ'` (метаданные: события, аудиотаблица `STBL`, таблица `SNDH`, хэши …) и один или несколько чанков `SND `, в каждом — обычный FSB5 [проверено: vgmstream, разбор тестовой игры].
-- `SNDH` — таблица FSB внутри банка: для каждого FSB абсолютное смещение и размер. FSB5 начинается с абсолютного смещения, кратного 32 [проверено].
-- FSB5: заголовок, заголовки сабсаундов (частота, каналы, смещение данных, число сэмплов), таблица имён, данные. **Кодек один на весь FSB** (поле в заголовке): 2 = PCM16, 15 = Vorbis, 16 = FADPCM, 17 = Opus и др. [проверено: vgmstream `fsb5.c`].
-- Аудиотаблица (`STBL`, localized audio table) ссылается на сабсаунды **по индексу**; имена сабсаундов могут повторяться. Поэтому порядок, число и имена записей менять нельзя [проверено по поведению, семантика `STBL` не описана публично].
-- `Master.strings.bank` — пути событий и GUID; для замены звука не нужен [проверено].
+- `.bank` is a RIFF file of form `FEV `: a `FMT` chunk (format version), `LIST 'PROJ'` (metadata: events, the `STBL` audio table, the `SNDH` table, hashes …) and one or more `SND ` chunks, each holding a plain FSB5 [verified: vgmstream, analysis of the test game].
+- `SNDH` is the table of FSBs inside the bank: an absolute offset and size for each FSB. An FSB5 starts at an absolute offset that is a multiple of 32 [verified].
+- FSB5: header, subsound headers (sample rate, channels, data offset, sample count), name table, data. **One codec for the whole FSB** (a header field): 2 = PCM16, 15 = Vorbis, 16 = FADPCM, 17 = Opus, etc. [verified: vgmstream `fsb5.c`].
+- The audio table (`STBL`, localized audio table) references subsounds **by index**; subsound names can repeat. Therefore the order, number and names of entries must not change [verified by behavior; the semantics of `STBL` are not publicly documented].
+- `Master.strings.bank` holds event paths and GUIDs; it is not needed to replace audio [verified].
 
-## 2. Как CLI пересобирает
+## 2. How the CLI rebuilds
 
-1. Каждый FSB, в который попадают замены, переписывается **целиком** в целевом кодеке с тем же числом, порядком и именами сабсаундов. Оставленные сабсаунды копируются байт в байт, если кодек не меняется, иначе декодируются (свой декодер PCM/FADPCM или `vgmstream-cli`) и перекодируются с исходной частотой и каналами.
-2. FSB без замен копируются байт в байт.
-3. Новый FSB вставляется на место старого с выравниванием по 32 байтам; обновляются `SNDH`, размер чанка `SND ` и размер RIFF. Метаданные вне `SND` не меняются.
+1. Every FSB that receives replacements is rewritten **in full** in the target codec, with the same number, order and names of subsounds. Kept subsounds are copied byte for byte if the codec does not change; otherwise they are decoded (our own PCM/FADPCM decoder or `vgmstream-cli`) and re-encoded with the original sample rate and channels.
+2. FSBs without replacements are copied byte for byte.
+3. The new FSB is inserted in place of the old one with 32-byte alignment; `SNDH`, the `SND ` chunk size and the RIFF size are updated. Metadata outside `SND` does not change.
 
-Кодек (`babeldub build --codec`):
+Codec (`babeldub build --codec`):
 
-| `--codec` | Что будет | Размер (FSB с репликами Low-Budget Repairs, 140,7 мин) |
+| `--codec` | Result | Size (FSB with the Low-Budget Repairs lines, 140.7 min) |
 |---|---|---|
-| `auto` (по умолчанию) | если оригинал уже PCM16 или FADPCM — тот же; иначе (Vorbis) — FADPCM | — |
-| `fadpcm` | FMOD ADPCM, наш кодер | ~305 МБ при 48 кГц |
-| `pcm16` | несжатый | ~1115 МБ при 48 кГц |
-| (оригинал) Vorbis | своим кодом не пишется | 83,5 МБ |
+| `auto` (default) | if the original is already PCM16 or FADPCM — the same; otherwise (Vorbis) — FADPCM | — |
+| `fadpcm` | FMOD ADPCM, our encoder | ~305 MB at 48 kHz |
+| `pcm16` | uncompressed | ~1115 MB at 48 kHz |
+| (original) Vorbis | our code does not write it | 83.5 MB |
 
-Почему не Vorbis: FMOD не хранит setup-заголовок Vorbis в FSB5, только его CRC32, а сам заголовок берёт из встроенной таблицы (vgmstream знает 161 такой заголовок). Свой кодер должен попасть ровно в них, иначе звук не декодируется. Надёжно Vorbis кодирует только FSBank или `fsbankcl.exe` из FMOD Engine; скачивание требует аккаунта FMOD, а класть эти файлы в плагин нельзя [проверено по документации и исходникам; путь через FSBank в v0.1 не реализован].
+Why not Vorbis: FMOD does not store the Vorbis setup header in FSB5, only its CRC32, and takes the header itself from a built-in table (vgmstream knows 161 such headers). Our own encoder would have to hit exactly those, otherwise the audio does not decode. Only FSBank or `fsbankcl.exe` from the FMOD Engine encode Vorbis reliably; downloading them requires an FMOD account, and these files must not be shipped in the plugin [verified by documentation and source code; the FSBank path is not implemented in v0.1].
 
-PCM16 и FADPCM рантайм FMOD принимает: банк, пересобранный из `Dialogue_en-US.bank` тестовой игры с PCM16 (48 и 24 кГц) и FADPCM, загрузился в FMOD Studio 2.03.06 (библиотека из папки игры, через ctypes), ключи разрешились, реплики проигрались; декодирование совпало с эталоном бит в бит [проверено экспериментом]. **В запущенной игре это не проверялось** [не проверено].
+The FMOD runtime accepts PCM16 and FADPCM: a bank rebuilt from the test game's `Dialogue_en-US.bank` with PCM16 (48 and 24 kHz) and FADPCM loaded in FMOD Studio 2.03.06 (the library from the game folder, via ctypes), the keys resolved and the lines played; decoding matched the reference bit for bit [verified by experiment]. **This was not checked in the running game** [not verified].
 
-## 3. Проверка (`babeldub verify`)
+## 3. Verification (`babeldub verify`)
 
-Без запуска игры: размер RIFF и обход чанков; записи `SNDH` (магия FSB5, выравнивание, размеры); метаданные вне `SND` байт в байт как в оригинале; то же число FSB; в каждом FSB то же число, порядок и имена сабсаундов; нетронутые FSB байт в байт; оставленные сабсаунды с прежними частотой, каналами и длиной; заменённые декодируются в ожидаемую длину и совпадают с нашим звуком; при наличии — перекрёстная проверка `vgmstream-cli`.
+Without running the game: the RIFF size and the chunk walk; the `SNDH` entries (FSB5 magic, alignment, sizes); metadata outside `SND` byte for byte as in the original; the same number of FSBs; in every FSB the same number, order and names of subsounds; untouched FSBs byte for byte; kept subsounds with the same sample rate, channels and length; replaced ones decode to the expected length and match our audio; if available — a cross-check with `vgmstream-cli`.
 
-`verify --game-runtime` дополнительно загружает `fmodstudio` из папки игры в отдельном процессе (вывод NOSOUND, ничего не играет, игра не запускается) и для пробных реплик сверяет `getSoundInfo(ключ)`, длину и PCM с нашим декодером бит в бит. Только по явной просьбе пользователя.
+`verify --game-runtime` additionally loads `fmodstudio` from the game folder in a separate process (NOSOUND output, nothing plays, the game does not start) and, for sample lines, checks `getSoundInfo(key)`, the length and the PCM against our decoder bit for bit. Only at the user's explicit request.
 
-## 4. Длина реплик
+## 4. Line length
 
-- **Асинхронный programmer instrument** (типичный для диалогов) играет реплику целиком: замена 6,0 с вместо 1,92 с проиграна полностью [проверено экспериментом на рантайме].
-- **Синхронный инструмент** играет только часть звука под курсором таймлайна — длинная замена обрежется; у асинхронного есть режим Cut, который тоже может оборвать звук [проверено по документации FMOD; режим Cut в событиях конкретной игры не проверялся].
-- **Катсцены** на таймлайне движка (Unity Timeline и т. п.) имеют фиксированную длину клипа: CLI помечает такие реплики `fixed_length`.
-- Поэтому популярные GUI-инструменты пересборки требуют «длительность такая же или меньше»; BabelDub разрешает длиннее только там, где это безопасно (политика длины — скилл `babeldub-voice`).
+- An **asynchronous programmer instrument** (typical for dialogue) plays the whole line: a 6.0 s replacement for a 1.92 s line played in full [verified by experiment on the runtime].
+- A **synchronous instrument** plays only the part of the sound under the timeline cursor — a long replacement gets cut; the asynchronous one has a Cut mode that can also cut the sound off [verified by FMOD documentation; Cut mode in a specific game's events was not checked].
+- **Cutscenes** on the engine's timeline (Unity Timeline, etc.) have a fixed clip length: the CLI marks such lines `fixed_length`.
+- That is why popular GUI rebuild tools require "the same duration or shorter"; BabelDub allows longer lines only where it is safe (length policy — the `babeldub-voice` skill).
 
-## 5. Локализованные банки и выбор языка
+## 5. Localized banks and language selection
 
-- Localized audio table собирает отдельный банк на каждую локаль с суффиксом (`Dialogue_en-US.bank`, `Dialogue_pl-PL.bank`); метаданные и GUID событий у них одинаковы, различаются аудиотаблица и FSB [проверено на тестовой игре].
-- Какой банк загрузить, решает **код игры**. В v0.1 CLI заменяет банк той локали, из которой извлечены реплики. Пример: в Low-Budget Repairs в меню голоса зашиты только `en-US` и `pl-PL`, и по умолчанию грузится `en-US`; поэтому русская озвучка заменяет `Dialogue_en-US.bank`, и игрок с английской настройкой голоса услышит русский. Отдельный `Dialogue_ru-RU.bank` игра сама не загрузит без патча кода или мод-лоадера ([runtime-mods.md](runtime-mods.md)) [проверено разбором IL2CPP тестовой игры].
-- Скажи об этом пользователю в отчёте: заменён голос выбранного языка, откат — `babeldub uninstall`.
+- A localized audio table builds a separate bank per locale with a suffix (`Dialogue_en-US.bank`, `Dialogue_pl-PL.bank`); their metadata and event GUIDs are identical, the audio table and the FSBs differ [verified on the test game].
+- **The game's code** decides which bank to load. In v0.1 the CLI replaces the bank of the locale the lines were extracted from. Example: in Low-Budget Repairs only `en-US` and `pl-PL` are hard-coded in the voice menu, and `en-US` loads by default; so the Russian dub replaces `Dialogue_en-US.bank`, and a player with the English voice setting hears Russian. The game will not load a separate `Dialogue_ru-RU.bank` by itself without a code patch or a mod loader ([runtime-mods.md](runtime-mods.md)) [verified by analysis of the test game's IL2CPP].
+- Tell the user this in the report: the voice of the selected language was replaced; rollback — `babeldub uninstall`.
 
-## 6. Ловушки
+## 6. Pitfalls
 
-| Ловушка | Признак | Что делать |
+| Pitfall | Symptom | What to do |
 |---|---|---|
-| зашифрованный банк | `scan`: уровень C, нет магии FSB5 | v0.1 не собирает; ключ шифрования хранится в настройках FMOD у игры [по гайдам] — в отчёт |
-| старые версии FMOD | версия банка вне известного vgmstream диапазона | `verify` покажет проблемы; не устанавливать |
-| SFX и видео в том же FSB, что и реплики | при смене кодека они перекодируются тоже | громкость и звучание не меняются, но размер файла растёт; проверь на слух ролики (`video_*`) в игре |
-| размер PCM16 | банк в 10+ раз больше оригинала | `fadpcm` (по умолчанию для Vorbis) |
-| Steam «Проверить целостность» | банк вернулся к оригиналу | `babeldub reapply` |
+| encrypted bank | `scan`: level C, no FSB5 magic | v0.1 does not build it; the encryption key is stored in the game's FMOD settings [per guides] — put it in the report |
+| old FMOD versions | bank version outside the range vgmstream knows | `verify` will show problems; do not install |
+| SFX and video in the same FSB as the lines | they get re-encoded too when the codec changes | loudness and sound do not change, but the file size grows; check the videos (`video_*`) in the game by ear |
+| PCM16 size | the bank is 10+ times larger than the original | `fadpcm` (the default for Vorbis) |
+| Steam "Verify integrity" | the bank reverted to the original | `babeldub reapply` |
 
-## 7. Чего не делать
+## 7. What not to do
 
-- Не пересобирать банк сторонними GUI-утилитами поверх установленной озвучки: журнал `install.json` перестанет совпадать, и `uninstall` оставит файл как «изменённый».
-- Не класть `fsbankcl.exe`, `fsbank.dll` или другие файлы FMOD Engine в проект и в плагин: лицензия FMOD этого не разрешает.
+- Do not rebuild the bank with third-party GUI tools on top of the installed dub: the `install.json` log will no longer match, and `uninstall` will leave the file as "changed".
+- Do not put `fsbankcl.exe`, `fsbank.dll` or other FMOD Engine files into the project or the plugin: the FMOD license does not allow it.

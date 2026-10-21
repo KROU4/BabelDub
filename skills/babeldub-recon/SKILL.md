@@ -1,146 +1,148 @@
 ---
 name: babeldub-recon
-description: "Find out what is inside a video game before localization and dubbing (localize game, dub, revoice): detect the engine, audio middleware (FMOD, Wwise, CRIWARE, loose files, video) and text tables, inventory voice lines, extract original audio and link subtitles to voice via babeldub scan, extract and link. Use for the recon stage or questions like: что внутри игры, какой движок, где озвучка и субтитры, переведи игру, переозвучь."
+description: "Find out what is inside a video game before localizing it and dubbing it in the original characters' voices: detect the engine, audio middleware (FMOD, Wwise, CRIWARE, loose files, video) and text tables, inventory the voice lines, extract the original audio and link subtitles to voice lines with babeldub scan, extract and link. Use for the recon stage or for questions like 'what engine is this game on', 'where are the voice files and subtitles', 'can this be repacked'. Example triggers: 'localize this game', 'dub the voices', 'что внутри игры', 'какой движок', 'где озвучка и субтитры', 'переведи игру', 'сделай русскую озвучку', 'doblar el juego'."
 license: MIT
 compatibility: "Local agent with shell access to the game folder (read-only); babeldub CLI 0.1.0 installed via the babeldub-doctor skill; vgmstream-cli for decoding. Works without GPU."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: разведка игры
+# BabelDub: game recon
 
-Скилл отвечает на вопросы «на каком движке игра», «где лежит голос и тексты», «на каких языках», «можно ли это собрать обратно» и готовит оригинальные реплики. Эти реплики потом станут голосовыми промптами дубляжа: озвучка пойдёт голосом оригинального героя. Поэтому разведка должна найти **сам голос** каждой реплики и **её точный исходный текст**.
+This skill answers "what engine is the game on", "where are the voice and the texts", "which languages", "can it be packed back", and prepares the original voice lines. Those lines later become the voice prompts for dubbing: the dub speaks in the original character's voice. So recon must find **the voice itself** for every line and **its exact source text**.
 
-Скилл универсален. Low-Budget Repairs (Unity + FMOD + Unity Localization) в примерах только иллюстрация.
+Talk to the user in the user's language. Keep commands, flags, paths and JSON field names as they are.
 
-## Правила
+The skill is universal. Low-Budget Repairs (Unity + FMOD + Unity Localization) appears in the examples only as an illustration.
 
-1. **Папка игры только для чтения.** Не копировать в неё, не переименовывать, не распаковывать на месте. Все рабочие файлы — в проекте (`BABELDUB_HOME/projects/<slug>`).
-2. **Ничего не запускать из папки игры:** ни exe, ни скрипты, ни DLL. В папках игр бывают посторонние исполняемые файлы. Проверка рантаймом игры (`babeldub verify --game-runtime`) — только по явной просьбе пользователя.
-3. **Бинарные файлы игры целиком не читать.** Смотри листинг папок, имена и размеры файлов, вывод CLI.
-4. **Неизвестное перечислять, а не угадывать.** Если формат не опознан, так и пиши.
-5. **Онлайн-игры и античит** (EasyAntiCheat, BattlEye, VAC в мультиплеере): по умолчанию не модифицировать; сообщить пользователю.
+## Rules
 
-## Шаги
+1. **The game folder is read-only.** Do not copy into it, rename anything in it or unpack in place. All working files go into the project (`BABELDUB_HOME/projects/<slug>`).
+2. **Run nothing from the game folder:** no exe, scripts or DLLs. Game folders sometimes contain unrelated executables. Checking with the game's own runtime (`babeldub verify --game-runtime`) happens only at the user's explicit request.
+3. **Do not read whole game binaries.** Look at folder listings, file names and sizes, and CLI output.
+4. **List the unknown, do not guess.** If a format is not recognized, say so.
+5. **Online games and anti-cheat** (EasyAntiCheat, BattlEye, VAC in multiplayer): do not modify by default; tell the user.
 
-1. Проект должен существовать (`babeldub init`, скилл `babeldub-localize`). Проверь: `babeldub status`.
-2. `babeldub scan` → `engine{id, version, backend}`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `next`. Подробный отчёт — `inventory/report.md` (читай по разделам; раздел «Что читать дальше» перечисляет справочники).
-3. Прочитай справочники **только для найденного**:
-   - движок — `references/engines/<движок>.md`;
-   - звук — `references/audio/<формат>.md`;
-   - тексты — `references/text/<система>.md`.
+## Steps
 
-   CLI сам называет нужные файлы: `inventory/recon.json` → `refs.recon` и `refs.pack`, а в `report.md` — раздел «Что читать дальше» (пути вида `skills/babeldub-recon/references/audio/fmod.md`). Какие справочники соответствуют найденному:
+1. The project must exist (`babeldub init`, skill `babeldub-localize`). Check with `babeldub status`.
+2. `babeldub scan` → `engine{id, version, backend}`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `next`. The detailed report is `inventory/report.md` (read it section by section; the "What to read next" section lists the references).
+3. Read the references **only for what was found**:
+   - engine: `references/engines/<engine>.md`;
+   - audio: `references/audio/<format>.md`;
+   - texts: `references/text/<system>.md`.
 
-   | Найдено (id в `recon.json`) | Файл |
+   The CLI names the files itself: `inventory/recon.json` → `refs.recon` and `refs.pack`, and in `report.md` the "What to read next" section (paths like `skills/babeldub-recon/references/audio/fmod.md`). Which references match what was found:
+
+   | Found (id in `recon.json`) | File |
    |---|---|
-   | `unity` (backend `il2cpp` или `mono`) | `references/engines/unity.md` |
-   | `unreal` | `references/engines/unreal.md` (тексты — `references/text/unreal-locres.md`) |
+   | `unity` (backend `il2cpp` or `mono`) | `references/engines/unity.md` |
+   | `unreal` | `references/engines/unreal.md` (texts: `references/text/unreal-locres.md`) |
    | `godot` | `references/engines/godot.md`, `references/text/godot.md` |
    | `renpy` | `references/engines/renpy.md`, `references/text/renpy.md` |
    | `rpgmaker` | `references/engines/rpgmaker.md`, `references/text/rpgmaker.md` |
    | `gamemaker` | `references/engines/gamemaker.md` |
    | `source`, `source2` | `references/engines/source.md` |
    | `bethesda` | `references/engines/bethesda.md` |
-   | `cryengine`, `xna`, `electron`, `love2d`, `telltale`, неопознанный движок | `references/engines/other.md` |
+   | `cryengine`, `xna`, `electron`, `love2d`, `telltale`, unrecognized engine | `references/engines/other.md` |
    | `fmod` | `references/audio/fmod.md` |
    | `wwise` | `references/audio/wwise.md` |
    | `criware` | `references/audio/criware.md` |
    | `bink` | `references/audio/video.md` |
-   | отдельные аудиофайлы (адаптер `loose`) | `references/audio/loose.md` |
+   | separate audio files (adapter `loose`) | `references/audio/loose.md` |
    | `unity-localization` | `references/text/unity-localization.md` |
-   | `gettext` и прочие текстовые форматы | `references/text/generic.md` |
+   | `gettext` and other text formats | `references/text/generic.md` |
 4. `babeldub extract` → `lines`, `by_kind{}`, `minutes`, `texts`, `locales[]`.
 5. `babeldub link` → `linked`, `unlinked`, `with_official_target`.
-6. Проверь результат выборками `babeldub query` (всегда с `--fields` и `--limit`):
-   - нераспознанный звук: `--where kind=unknown --fields id,entry.key,audio.dur_s --limit 30`;
-   - диалоги без текста: `--where kind=dialogue --fields id,entry.key,flags --limit 30` и ищи `no_text`.
-7. Сводку верни оркестратору в формате роли scout (`babeldub-localize/references/roles/scout.md`).
+6. Check the result with `babeldub query` samples (always with `--fields` and `--limit`):
+   - unrecognized audio: `--where kind=unknown --fields id,entry.key,audio.dur_s --limit 30`;
+   - dialogue without text: `--where kind=dialogue --fields id,entry.key,flags --limit 30` and look for `no_text`.
+7. Return the summary to the orchestrator in the scout role format (`babeldub-localize/references/roles/scout.md`).
 
-Коды выхода: 0 — дальше; 2 — смотри `hint` (обычно не пройдена предыдущая стадия); 3 — есть предупреждения или неразобранные записи, разбери по справочникам; 4 — не хватает декодера или окружения, скилл `babeldub-doctor`; 1 — ошибка, смотри `logs/` проекта.
+Exit codes: 0: continue; 2: read `hint` (usually a previous stage has not been run); 3: there are warnings or unparsed entries, work through them with the references; 4: a decoder or the environment is missing, use the `babeldub-doctor` skill; 1: error, see the project's `logs/`.
 
-## Как опознать движок и middleware по файлам
+## How to identify the engine and middleware from files
 
-| Признак в папке игры | Вывод | Справочник |
+| Sign in the game folder | Conclusion | Reference |
 |---|---|---|
 | `<Game>_Data/`, `UnityPlayer.dll`, `globalgamemanagers` | Unity | `engines/unity.md` |
 | `GameAssembly.dll` + `<Game>_Data/il2cpp_data/Metadata/global-metadata.dat` | Unity IL2CPP | `engines/unity.md` |
 | `<Game>_Data/Managed/Assembly-CSharp.dll` | Unity Mono | `engines/unity.md` |
-| `StreamingAssets/aa/catalog.json` или `catalog.bin`, `settings.json` | Unity Addressables | `engines/unity.md` |
-| бандлы `localization-string-tables-*`, `localization-assets-shared*` | Unity Localization | `text/unity-localization.md` |
-| ассет `I2Languages` (обычно в `resources.assets`) | I2 Localization | `text/i2-localization.md` |
+| `StreamingAssets/aa/catalog.json` or `catalog.bin`, `settings.json` | Unity Addressables | `engines/unity.md` |
+| bundles `localization-string-tables-*`, `localization-assets-shared*` | Unity Localization | `text/unity-localization.md` |
+| asset `I2Languages` (usually in `resources.assets`) | I2 Localization | `text/i2-localization.md` |
 | `*.bank`, `*.strings.bank`, `fmodstudio.dll` / `fmod*.dll` | FMOD Studio | `audio/fmod.md` |
-| `*.fsb` без `.bank` | FMOD Core (FSB) или FMOD Ex (FSB4, старше) | `audio/fmod.md` |
+| `*.fsb` without `.bank` | FMOD Core (FSB) or FMOD Ex (FSB4, older) | `audio/fmod.md` |
 | `*.bnk`, `*.wem`, `*.pck`, `AkSoundEngine*.dll`, `GeneratedSoundBanks/` | Wwise | `audio/wwise.md` |
 | `*.acb`, `*.awb`, `*.cpk`, `*.usm`, `cri_*.dll` | CRIWARE (ADX2, Sofdec) | `audio/criware.md`, `audio/video.md` |
-| `<Game>/Content/Paks/*.pak` (+ `.utoc`/`.ucas`), `<Game>-Win64-Shipping.exe` | Unreal 4/5 (`.utoc` — IoStore) | `engines/unreal.md`, `text/unreal-locres.md` |
-| `*.pck` с магией `GDPC` или exe с GDPC в хвосте | Godot | `engines/godot.md`, `text/godot.md` |
+| `<Game>/Content/Paks/*.pak` (+ `.utoc`/`.ucas`), `<Game>-Win64-Shipping.exe` | Unreal 4/5 (`.utoc` means IoStore) | `engines/unreal.md`, `text/unreal-locres.md` |
+| `*.pck` with the `GDPC` magic, or an exe with GDPC at its end | Godot | `engines/godot.md`, `text/godot.md` |
 | `game/`, `renpy/`, `*.rpa`, `*.rpyc` | Ren'Py | `engines/renpy.md`, `text/renpy.md` |
-| `www/js/rpg_core.js` или `js/rmmz_core.js`, `data/System.json` | RPG Maker MV или MZ | `engines/rpgmaker.md`, `text/rpgmaker.md` |
-| `Game.rgss3a`, `RGSS3*.dll` (`.rgss2a` — VX, `.rgssad` — XP) | RPG Maker VX Ace / VX / XP | `engines/rpgmaker.md` |
+| `www/js/rpg_core.js` or `js/rmmz_core.js`, `data/System.json` | RPG Maker MV or MZ | `engines/rpgmaker.md`, `text/rpgmaker.md` |
+| `Game.rgss3a`, `RGSS3*.dll` (`.rgss2a` is VX, `.rgssad` is XP) | RPG Maker VX Ace / VX / XP | `engines/rpgmaker.md` |
 | `data.win`, `audiogroup*.dat`, `options.ini` | GameMaker | `engines/gamemaker.md` |
 | `*_dir.vpk`, `gameinfo.txt`, `bin/` | Source 1 | `engines/source.md` |
-| `game/*/pak01_dir.vpk`, `gameinfo.gi`, ресурсы `*_c` | Source 2 | `engines/source.md` |
-| `Data/*.bsa` или `*.ba2`, `*.esm`, `Data/Sound/Voice/` | Bethesda Creation Engine | `engines/bethesda.md` |
-| отдельные `*.wav`, `*.ogg`, `*.mp3` в папках вроде `voice/`, `vo/`, `sound/` | свободные аудиофайлы | `audio/loose.md` |
-| `*.bik`, `*.bk2`, `*.usm`, `*.mp4`, `*.webm` | видеоролики | `audio/video.md` |
-| ничего из перечисленного | свой движок | `engines/other.md`, `text/generic.md` |
+| `game/*/pak01_dir.vpk`, `gameinfo.gi`, `*_c` resources | Source 2 | `engines/source.md` |
+| `Data/*.bsa` or `*.ba2`, `*.esm`, `Data/Sound/Voice/` | Bethesda Creation Engine | `engines/bethesda.md` |
+| separate `*.wav`, `*.ogg`, `*.mp3` in folders like `voice/`, `vo/`, `sound/` | loose audio files | `audio/loose.md` |
+| `*.bik`, `*.bk2`, `*.usm`, `*.mp4`, `*.webm` | video clips | `audio/video.md` |
+| none of the above | custom engine | `engines/other.md`, `text/generic.md` |
 
-Middleware звука от движка не зависит: FMOD и Wwise встречаются и в Unity, и в Unreal, и в своих движках. Проверяй оба признака.
+Audio middleware does not depend on the engine: FMOD and Wwise appear in Unity, in Unreal and in custom engines. Check both signs.
 
-## Уровни поддержки в BabelDub v0.1
+## Support levels in BabelDub v0.1
 
-| Уровень | Что значит | Что делать |
+| Level | Meaning | What to do |
 |---|---|---|
-| **A** | CLI сам извлекает, собирает и проверяет без проприетарного ПО | стадии идут автоматически |
-| **B** | нужен инструмент, который ставит пользователь (WwiseConsole, UE Editor, Godot той же версии, `fsbankcl`), мод-лоадер или ручной шаг | честно описать в отчёте, что нужно; CLI v0.1 такой сборки не делает |
-| **C** | в v0.1 только чтение и инструкции | описать путь из справочника; ничего не собирать руками |
+| **A** | the CLI extracts, rebuilds and verifies on its own, without proprietary software | stages run automatically |
+| **B** | needs a tool the user installs (WwiseConsole, UE Editor, Godot of the same version, `fsbankcl`), a mod loader or a manual step | describe honestly in the report what is needed; CLI v0.1 does not do such a rebuild |
+| **C** | v0.1 only reads and gives instructions | describe the path from the reference; do not rebuild anything by hand |
 
-Уровень конкретной игры показывает `babeldub scan` (поле `level` — лучший уровень среди голосовых ассетов, C — если голос не найден; уровень каждого ассета — в `voice_assets[]` и `inventory/assets.jsonl`). Адаптеры CLI v0.1:
+`babeldub scan` shows the level of a specific game (field `level`: the best level among voice assets, C if no voice was found; the level of each asset is in `voice_assets[]` and `inventory/assets.jsonl`). CLI v0.1 adapters:
 
-| Адаптер | Что умеет | Уровень |
+| Adapter | What it does | Level |
 |---|---|---|
-| `fmod` | банки FMOD Studio (`.bank`, FSB5): реплики, декодирование, сборка своего FSB5, проверка | A |
-| `loose` | отдельные аудиофайлы (OGG, WAV, MP3, FLAC, Opus, M4A, AAC) в «голосовых» папках: реплики, декодирование, перекодирование замены в исходный формат | A |
-| `unity-localization` | чтение таблиц Unity Localization для `link`; запись в игру — нет | A для чтения (C, если в бандлах нет typetree) |
-| `wwise` | `.bnk`, `.pck`, `.wem`: реплики и декодирование для голосовых промптов; сборка — нет (нужен WwiseConsole) | B |
+| `fmod` | FMOD Studio banks (`.bank`, FSB5): voice lines, decoding, building its own FSB5, verification | A |
+| `loose` | separate audio files (OGG, WAV, MP3, FLAC, Opus, M4A, AAC) in "voice" folders: voice lines, decoding, re-encoding the replacement into the original format | A |
+| `unity-localization` | reads Unity Localization tables for `link`; no writing into the game | A for reading (C if the bundles have no typetree) |
+| `wwise` | `.bnk`, `.pck`, `.wem`: voice lines and decoding for voice prompts; no rebuild (needs WwiseConsole) | B |
 
-Остальные движки из таблицы выше CLI пока не разбирает: для них — только справочники.
+The CLI does not parse the other engines from the table above yet: for them there are only references.
 
-## Как связываются реплика и субтитр
+## How a voice line links to its subtitle
 
-По частоте встречаемости:
+From most to least common:
 
-1. **Общий ключ:** имя файла озвучки (имя сабсаунда FSB или Wwise, имя SoundWave) совпадает с ключом строки. В Low-Budget Repairs так связаны 1187 реплик.
-2. **Ключ в метаданных события:** имя programmer instrument у FMOD, Dialogue Event у Wwise, `DialogueWave` у UE, токен caption у Source (это имя sound script).
-3. **Данные игры:** диалоговые графы, ScriptableObject или JSON с полями `audio` и `text`. Их находят декомпиляцией или поиском строк; в v0.1 это ручная работа и материал для отчёта.
-4. **Ren'Py:** идентификатор реплики и `config.auto_voice`.
-5. **Запасной путь** — распознавание речи оригинала и нечёткое сопоставление. В CLI v0.1 его нет: реплики без текста остаются с оригинальным голосом.
+1. **Shared key:** the voice file name (FSB or Wwise subsound name, SoundWave name) equals the string key. In Low-Budget Repairs 1187 lines are linked this way.
+2. **Key in event metadata:** the programmer instrument name in FMOD, the Dialogue Event in Wwise, `DialogueWave` in UE, the caption token in Source (it is the sound script name).
+3. **Game data:** dialogue graphs, ScriptableObjects or JSON with `audio` and `text` fields. They are found by decompilation or string search; in v0.1 this is manual work and material for the report.
+4. **Ren'Py:** the line identifier and `config.auto_voice`.
+5. **Fallback:** speech recognition of the original plus fuzzy matching. CLI v0.1 does not have it: lines without text keep the original voice.
 
-`babeldub link` реализует пункт 1 (точный ключ → нормализованный ключ → имя файла). Остальное — гипотезы scout в отчёте.
+`babeldub link` implements item 1 (exact key → normalized key → file name). Everything else goes into the scout report as hypotheses.
 
-## Что важно сохранить при замене звука
+## What to preserve when replacing audio
 
-- Порядок, число и имена записей в контейнере: на индексы ссылаются таблицы движка.
-- Число каналов (моно → моно). Частоту и кодек FMOD менять позволяет; для Wwise, CRI и Unity это не проверено.
-- Громкость относительно оригинальной реплики, а не абсолютная норма.
-- Длительность там, где звук играет синхронный инструмент или таймлайн (катсцены, видео) и где длина записана в метаданных (Bethesda `.lip`, фонемы Source). CLI помечает такие реплики `fixed_length`.
+- The order, count and names of entries in a container: engine tables refer to them by index.
+- The channel count (mono → mono). FMOD allows changing the sample rate and codec; for Wwise, CRI and Unity this is not verified.
+- Loudness relative to the original line, not an absolute target.
+- Duration where the audio is played by a synchronous instrument or a timeline (cutscenes, video) and where the length is stored in metadata (Bethesda `.lip`, Source phonemes). The CLI flags such lines `fixed_length`.
 
-## Ловушки, о которых надо сообщить
+## Pitfalls to report
 
-- Steam «Проверить целостность файлов» и обновления возвращают оригиналы → `babeldub reapply`.
-- Античит → отказ по умолчанию.
-- Заранее посчитанный липсинк (`.lip`, фонемы Source, FaceFX) при замене звука не обновится.
-- Шрифты без кириллицы — важно, если меняются тексты (в v0.1 тексты в игре не меняются).
-- Шифрование: ключ FMOD-банка, AES в Unreal и Godot, ключи HCA у CRIWARE, шифрованные ресурсы RPG Maker.
-- Распространять стоит патчер, а не собранные игровые контейнеры: в них чужие ассеты.
+- Steam "Verify integrity of game files" and game updates restore the originals → `babeldub reapply`.
+- Anti-cheat → refuse by default.
+- Precomputed lip sync (`.lip`, Source phonemes, FaceFX) is not updated when the audio is replaced.
+- Fonts without the target alphabet (for example, Cyrillic): matters if texts change (in v0.1 the texts in the game do not change).
+- Encryption: the FMOD bank key, AES in Unreal and Godot, HCA keys in CRIWARE, encrypted RPG Maker resources.
+- Distribute a patcher, not rebuilt game containers: those contain other people's assets.
 
-## Справочники
+## References
 
-Читай файл только когда `scan` или листинг папки показал соответствующий признак.
+Read a file only when `scan` or the folder listing showed the matching sign.
 
-- Движки: `references/engines/` — [unity](references/engines/unity.md), [unreal](references/engines/unreal.md), [godot](references/engines/godot.md), [renpy](references/engines/renpy.md), [rpgmaker](references/engines/rpgmaker.md), [gamemaker](references/engines/gamemaker.md), [source](references/engines/source.md), [bethesda](references/engines/bethesda.md), [other](references/engines/other.md).
-- Звук: `references/audio/` — [fmod](references/audio/fmod.md), [wwise](references/audio/wwise.md), [criware](references/audio/criware.md), [loose](references/audio/loose.md), [video](references/audio/video.md).
-- Тексты: `references/text/` — [unity-localization](references/text/unity-localization.md), [i2-localization](references/text/i2-localization.md), [unreal-locres](references/text/unreal-locres.md), [godot](references/text/godot.md), [renpy](references/text/renpy.md), [rpgmaker](references/text/rpgmaker.md), [generic](references/text/generic.md).
+- Engines: `references/engines/`: [unity](references/engines/unity.md), [unreal](references/engines/unreal.md), [godot](references/engines/godot.md), [renpy](references/engines/renpy.md), [rpgmaker](references/engines/rpgmaker.md), [gamemaker](references/engines/gamemaker.md), [source](references/engines/source.md), [bethesda](references/engines/bethesda.md), [other](references/engines/other.md).
+- Audio: `references/audio/`: [fmod](references/audio/fmod.md), [wwise](references/audio/wwise.md), [criware](references/audio/criware.md), [loose](references/audio/loose.md), [video](references/audio/video.md).
+- Texts: `references/text/`: [unity-localization](references/text/unity-localization.md), [i2-localization](references/text/i2-localization.md), [unreal-locres](references/text/unreal-locres.md), [godot](references/text/godot.md), [renpy](references/text/renpy.md), [rpgmaker](references/text/rpgmaker.md), [generic](references/text/generic.md).
 
-Пометки в справочниках: «проверено» — первоисточник или эксперимент на тестовой игре; «по гайдам сообщества» — вторичный источник; «не проверено» — гипотеза, перед действием её нужно подтвердить.
+Markers in the references: "verified" means a primary source or an experiment on a test game; "per community guides" means a secondary source; "not verified" means a hypothesis that must be confirmed before acting on it.

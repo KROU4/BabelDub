@@ -1,40 +1,40 @@
-# Подмена в рантайме: мод-лоадеры
+# Runtime substitution: mod loaders
 
-Уровень в v0.1: **C** — запасной путь, когда нативный контейнер не собрать (Vorbis без FSBank, Wwise без Authoring, зашифрованные паки) или когда игра сама не загрузит новый языковой файл. CLI v0.1 такие моды не делает; этот справочник нужен, чтобы честно описать пользователю варианты.
+Level in v0.1: **C** — a fallback path when the native container cannot be built (Vorbis without FSBank, Wwise without Authoring, encrypted packs) or when the game will not load a new language file by itself. CLI v0.1 does not make such mods; this reference exists so you can describe the options to the user honestly.
 
-Пометки: [проверено] — первоисточник (README, релизы); [по гайдам]; [не проверено].
+Markers: [verified] — a primary source (README, releases); [per guides]; [not verified].
 
-## 1. Инструменты
+## 1. Tools
 
-| Инструмент | Для чего | Состояние |
+| Tool | Purpose | Status |
 |---|---|---|
-| BepInEx | Unity: 5.x для Mono (стабильный 5.4.23.5); **6.x для IL2CPP** — только pre-release `6.0.0-pre.2` (2024-08-27) и ночные сборки | [проверено: релизы], LGPL-2.1 |
-| MelonLoader | Unity Mono и IL2CPP, v0.7.3 | [проверено: релизы], Apache-2.0 |
-| XUnity.AutoTranslator | перехват текста интерфейса Unity, ручные файлы перевода, подмена текстур и шрифтов; для IL2CPP по README поддержка неполная | [проверено: README], MIT |
-| RE-UE4SS | Unreal: Lua/C++ моды, хуки функций | [проверено: репозиторий] |
-| плагины подмены звука | Unity: Harmony-патч `AudioSource` и загрузка OGG; FMOD: перехват programmer sound и `createSound(файл)` | для каждой игры свой [по гайдам] |
+| BepInEx | Unity: 5.x for Mono (stable 5.4.23.5); **6.x for IL2CPP** — only pre-release `6.0.0-pre.2` (2024-08-27) and nightly builds | [verified: releases], LGPL-2.1 |
+| MelonLoader | Unity Mono and IL2CPP, v0.7.3 | [verified: releases], Apache-2.0 |
+| XUnity.AutoTranslator | intercepts Unity UI text, manual translation files, texture and font substitution; per the README, IL2CPP support is incomplete | [verified: README], MIT |
+| RE-UE4SS | Unreal: Lua/C++ mods, function hooks | [verified: repository] |
+| audio substitution plugins | Unity: a Harmony patch of `AudioSource` and OGG loading; FMOD: intercepting the programmer sound and `createSound(file)` | different for every game [per guides] |
 
-## 2. Пример: FMOD-игра на Unity [не проверено в игре]
+## 2. Example: an FMOD game on Unity [not verified in a game]
 
-Плагин BepInEx 6 (IL2CPP) или MelonLoader перехватывает колбэк programmer sound (или `getSoundInfo`) и отдаёт `RuntimeManager.CoreSystem.createSound("BabelDub/<язык>/<ключ>.ogg", CREATESTREAM)`; FMOD Core читает OGG, WAV и FLAC напрямую.
+A BepInEx 6 (IL2CPP) or MelonLoader plugin intercepts the programmer sound callback (or `getSoundInfo`) and returns `RuntimeManager.CoreSystem.createSound("BabelDub/<language>/<key>.ogg", CREATESTREAM)`; FMOD Core reads OGG, WAV and FLAC directly.
 
-- Плюсы: банки не трогаются, файлы реплик лежат рядом, можно сделать отдельный язык озвучки (например, `ru-RU`, который игра сама не загрузила бы).
-- Минусы: мод-лоадер ставит пользователь; хук на IL2CPP-код хрупок к обновлениям игры; BepInEx 6 всё ещё pre-release.
+- Pros: the banks are not touched, the line files sit alongside, and a separate voice language is possible (for example, `ru-RU`, which the game would not load by itself).
+- Cons: the user installs the mod loader; a hook into IL2CPP code breaks easily on game updates; BepInEx 6 is still a pre-release.
 
-## 3. Когда предлагать
+## 3. When to suggest it
 
-- `babeldub build` отказал по уровню B/C, а нужный инструмент (Wwise Authoring, UE Editor) пользователь ставить не хочет.
-- Нужен **отдельный** язык озвучки, а игра выбирает файл голоса кодом (как `Dialogue_<язык>.bank` в Low-Budget Repairs).
-- Для текстов: перевод на лету без правки ассетов (XUnity), если субтитры нужно поменять, а запись таблиц ещё не поддерживается.
+- `babeldub build` refused because of level B/C, and the user does not want to install the required tool (Wwise Authoring, UE Editor).
+- A **separate** voice language is needed, and the game picks the voice file in code (like `Dialogue_<language>.bank` in Low-Budget Repairs).
+- For texts: on-the-fly translation without editing assets (XUnity), if the subtitles need to change and writing tables is not supported yet.
 
-## 4. Риски — назови их пользователю
+## 4. Risks — name them to the user
 
-- **Античит** и онлайн-режимы: инъекция кода может стоить бана. Только офлайн-одиночные игры.
-- **Антивирусы** реагируют на инъекцию DLL.
-- **Обновления игры** ломают хуки.
-- Плагин мод-лоадера — исполняемый код: BabelDub такой код не пишет и не запускает в v0.1; если пользователь берёт готовый плагин, он ставит его сам и на свой риск.
+- **Anti-cheat** and online modes: code injection can get the player banned. Offline single-player games only.
+- **Antivirus software** reacts to DLL injection.
+- **Game updates** break hooks.
+- A mod loader plugin is executable code: BabelDub does not write or run such code in v0.1; if the user takes a ready-made plugin, they install it themselves and at their own risk.
 
-## 5. Что BabelDub уже дал для такого пути
+## 5. What BabelDub already provides for this path
 
-- Озвучка в `post/audio/<uid>.wav` (WAV, частота и каналы как у оригинальной реплики, громкость выровнена под неё).
-- Соответствие реплик ключам движка: `babeldub query --fields id,entry.key,entry.event_path,uid --limit 50` (поле `entry` в `inventory/lines.jsonl`).
+- The dub in `post/audio/<uid>.wav` (WAV, sample rate and channels as in the original line, loudness matched to it).
+- The mapping of lines to engine keys: `babeldub query --fields id,entry.key,entry.event_path,uid --limit 50` (the `entry` field in `inventory/lines.jsonl`).

@@ -1,19 +1,19 @@
 ---
-description: Откатить озвучку BabelDub — вернуть оригинальные файлы игры из бэкапа
-argument-hint: "[slug проекта, папка проекта или папка игры]"
+description: Roll back a BabelDub dub — restore the game's original files from the backup
+argument-hint: "[project slug, project folder or game folder]"
 ---
 
-Откати установленную озвучку BabelDub по скиллу `babeldub-pack` (раздел про откат и `references/install-rollback.md`). Аргумент: $ARGUMENTS
+Roll back the installed BabelDub dub following the `babeldub-pack` skill (the rollback section and `references/install-rollback.md`). Talk to the user in the user's language. Argument: $ARGUMENTS
 
-1. Определи проект:
-   - аргумент пустой — активный проект (`babeldub status` покажет, какой);
-   - аргумент — slug или папка проекта — передавай как `--project <аргумент>`;
-   - аргумент — папка игры — найди её проект в `babeldub games` и возьми его slug.
-   Если проектов несколько и неясно, какой откатывать, покажи список из `babeldub games` и спроси пользователя.
-2. `babeldub uninstall [--project <slug>]`. Ничего не копируй и не удаляй в папке игры руками.
-3. По выводу:
-   - `restored[]` — какие файлы вернулись к оригиналам;
-   - «the game is running» — попроси закрыть игру и её лаунчер, затем повтори;
-   - `left_changed[]` — файлы, которые игра обновила после установки: они оставлены как есть (это новые оригиналы), `--force` используй только по явной просьбе пользователя;
-   - `failed[]` — бэкап недоступен или файл занят: предложи вернуть оригиналы проверкой целостности файлов в лаунчере игры.
-4. Коротко сообщи итог и как вернуть озвучку: `babeldub install`.
+1. Identify the project:
+   - empty argument — the active project (`babeldub status` shows which one);
+   - a slug or a project folder — pass it as `--project <argument>`;
+   - a game folder — find its project in `babeldub games` and take its slug.
+   If there are several projects and it is unclear which one to roll back, show the list from `babeldub games` and ask the user.
+2. `babeldub uninstall [--project <slug>]`. Do not copy or delete anything in the game folder by hand.
+3. From the output:
+   - `restored[]` — the files returned to the originals;
+   - "the game is running" — ask the user to close the game and its launcher, then retry;
+   - `left_changed[]` — files the game updated after the install: they are left as they are (they are the new originals); use `--force` only on the user's explicit request;
+   - `failed[]` — the backup is unavailable or a file is locked: suggest restoring the originals with the file integrity check in the game's launcher.
+4. Briefly report the result and how to bring the dub back: `babeldub install`.

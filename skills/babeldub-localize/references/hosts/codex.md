@@ -1,50 +1,51 @@
-# Хост: OpenAI Codex (CLI и desktop)
+# Host: OpenAI Codex (CLI and desktop)
 
-Читай один раз в начале работы, если ты работаешь в Codex. Главное отличие от Claude Code: субагентов BabelDub здесь нет, **все роли выполняются в основной сессии**.
+Read once at the start of work if you run in Codex. The main difference from Claude Code: there are no BabelDub subagents here, **all roles run in the main session**.
 
-## Установка
+## Installation
 
-- `codex plugin marketplace add KROU4/BabelDub`, затем `codex plugin add babeldub@babeldub`, затем новая сессия. Codex читает манифест маркетплейса Claude (`.claude-plugin/marketplace.json`); это проверено на Codex CLI 0.158.
-- Скиллы видны как `babeldub:babeldub-*`; вызов — `$babeldub-localize` или через `/skills`.
-- Только скиллы, без плагина: `npx skills add KROU4/BabelDub -a codex`.
+- `codex plugin marketplace add KROU4/BabelDub`, then `codex plugin add babeldub@babeldub`, then a new session. Codex reads the Claude marketplace manifest (`.claude-plugin/marketplace.json`); verified on Codex CLI 0.158.
+- Skills appear as `babeldub:babeldub-*`; call one with `$babeldub-localize` or through `/skills`.
+- Skills only, without the plugin: `npx skills add KROU4/BabelDub -a codex`.
 
-CLI `babeldub` ставит скилл `babeldub-doctor`: его `skills/babeldub-doctor/scripts/bootstrap.py` найдёт `runtime/` рядом со скиллами (если плагин лежит целиком) или поставит CLI из git-тега релиза.
+The `babeldub-doctor` skill installs the `babeldub` CLI: its `skills/babeldub-doctor/scripts/bootstrap.py` finds `runtime/` next to the skills (if the whole plugin is present) or installs the CLI from the release git tag.
 
-## Действие → инструмент
+## Action → tool
 
-| Действие в скилле | Codex |
+| Action in the skill | Codex |
 |---|---|
-| запустить команду `babeldub …` | инструмент запуска команд оболочки; одна команда на вызов; JSON из stdout |
-| прочитать раздел отчёта | команда чтения части файла в оболочке (например, вывод строк с N по M); файлы проекта целиком не читать |
-| записать файл агента | правка файлов Codex или запись из оболочки (UTF-8 без BOM) |
-| задать вопрос пользователю | обычное сообщение с вариантами в основной сессии (только 2 вопроса) |
-| делегировать роль | выполнить роль самому (см. ниже) |
+| run a `babeldub …` command | the shell command tool; one command per call; JSON from stdout |
+| read a report section | a shell command that prints part of a file (for example, lines N to M); never read project files whole |
+| write an agent file | Codex file editing or writing from the shell (UTF-8 without BOM) |
+| ask the user a question | a plain message with options in the main session, in the user's language (only the 2 questions) |
+| delegate a role | perform the role yourself (see below) |
 
-## Роли в основной сессии
+## Roles in the main session
 
-Агентов Claude (`claude/agents/*`) Codex не загружает. Для каждой роли:
+Codex does not load the Claude agents (`claude/agents/*`). For every role:
 
-1. Прочитай файл роли `references/roles/<роль>.md` (frontmatter пропусти, тело — инструкция).
-2. Выполни шаги роли сам, соблюдая её правила.
-3. Сформируй JSON-сводку роли и используй её как результат шага оркестратора.
-4. Вернись к `SKILL.md` скилла `babeldub-localize`.
+1. Read the role file `references/roles/<role>.md` (skip the frontmatter; the body is the instruction).
+2. Perform the role's steps yourself, following its rules.
+3. Build the role's JSON summary and use it as the result of the orchestrator step.
+4. Return to `SKILL.md` of the `babeldub-localize` skill.
 
-Как беречь контекст без изоляции субагентов:
+How to save context without subagent isolation:
 
-- Пакеты перевода — строго по одному: прочитал пакет → записал `.out.jsonl` → `batch submit` → дальше. Не держи в рассуждениях содержимое прошлых пакетов: всё уже в файлах.
-- Для данных используй только `babeldub status`, `query` с `--fields` и `--limit`, `sample`.
-- После длинного цикла (перевод, синтез) начинай следующий шаг с `babeldub status`.
-- Параллельных переводчиков нет: перевод идёт последовательно. Если Codex настроен на собственных субагентов (`.codex/agents/*.toml`), BabelDub v0.1 их не поставляет; роли по-прежнему выполняются в основной сессии.
+- Translation batches strictly one at a time: read the batch → write `.out.jsonl` → `batch submit` → next. Do not keep the contents of earlier batches in your reasoning: everything is already in files.
+- For data use only `babeldub status`, `query` with `--fields` and `--limit`, and `sample`.
+- After a long loop (translation, synthesis) start the next step with `babeldub status`.
+- There are no parallel translators: translation runs sequentially. If Codex is set up with its own subagents (`.codex/agents/*.toml`), BabelDub v0.1 does not ship any; the roles still run in the main session.
 
-## Песочница и подтверждения
+## Sandbox and approvals
 
-- `babeldub setup` скачивает пакеты и веса моделей (сеть) и пишет в `BABELDUB_HOME` вне рабочей папки. Если песочница Codex это запрещает, команда упадёт с ошибкой доступа: запроси у пользователя разрешение на выполнение через механизм подтверждений Codex (это не вопрос о локализации, а разрешение на команду). Как именно поведёт себя конкретный режим песочницы, не проверено.
-- `babeldub install` пишет в папку игры. Это единственная команда, которой это разрешено.
+- `babeldub setup` downloads packages and model weights (network) and writes to `BABELDUB_HOME` (default `~/.babeldub`, `C:\Users\<user>\.babeldub` on Windows) outside the working folder. If the Codex sandbox forbids this, the command fails with an access error: request permission to run it through the Codex approval mechanism (this is not a localization question but a permission for a command). How a specific sandbox mode behaves is not verified.
+- GPU-first: the neural stages (`cast`, `synth`, `qa`) need the NVIDIA GPU. If `babeldub doctor` reports no GPU inside the sandbox although the machine has one, request permission to run the command outside the sandbox instead of accepting hours of CPU synthesis (not verified for each sandbox mode).
+- `babeldub install` writes to the game folder. It is the only command allowed to do so.
 
-## Хуки
+## Hooks
 
-Хуки плагинов Codex выполняет только при ручной установке в desktop-приложении. Без хуков работа не меняется: защиту папки игры и сохранение состояния обеспечивает CLI (`games.json`, бэкап, `babeldub status`). После сжатия контекста начни с `babeldub status`.
+Codex runs plugin hooks only when the plugin is installed manually in the desktop app. Without hooks the work does not change: the CLI provides game-folder protection and state (`games.json`, backup, `babeldub status`). After context compaction start with `babeldub status`.
 
-## Пути
+## Paths
 
-На подстановку `${CLAUDE_PLUGIN_ROOT}` в тексте скиллов в Codex не рассчитывай: по документации Codex выставляет `CLAUDE_PLUGIN_ROOT` и `CLAUDE_PLUGIN_DATA` для совместимости с хуками плагинов, про текст скиллов там ничего нет. Если в скилле встречается путь с `${CLAUDE_PLUGIN_ROOT}`, используй путь относительно папки скилла.
+Do not rely on `${CLAUDE_PLUGIN_ROOT}` being substituted in skill text in Codex: according to its documentation Codex sets `CLAUDE_PLUGIN_ROOT` and `CLAUDE_PLUGIN_DATA` for compatibility with plugin hooks, and says nothing about skill text. If a skill contains a path with `${CLAUDE_PLUGIN_ROOT}`, use the path relative to the skill folder.

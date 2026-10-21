@@ -1,56 +1,56 @@
 # Wwise (Audiokinetic): `.bnk`, `.wem`, `.pck`
 
-Читай, если в папке игры есть `*.bnk`, `*.wem`, `*.pck`, `AkSoundEngine*.dll` или `GeneratedSoundBanks/`.
+Read this if the game folder has `*.bnk`, `*.wem`, `*.pck`, `AkSoundEngine*.dll` or `GeneratedSoundBanks/`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**B** — адаптер `wwise` находит и декодирует голос, но не собирает:
+**B**: adapter `wwise` finds and decodes the voice but does not rebuild:
 
-- реплики из `.bnk` (медиа в `DATA` по `DIDX`), из `.pck` (стримы, внешние источники, банки внутри пакета) и из отдельных `.wem`;
-- имена — из `SoundbanksInfo.xml`/`.json`, если игра их поставляет, иначе ключом служит ID медиа;
-- язык — из языковой карты пакета или папки языка (`English(US)` → `en-US`);
-- декодирование: PCM напрямую, остальные кодеки — через `vgmstream-cli`.
+- voice lines from `.bnk` (media in `DATA` via `DIDX`), from `.pck` (streams, external sources, banks inside the package) and from separate `.wem` files;
+- names come from `SoundbanksInfo.xml`/`.json` if the game ships them; otherwise the media ID serves as the key;
+- the language comes from the package's language map or the language folder (`English(US)` → `en-US`);
+- decoding: PCM directly, other codecs through `vgmstream-cli`.
 
-Оригиналы годятся как голосовые промпты дубляжа, перевод и синтез идут как обычно. **Сборка невозможна без Wwise Authoring:** перекодировать WAV в `.wem` умеет только WwiseConsole той же версии Wwise, что у игры (нужен аккаунт Audiokinetic). `babeldub build` для таких ассетов возвращает код 2 «native rebuild is not automated (support level B)» — опиши пользователю путь ниже. План полной поддержки — v0.2.
+The originals work as voice prompts for dubbing; translation and synthesis run as usual. **Rebuilding is impossible without Wwise Authoring:** only WwiseConsole of the same Wwise version as the game can encode WAV into `.wem` (an Audiokinetic account is required). For such assets `babeldub build` returns code 2 "native rebuild is not automated (support level B)"; describe the path below to the user. Full support is planned for v0.2.
 
-## Форматы
+## Formats
 
-- **`.bnk`** — чанки `BKHD` (версия, ID банка), `DIDX` (ID медиа, смещение, размер), `DATA` (встроенные `.wem` или prefetch-часть стримов), `HIRC` (события, действия, звуки, контейнеры, параметры кодека), `STID`, `STMG`/`INIT` и др.
-- **`.wem`** — RIFF/RIFX `WAVE`, кодек в `fmt`: `0xFFFF` Vorbis (вариант Wwise с упакованными codebooks), `0x0002`/`0x8311` ADPCM/PTADPCM, `0x0001`/`0xFFFE` PCM, `0x3040`/`0x3041` Opus, `0x3039` OpusNX, а также XMA, AAC, ATRAC9, DSP.
-- **`.pck`** (`AKPK`) — языковая карта, таблицы банков, стримов и внешних источников. У локализованных игр отдельные `.pck` или папки по языкам; язык выбирается в рантайме (`SetCurrentLanguage`).
-- **ID** — 32-битные хэши FNV-1 от имён в нижнем регистре (ShortID). Имена восстанавливают списками `wwnames` (wwiser).
+- **`.bnk`**: chunks `BKHD` (version, bank ID), `DIDX` (media ID, offset, size), `DATA` (embedded `.wem` or the prefetch part of streams), `HIRC` (events, actions, sounds, containers, codec parameters), `STID`, `STMG`/`INIT` and others.
+- **`.wem`**: RIFF/RIFX `WAVE`, codec in `fmt`: `0xFFFF` Vorbis (the Wwise variant with packed codebooks), `0x0002`/`0x8311` ADPCM/PTADPCM, `0x0001`/`0xFFFE` PCM, `0x3040`/`0x3041` Opus, `0x3039` OpusNX, as well as XMA, AAC, ATRAC9, DSP.
+- **`.pck`** (`AKPK`): language map, tables of banks, streams and external sources. Localized games have separate `.pck` files or folders per language; the language is chosen at runtime (`SetCurrentLanguage`).
+- **IDs** are 32-bit FNV-1 hashes of lowercase names (ShortID). Names are recovered with `wwnames` lists (wwiser).
 
-## Связь реплики и субтитра
+## Linking a voice line to its subtitle
 
-Событие (`Play_VO_xxx`) → Sound → `sourceID` → `.wem`. Имя события или ID чаще всего лежит в данных диалогов игры рядом с ключом строки. Dialogue Events используют switch/state (персонаж, язык).
+Event (`Play_VO_xxx`) → Sound → `sourceID` → `.wem`. The event name or ID most often sits in the game's dialogue data next to the string key. Dialogue Events use switch/state (character, language).
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |---|---|
-| vgmstream | декодирование `.wem/.bnk/.pck`, TXTP |
-| wwiser | разбор `.bnk` в XML/дерево, имена, TXTP (событие → звуки) |
-| bnkextr | извлечение `.wem` из `.bnk` |
-| ww2ogg (+ revorb) | Wwise Vorbis → Ogg (старое) |
-| Wwise-Unpacker | пакетная распаковка `pck/bnk` |
-| BnkExtractor | библиотека извлечения `wem/bnk/pck` |
+| vgmstream | decodes `.wem/.bnk/.pck`, TXTP |
+| wwiser | parses `.bnk` into XML/a tree, names, TXTP (event → sounds) |
+| bnkextr | extracts `.wem` from `.bnk` |
+| ww2ogg (+ revorb) | Wwise Vorbis → Ogg (old) |
+| Wwise-Unpacker | batch unpacking of `pck/bnk` |
+| BnkExtractor | library for extracting `wem/bnk/pck` |
 
-## Пересборка
+## Rebuild
 
-1. **WAV → `.wem`** — только Wwise Authoring той же версии и с теми же Conversion Settings (кодек, качество, частота), что у игры. Пример рабочего вызова — в коде ZZAR: `WwiseConsole convert-external-source <project.wproj> --source-file list.wsources --output <dir>` (`.wsources` — XML с корнем `ExternalSourcesList`). По официальной документации Wwise синтаксис не проверен. Скачивание Wwise через Audiokinetic Launcher требует аккаунта.
-2. **Подмена в `.bnk`/`.pck`:** wwiseutil («replacement .wem files are allowed to be larger or smaller… all metadata… updated», не обновлялся с 2018), BNKReplacer, PckTool (.NET), mhws-sound-tool (Rust), RingingBloom (игры Capcom).
-3. Прецедент полного конвейера: hsr-ru-voiceover (Honkai: Star Rail) — английские `.wem` как референсы, WwiseConsole → `wem`, пересборка `pck`, установщик с откатом.
+1. **WAV → `.wem`**: only Wwise Authoring of the same version and with the same Conversion Settings (codec, quality, sample rate) as the game. A working call example is in the ZZAR code: `WwiseConsole convert-external-source <project.wproj> --source-file list.wsources --output <dir>` (`.wsources` is XML with the root `ExternalSourcesList`). The syntax is not verified against the official Wwise documentation. Downloading Wwise through the Audiokinetic Launcher requires an account.
+2. **Replacement inside `.bnk`/`.pck`:** wwiseutil ("replacement .wem files are allowed to be larger or smaller… all metadata… updated", not updated since 2018), BNKReplacer, PckTool (.NET), mhws-sound-tool (Rust), RingingBloom (Capcom games).
+3. A full-pipeline precedent: hsr-ru-voiceover (Honkai: Star Rail): English `.wem` files as references, WwiseConsole → `wem`, `pck` rebuild, an installer with rollback.
 
-## Подводные камни
+## Pitfalls
 
-- Кодек замены должен совпадать с исходным: тип источника и кодека записан в `HIRC` (по гайдам сообщества). Можно ли заменить Vorbis-`.wem` на PCM-`.wem` без правки `HIRC`, не проверено.
-- Стриминг с prefetch: начало звука лежит и в `DATA` банка, и в `.pck` — обновлять оба.
-- Одинаковые ID в нескольких `.pck` (например `SoundBank_*` и `Streamed_*` у Zenless Zone Zero).
-- Маркеры и cue в `.wem` иногда управляют субтитрами или липсинком (не проверено).
-- Длительность: обычные Play-действия её не ограничивают, Music Segments и тайминги катсцен — ограничивают.
-- Частоту и каналы при замене лучше сохранять: для Wwise допустимость изменения не проверена.
+- The replacement codec must match the original: the source and codec type are recorded in `HIRC` (per community guides). Whether a Vorbis `.wem` can be replaced with a PCM `.wem` without editing `HIRC` is not verified.
+- Streaming with prefetch: the start of the sound sits both in the bank's `DATA` and in the `.pck`, so update both.
+- Identical IDs in several `.pck` files (for example `SoundBank_*` and `Streamed_*` in Zenless Zone Zero).
+- Markers and cues in `.wem` sometimes drive subtitles or lip sync (not verified).
+- Duration: plain Play actions do not limit it; Music Segments and cutscene timings do.
+- Keep the sample rate and channels on replacement: whether Wwise tolerates changing them is not verified.
 
-## Ссылки
+## Links
 
 - vgmstream — https://github.com/vgmstream/vgmstream (`src/meta/wwise.c`)
 - wwiser — https://github.com/bnnm/wwiser ; bnkextr — https://github.com/eXpl0it3r/bnkextr ; ww2ogg — https://github.com/hcs64/ww2ogg

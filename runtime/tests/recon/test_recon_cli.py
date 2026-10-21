@@ -159,7 +159,7 @@ def test_scan_extract_link(env: dict[str, Any], capsys: pytest.CaptureFixture[st
     recon = read_json(project.path(layout.RECON))
     assert recon["engine"]["id"] == "renpy" and recon["adapters"]["loose"]["assets"] == 2
     report = project.path(layout.INVENTORY_REPORT).read_text(encoding="utf-8")
-    assert "# Разведка: Demo Game" in report and "Голосовые ассеты" in report and "game/voice" in report
+    assert "# Recon: Demo Game" in report and "Voice assets" in report and "game/voice" in report
     assert project.progress()["scan"]["status"] == "done"
 
     code, out = run(["extract", "--project", "demo", "--limit", "1"], capsys)

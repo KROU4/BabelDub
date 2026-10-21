@@ -1,53 +1,53 @@
 # RPG Maker (MV, MZ, XP, VX, VX Ace)
 
-Читай, если в папке игры есть `www/js/rpg_core.js`, `js/rmmz_core.js`, `data/System.json`, `Game.rgss3a`/`.rgss2a`/`.rgssad` или `RGSS*.dll`.
+Read this if the game folder has `www/js/rpg_core.js`, `js/rmmz_core.js`, `data/System.json`, `Game.rgss3a`/`.rgss2a`/`.rgssad` or `RGSS*.dll`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 RPG Maker не разбирает; только инструкции. План: позже, текст — уровень A (через rvpacker-txt-rs), голос — B (зависит от плагинов игры). Если незашифрованные аудиофайлы лежат отдельно, `babeldub scan` может показать их через адаптер `loose`.
+**C**: CLI v0.1 does not parse RPG Maker; instructions only. Plan: later; text at level A (via rvpacker-txt-rs), voice at level B (depends on the game's plugins). If unencrypted audio files sit separately, `babeldub scan` may show them through the `loose` adapter.
 
-## Как опознать
+## How to identify
 
-| Признак | Версия |
+| Sign | Version |
 |---|---|
 | `www/js/rpg_core.js`, `www/data/*.json` | MV |
-| `js/rmmz_core.js` в корне, `data/*.json` | MZ |
+| `js/rmmz_core.js` at the root, `data/*.json` | MZ |
 | `Game.rgss3a`, `RGSS3*.dll` | VX Ace |
 | `Game.rgss2a` | VX |
 | `Game.rgssad` | XP |
 
-## Где голос
+## Where the voice is
 
-- MV/MZ: `audio/{bgm,bgs,me,se}/`. Шифрованные варианты: `.rpgmvo`/`.rpgmvm` (MV), `.ogg_`/`.m4a_` (MZ). Ключ — в `data/System.json` (`encryptionKey`, флаги `hasEncryptedAudio`/`hasEncryptedImages`); шифр — 16-байтовый заголовок `RPGMV…` и XOR первых 16 байт (по гайдам сообщества).
-- **Встроенной системы голоса нет.** Голос обычно проигрывается как SE перед сообщением или плагином; связь «звук ↔ реплика» ищут по порядку команд события.
-- XP/VX/VX Ace: `Audio/*` (голос редко).
+- MV/MZ: `audio/{bgm,bgs,me,se}/`. Encrypted variants: `.rpgmvo`/`.rpgmvm` (MV), `.ogg_`/`.m4a_` (MZ). The key is in `data/System.json` (`encryptionKey`, flags `hasEncryptedAudio`/`hasEncryptedImages`); the cipher is a 16-byte `RPGMV…` header plus XOR of the first 16 bytes (per community guides).
+- **There is no built-in voice system.** The voice is usually played as an SE before the message, or by a plugin; the "sound ↔ line" link is found from the order of event commands.
+- XP/VX/VX Ace: `Audio/*` (voice is rare).
 
-## Где текст
+## Where the text is
 
-MV/MZ — `data/*.json` (команды событий; код 401 — «Show Text»); XP/VX/VX Ace — `Data/*.rvdata2` (Ruby Marshal) в архиве. Подробно — `text/rpgmaker.md`.
+MV/MZ: `data/*.json` (event commands; code 401 is "Show Text"); XP/VX/VX Ace: `Data/*.rvdata2` (Ruby Marshal) inside the archive. Details: `text/rpgmaker.md`.
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение | Состояние на 2026-10 |
+| Tool | Purpose | Status as of 2026-10 |
 |---|---|---|
-| RPGMakerDecrypter | расшифровка XP/VX/VX Ace/MV/MZ, `--recreate-project` | активен |
-| rvpacker-txt-rs | текст 2000/2003/XP/VX/VX Ace/MV/MZ ↔ `.txt`, `read`/`write`, кодировки | активен |
-| rpgmtranslate | GUI поверх rvpacker | активен |
-| rpgm-asset-decrypter-rs | расшифровка ассетов | активен |
+| RPGMakerDecrypter | decrypts XP/VX/VX Ace/MV/MZ, `--recreate-project` | active |
+| rvpacker-txt-rs | text 2000/2003/XP/VX/VX Ace/MV/MZ ↔ `.txt`, `read`/`write`, encodings | active |
+| rpgmtranslate | GUI on top of rvpacker | active |
+| rpgm-asset-decrypter-rs | decrypts assets | active |
 
-## Нативный путь пересборки
+## Native rebuild path
 
-- Текст: JSON или rvdata2 через `rvpacker-txt-rs write`.
-- Звук: зашифровать новый OGG тем же ключом или положить незашифрованный файл и выключить флаг — зависит от движка и плагинов (не проверено).
-- Старые движки: распакованная папка `Data/` и удалённый архив (по гайдам сообщества).
+- Text: JSON or rvdata2 via `rvpacker-txt-rs write`.
+- Audio: encrypt the new OGG with the same key, or drop in an unencrypted file and turn off the flag; depends on the engine and plugins (not verified).
+- Older engines: an unpacked `Data/` folder with the archive removed (per community guides).
 
-## Подводные камни
+## Pitfalls
 
-- Шифрование ассетов (ключ в `System.json`).
-- Голос завязан на плагины конкретной игры.
-- Кодировки текста в старых версиях.
+- Asset encryption (the key is in `System.json`).
+- Voice depends on the specific game's plugins.
+- Text encodings in older versions.
 
-## Ссылки
+## Links
 
 - RPGMakerDecrypter — https://github.com/uuksu/RPGMakerDecrypter
 - rvpacker-txt-rs — https://github.com/RPG-Maker-Translation-Tools/rvpacker-txt-rs

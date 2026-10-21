@@ -1,40 +1,40 @@
 # Wwise (Audiokinetic): `.bnk`, `.wem`, `.pck`
 
-Уровень в v0.1: **B**. Адаптер `wwise` находит и декодирует голосовые медиа (реплики можно перевести и озвучить), но `babeldub build` отказывает: перекодировать WAV в `.wem` может только Wwise Authoring. Разведка — скилл `babeldub-recon`, `references/audio/wwise.md`.
+Level in v0.1: **B**. The `wwise` adapter finds and decodes voice media (the lines can be translated and voiced), but `babeldub build` refuses: only Wwise Authoring can encode WAV into `.wem`. Recon — the `babeldub-recon` skill, `references/audio/wwise.md`.
 
-Пометки: [проверено] — первоисточник; [по гайдам] — вторичный источник, в том числе рабочий код сторонних проектов; [не проверено].
+Markers: [verified] — a primary source; [per guides] — a secondary source, including working code of third-party projects; [not verified].
 
-## 1. Устройство
+## 1. Structure
 
-- `.bnk` — чанки `BKHD` (версия, ID банка), `DIDX` (ID медиа, смещение, размер), `DATA` (встроенные `.wem` или начало потоковых), `HIRC` (иерархия событий, звуков, параметров кодека) и др. [по гайдам: vgmstream, wwiser].
-- `.wem` — RIFF/RIFX `WAVE`; кодек в `fmt`: Wwise Vorbis (`0xFFFF`, со своими codebooks), ADPCM, PCM, Opus и др. [проверено: vgmstream].
-- `.pck` (`AKPK`) — пакет с языковой картой и таблицами банков и потоков; у локализованных игр отдельные пакеты или папки по языкам; язык выбирается в рантайме [по гайдам].
-- ID — 32-битные хэши FNV-1 от имён в нижнем регистре; имена восстанавливаются по `SoundbanksInfo.xml/.json` (если игра его поставляет) или спискам имён wwiser [по гайдам].
+- `.bnk` — chunks `BKHD` (version, bank ID), `DIDX` (media ID, offset, size), `DATA` (embedded `.wem` or the beginning of streamed ones), `HIRC` (hierarchy of events, sounds, codec parameters) and others [per guides: vgmstream, wwiser].
+- `.wem` — RIFF/RIFX `WAVE`; the codec is in `fmt`: Wwise Vorbis (`0xFFFF`, with its own codebooks), ADPCM, PCM, Opus and others [verified: vgmstream].
+- `.pck` (`AKPK`) — a package with a language map and tables of banks and streams; localized games have separate packages or folders per language; the language is selected at runtime [per guides].
+- IDs are 32-bit FNV-1 hashes of lower-case names; names are recovered from `SoundbanksInfo.xml/.json` (if the game ships it) or from wwiser name lists [per guides].
 
-## 2. Что делает CLI v0.1
+## 2. What CLI v0.1 does
 
-- Извлекает реплики из `.bnk` (встроенные медиа), `.pck` (потоки, внешние источники, банки внутри пакета) и свободных `.wem`; декодирует PCM сам, остальное — через `vgmstream-cli`.
-- Синтез, пост-обработка и QA работают как обычно: озвучка голосом героя готова в `post/audio/`.
-- `build` отказывает (код 2) с подсказкой на этот справочник.
+- Extracts lines from `.bnk` (embedded media), `.pck` (streams, external sources, banks inside the package) and loose `.wem`; decodes PCM itself, everything else through `vgmstream-cli`.
+- Synthesis, post-processing and QA work as usual: the dub in the hero's voice is ready in `post/audio/`.
+- `build` refuses (exit code 2) with a hint pointing to this reference.
 
-## 3. Ручной путь пересборки [по гайдам]
+## 3. Manual rebuild path [per guides]
 
-Для пользователя, который готов поставить Wwise:
+For a user who is ready to install Wwise:
 
-1. **WAV → `.wem`** — только Wwise Authoring той же версии, что игра, с теми же Conversion Settings (кодек, качество, частота). Скачивание через Audiokinetic Launcher требует аккаунта. Командная строка: `WwiseConsole convert-external-source <проект.wproj> --source-file <список.wsources> --output <папка>`; синтаксис подтверждён только рабочим кодом проекта ZZAR, по официальной документации не проверен [не проверено].
-2. **Подмена `.wem` в `.bnk` или `.pck`** — открытые утилиты: wwiseutil (разрешает замену любого размера и обновляет метаданные, но не обновлялся с 2018), BNKReplacer, PckTool, mhws-sound-tool, RingingBloom (игры Capcom) [по гайдам].
-3. Файлы игры менять только с бэкапом. Поскольку CLI этот путь не ведёт, `babeldub uninstall` такие замены не откатит: бэкап и откат — на пользователе или через проверку целостности лаунчера.
+1. **WAV → `.wem`** — only Wwise Authoring of the same version as the game, with the same Conversion Settings (codec, quality, sample rate). Downloading through the Audiokinetic Launcher requires an account. Command line: `WwiseConsole convert-external-source <project.wproj> --source-file <list.wsources> --output <folder>`; the syntax is confirmed only by the working code of the ZZAR project, not checked against the official documentation [not verified].
+2. **Replacing `.wem` in `.bnk` or `.pck`** — open-source utilities: wwiseutil (allows replacements of any size and updates the metadata, but has not been updated since 2018), BNKReplacer, PckTool, mhws-sound-tool, RingingBloom (Capcom games) [per guides].
+3. Change game files only with a backup. Since the CLI does not drive this path, `babeldub uninstall` will not roll such replacements back: backup and rollback are on the user, or through the launcher's integrity check.
 
-## 4. Подводные камни [по гайдам]
+## 4. Pitfalls [per guides]
 
-- Кодек замены должен совпадать с исходным: тип источника и кодека записан в `HIRC`.
-- Потоковые звуки с prefetch: начало лежит и в `DATA` банка, и в `.pck` — обновлять оба.
-- Одинаковые ID встречаются в нескольких пакетах (у некоторых игр — в `SoundBank_*` и `Streamed_*`).
-- Маркеры и cue внутри `.wem` иногда управляют субтитрами или липсинком.
-- Длительность: обычные Play-действия её не ограничивают, а музыкальные сегменты и тайминги катсцен — ограничивают.
+- The replacement codec must match the original one: the source and codec type are recorded in `HIRC`.
+- Streamed sounds with prefetch: the beginning sits both in the bank's `DATA` and in the `.pck` — update both.
+- The same IDs appear in several packages (in some games — in `SoundBank_*` and `Streamed_*`).
+- Markers and cues inside `.wem` sometimes drive subtitles or lip sync.
+- Duration: ordinary Play actions do not limit it, but music segments and cutscene timings do.
 
-## 5. Что сказать пользователю
+## 5. What to tell the user
 
-- Озвучка готова, но поставить её в игру автоматически BabelDub v0.1 не может: нужен Wwise Authoring нужной версии.
-- Альтернатива без Wwise — подмена в рантайме мод-лоадером, если для движка игры он есть ([runtime-mods.md](runtime-mods.md)).
-- Файлы озвучки лежат в `post/audio/<uid>.wav`, соответствие реплик и медиа — в `inventory/lines.jsonl` (поле `entry`), смотреть через `babeldub query`.
+- The dub is ready, but BabelDub v0.1 cannot install it into the game automatically: Wwise Authoring of the right version is needed.
+- The alternative without Wwise is runtime substitution with a mod loader, if one exists for the game's engine ([runtime-mods.md](runtime-mods.md)).
+- The dub files are in `post/audio/<uid>.wav`; the mapping of lines to media is in `inventory/lines.jsonl` (the `entry` field), view it with `babeldub query`.

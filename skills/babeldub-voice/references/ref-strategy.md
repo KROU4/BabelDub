@@ -1,87 +1,87 @@
-# Стратегия голосового промпта: дубляж голосом оригинального героя
+# Voice prompt strategy: dubbing in the original character's voice
 
-Читай перед пилотом и всякий раз, когда метрики говорят «голос не тот», «эмоция пропала» или «слышен акцент».
+Read this before the pilot, and whenever the metrics say "wrong voice", "the emotion is gone" or "there is an accent".
 
-## 1. Что такое голосовой промпт
+## 1. What a voice prompt is
 
-Движки BabelDub клонируют голос «с нуля» (zero-shot): модель не обучается на персонаже, а получает короткий образец его речи — **голосовой промпт** — и продолжает говорить так же, но новым текстом. В Qwen3-TTS (движок по умолчанию) это ICL-режим: на вход идут `ref_audio` (звук) и `ref_text` (что в нём сказано). По описанию авторов, аудиотокенизатор модели «полностью сохраняет паралингвистическую информацию», а инструкций стиля у модели Base нет: эмоция и манера берутся только из промпта.
+BabelDub engines clone a voice zero-shot: the model is not trained on the character; it receives a short sample of the character's speech, the **voice prompt**, and keeps speaking the same way, but with new text. In Qwen3-TTS (the default engine) this is ICL mode: the input is `ref_audio` (the audio) and `ref_text` (what is said in it). According to the authors, the model's audio tokenizer "fully preserves paralinguistic information", and the Base model has no style instructions: emotion and manner come only from the prompt.
 
-Отсюда главный вывод: **какой промпт — такой и дубль.** Спокойный референс даст спокойный голос даже для крика. Крик в промпте даст крик.
+Hence the main conclusion: **as the prompt, so the dub.** A calm reference produces a calm voice even for a shout. A shout in the prompt produces a shout.
 
-Chatterbox (движок для pl, tr и др.) клонирует только по звуку промпта, без транскрипта; эмоция тоже приходит из звука, а её силу дополнительно задаёт параметр `exaggeration`.
+Chatterbox (the engine for pl, tr and others) clones from the prompt audio only, without a transcript; emotion also comes from the audio, and its strength is additionally set by the `exaggeration` parameter.
 
-## 2. Три стратегии
+## 2. Three strategies
 
-| `tts.ref_strategy` | Промпт | Что переносится | Когда |
+| `tts.ref_strategy` | Prompt | What carries over | When |
 |---|---|---|---|
-| `line` | оригинальная реплика этой же строки + её исходный текст | тембр **и** эмоция, темп, громкость подачи, дыхание, манера именно этой фразы | основной режим дубляжа |
-| `char` | лучший чистый референс персонажа (`cast/refs.jsonl`, `chosen`) + его текст | тембр персонажа в нейтральной подаче | короткие реплики, междометия, шум и музыка под голосом, нет текста оригинала |
-| `auto` (по умолчанию) | `line`, если реплика пригодна; иначе `char` | — | всегда, если нет причины менять |
+| `line` | the original recording of this same line + its original text | timbre **and** emotion, pace, loudness of delivery, breathing, the manner of this exact phrase | the main dubbing mode |
+| `char` | the character's best clean reference (`cast/refs.jsonl`, `chosen`) + its text | the character's timbre in a neutral delivery | short lines, interjections, noise or music under the voice, no original text |
+| `auto` (default) | `line` if the line is usable; otherwise `char` | — | always, unless there is a reason to change it |
 
-Правило `auto` в CLI v0.1. Реплика пригодна для `line`, если одновременно:
+The `auto` rule in CLI v0.1. A line is usable for `line` if all of the following hold:
 
-- есть декодированный оригинал (`audio/orig/<uid>.wav`) и исходный текст (`text.src`);
-- длительность не меньше `tts.line_ref_min_s` (1,6 с) и не больше 15 с;
-- нет флагов `has_bed` (музыка или шум под голосом) и `nonverbal` (смех, вздох, крик без слов).
+- there is a decoded original (`audio/orig/<uid>.wav`) and original text (`text.src`);
+- the duration is at least `tts.line_ref_min_s` (1.6 s) and at most 15 s;
+- there are no `has_bed` (music or noise under the voice) or `nonverbal` (laughter, a sigh, a wordless scream) flags.
 
-Иначе берётся референс персонажа. Если у персонажа нет ни одного референса, CLI всё равно возьмёт короткий или шумный оригинал, чтобы не терять реплику. Если нет и его — реплика уходит в `skipped.no_ref` и `attention`.
+Otherwise the character reference is used. If the character has no reference at all, the CLI still takes the short or noisy original so the line is not lost. If there is none either, the line goes to `skipped.no_ref` and `attention`.
 
-Промпт длиннее 15 с CLI обрезает по самой тихой точке. Обрезанный звук уже не совпадает со своим текстом, поэтому такой промпт идёт без транскрипта (клонирование только по эмбеддингу голоса, режим `x_vector_only`). Это работает хуже, и для длинных реплик стоит предпочесть `char`.
+The CLI trims a prompt longer than 15 s at its quietest point. The trimmed audio no longer matches its text, so such a prompt goes without a transcript (cloning from the voice embedding only, `x_vector_only` mode). That works worse, so for long lines prefer `char`.
 
-## 3. Почему оригинальная реплика как промпт переносит эмоцию
+## 3. Why the original line as a prompt carries the emotion
 
-1. **Совпадает контекст.** Реплика-промпт — та же фраза в той же сцене: тот же эмоциональный градус, расстояние до микрофона, усталость, улыбка в голосе. Модель продолжает именно это состояние.
-2. **Совпадает темп.** Скорость речи и паузы промпта переходят в синтез. Поэтому дубль по `line` естественно ложится в длительность оригинала, а нейтральный референс часто даёт «дикторский» темп.
-3. **Транскрипт выравнивает промпт.** `ref_text` говорит модели, какие звуки в промпте — речь, а какие — подача. Неверный транскрипт (реплика переписана, текст субтитра не совпадает с озвучкой) путает модель: появляются артефакты, обрывы, повторы. Поэтому `line` требует исходный текст, а реплики, где текст расходится с аудио, лучше озвучивать по `char`.
-4. **Перевод должен совпадать по эмоциональной форме.** Промпт задаёт интонацию; если перевод спокойнее оригинала («Стой!» → «Пожалуйста, остановитесь»), модель тянет фразу в две стороны. Поэтому правила перевода (скилл `babeldub-translate`) требуют сохранять восклицания, вопросы, запинки и обрывы.
+1. **The context matches.** The prompt line is the same phrase in the same scene: the same emotional temperature, distance to the microphone, fatigue, smile in the voice. The model continues exactly that state.
+2. **The pace matches.** The speaking rate and pauses of the prompt carry over into the synthesis. So a `line` dub naturally fits the duration of the original, while a neutral reference often gives a "narrator" pace.
+3. **The transcript aligns the prompt.** `ref_text` tells the model which sounds in the prompt are speech and which are delivery. A wrong transcript (the line was rewritten, the subtitle text does not match the voice-over) confuses the model: artefacts, cut-offs and repetitions appear. That is why `line` requires the original text, and lines whose text diverges from the audio are better voiced with `char`.
+4. **The translation must match the emotional shape.** The prompt sets the intonation; if the translation is calmer than the original (Russian example: «Стой!» ("Stop!") → «Пожалуйста, остановитесь» ("Please stop")), the model pulls the phrase in two directions. That is why the translation rules (skill `babeldub-translate`) require keeping exclamations, questions, hesitations and cut-offs.
 
-Так делают и другие конвейеры дубляжа (SVR_TTS, YouDub, VideoLingo): референсом служит сама оригинальная реплика.
+Other dubbing pipelines do the same (SVR_TTS, YouDub, VideoLingo): the reference is the original line itself.
 
-## 4. Когда нужен `char`
+## 4. When `char` is needed
 
-| Признак | Почему `line` плох | Что делать |
+| Sign | Why `line` is bad | What to do |
 |---|---|---|
-| реплика короче 1,6 с («Да», «Эй!», «Хм») | мало звука: тембр нестабилен, модель «угадывает» голос | `auto` сам выберет `char` |
-| флаг `has_bed`, музыка или эмбиент под голосом | модель клонирует и фон: шум, музыка, гул | `auto` сам выберет `char`; в v0.1 отделения голоса от фона нет |
-| `nonverbal` (смех, крик без слов, дыхание) | нечего выравнивать с текстом | `auto` сам выберет `char` |
-| нет исходного текста | нет транскрипта для ICL | `char`; в v0.1 такие реплики обычно вообще не переводятся |
-| эффект в оригинале: рация, телефон, эхо, искажение | эффект станет частью тембра и не совпадёт с другими репликами | `reref` для этих строк или `char` для персонажа (раздел 6) |
-| крик или шёпот у персонажа, у которого мало реплик | экстремальная подача искажает тембр | `reref` (переход на `char`) по решению QA |
+| the line is shorter than 1.6 s ("Yes", "Hey!", "Hmm") | too little audio: the timbre is unstable, the model "guesses" the voice | `auto` picks `char` itself |
+| `has_bed` flag, music or ambience under the voice | the model clones the background too: noise, music, hum | `auto` picks `char` itself; v0.1 has no voice/background separation |
+| `nonverbal` (laughter, wordless scream, breathing) | nothing to align with the text | `auto` picks `char` itself |
+| no original text | no transcript for ICL | `char`; in v0.1 such lines are usually not translated at all |
+| an effect in the original: radio, phone, echo, distortion | the effect becomes part of the timbre and does not match other lines | `reref` for these lines, or `char` for the character (section 6) |
+| shouting or whispering from a character with few lines | extreme delivery distorts the timbre | `reref` (switch to `char`) by QA decision |
 
-Референс `char` выбирает `babeldub cast`: оригинал 3–12 с с известным текстом, без флагов `has_bed`/`nonverbal`/`alt_take`, без клиппинга и не тихий, ближе всего к «типичному» голосу персонажа (центроид эмбеддингов, если установлен воркер `qc`). Роль caster проверяет, что текст референса нейтральный (не крик, не шёпот, не смех). Подробно — скилл `babeldub-cast`.
+`babeldub cast` picks the `char` reference: an original of 3–12 s with known text, without the `has_bed`/`nonverbal`/`alt_take` flags, without clipping and not quiet, closest to the character's "typical" voice (the embedding centroid, if the `qc` worker is installed). The caster role checks that the reference text is neutral (no shouting, whispering or laughter). Details: skill `babeldub-cast`.
 
-## 5. Как работает `reref`
+## 5. How `reref` works
 
-Решение QA `reref` меняет промпт для конкретной реплики при следующем `babeldub synth --attempt-next`:
+The QA decision `reref` changes the prompt for a specific line on the next `babeldub synth --attempt-next`:
 
-- была попытка с `line` → следующая с `char`;
-- была `char` → другой референс персонажа (если их больше одного), иначе оригинал строки.
+- the attempt used `line` → the next one uses `char`;
+- it used `char` → another character reference (if there is more than one), otherwise the line's original.
 
-Глобальную настройку `tts.ref_strategy` при этом трогать не нужно.
+There is no need to touch the global `tts.ref_strategy` setting.
 
-## 6. Акцент при кросс-языковом клонировании
+## 6. Accent in cross-lingual cloning
 
-Промпт на языке оригинала (английском, польском) несёт не только голос, но и **фонетику своего языка**. При синтезе на другом языке модель может перенести акцент: «английское» р, редукцию гласных, интонационные контуры. Авторы OmniVoice говорят об этом прямо; для других моделей это ожидаемо; качество пары EN→RU на голосах игр в опубликованных таблицах не измерено. Значит, акцент проверяется на пилоте.
+A prompt in the original language (English, Polish) carries not only the voice but also the **phonetics of its language**. When synthesizing in another language, the model may carry over an accent: an "English" r, vowel reduction, intonation contours. The OmniVoice authors say so explicitly; for other models it is expected; the quality of the EN→RU pair on game voices has not been measured in published tables. So the accent is checked in the pilot.
 
-Как распознать по метрикам (звук ты не слышишь):
+How to recognize it from metrics (you cannot hear audio):
 
-- `cer` растёт у всех реплик персонажа при нормальном `sim` — модель произносит целевой язык «с акцентом», ASR ошибается;
-- в отчёте QA (`babeldub report`) у персонажа высокий медианный CER при нормальном сходстве голоса.
+- `cer` rises for all of a character's lines while `sim` is normal: the model pronounces the target language "with an accent", and ASR makes mistakes;
+- in the QA report (`babeldub report`), the character has a high median CER with normal voice similarity.
 
-Что делать, по порядку:
+What to do, in order:
 
-1. **Проверить текст.** Высокий CER чаще всего — не акцент, а латиница, числа цифрами, аббревиатуры, редкие имена. Это `retranslate` и `pronounce` в глоссарии (скилл `babeldub-translate`).
-2. **Ударения для русского.** По умолчанию озвучивает `Qwen3-TTS-12Hz-1.7B-Base`: дообучение на ударения `qwen3-tts-12hz-1.7b-ru-stress-cf` следует знаку U+0301 надёжнее, но на тестовых репликах заметно хуже сохраняло голос оригинального героя, поэтому оно не ставится и не выбирается само. Включай его только при массовых ошибках ударений и только после пилота с проверкой `sim`: `babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, затем `babeldub set tts.model=qwen3-tts-12hz-1.7b-ru-stress-cf`. Знак ударения ставь в `dub_text` в словах, где ошибка вероятна (омографы, имена) — через `pronounce` глоссария.
-3. **Сравнить языки промпта.** Если игра озвучена на нескольких языках (в Low-Budget Repairs — en-US и pl-PL), пилот стоит провести на обоих: акцент разных языков в целевом звучит по-разному. В v0.1 CLI берёт оригиналы той локали, которую извлёк `extract`; сравнение языков — ручной эксперимент, его итог фиксируется в отчёте.
-4. **`char` с более нейтральной подачей.** Спокойный референс обычно переносит меньше «чужой» интонации, чем эмоциональная реплика. Для персонажа с сильным акцентом можно перейти на `char` ценой части эмоций — это компромисс, его нужно назвать в отчёте.
-5. **Для Chatterbox** при промпте на другом языке авторы советуют `cfg_weight=0`, чтобы меньше тянуть акцент. Воркер v0.1 так и делает сам, когда язык промпта не совпадает с целевым. Силу эмоции у Chatterbox задаёт `exaggeration` (по умолчанию 0,5); параметры движка передаются через `tts.params` в `project.json`: `babeldub set tts.params.exaggeration=0.7`. Руками `project.json` не правь.
+1. **Check the text.** A high CER is most often not an accent but Latin script, numbers in digits, abbreviations, rare names. That calls for `retranslate` and `pronounce` in the glossary (skill `babeldub-translate`).
+2. **Stress for Russian.** By default `Qwen3-TTS-12Hz-1.7B-Base` does the voicing: the stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` follows the U+0301 mark more reliably, but on the test lines it preserved the original hero's voice noticeably worse, so it is neither installed nor selected automatically. Enable it only for widespread stress errors and only after a pilot that checks `sim`: `babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, then `babeldub set tts.model=qwen3-tts-12hz-1.7b-ru-stress-cf`. Put the stress mark in `dub_text` on words where an error is likely (homographs, names), via the glossary's `pronounce`.
+3. **Compare prompt languages.** If the game is voiced in several languages (Low-Budget Repairs has en-US and pl-PL), run the pilot on both: the accents of different languages sound different in the target language. In v0.1 the CLI takes the originals of the locale that `extract` extracted; comparing languages is a manual experiment, and its outcome is recorded in the report.
+4. **`char` with a more neutral delivery.** A calm reference usually carries less "foreign" intonation than an emotional line. For a character with a strong accent you can switch to `char` at the cost of some emotion; this is a trade-off and must be named in the report.
+5. **For Chatterbox** with a prompt in another language, the authors recommend `cfg_weight=0` to pull the accent less. The v0.1 worker does this itself when the prompt language differs from the target. Chatterbox's emotion strength is set by `exaggeration` (default 0.5); engine parameters are passed through `tts.params` in `project.json`: `babeldub set tts.params.exaggeration=0.7`. Do not edit `project.json` by hand.
 
-Идеи, которые **не проверены** и в v0.1 не реализованы: брать первую удачную реплику персонажа на целевом языке как новый промпт (с контролем дрейфа тембра по сходству с оригиналом); режим только по эмбеддингу голоса (`x_vector_only`) как средство от акцента; пост-проход конверсии голоса (VC). Не применяй их без явного решения пользователя.
+Ideas that are **not verified** and not implemented in v0.1: using the character's first successful line in the target language as the new prompt (with timbre-drift control by similarity to the original); embedding-only mode (`x_vector_only`) as a remedy for accent; a voice-conversion (VC) post-pass. Do not apply them without an explicit decision by the user.
 
-## 7. Как QA проверяет, что голос — тот же
+## 7. How QA checks that the voice is the same
 
-- `sim_line` — косинусное сходство эмбеддингов ECAPA дубля и оригинальной реплики; `sim_char` — дубля и референса персонажа; `sim` — их среднее.
-- `sim_ref` — базовая линия персонажа: среднее попарное сходство его собственных чистых оригинальных реплик (до 12 самых длинных). Абсолютные значения сходства у разных голосов разные, а кросс-языковое сходство ниже одноязычного, поэтому сравнение идёт с ней.
-- Порог: `sim ≥ qa.min_sim_ratio × sim_ref` (по умолчанию 0,75). Ниже — причина `sim`: авто-решение CLI `regen`, пока не исчерпаны попытки, затем `keep_original`. Роль qa может вместо этого назначить `reref`, если брак похож на проблему промпта (крик, шум, эффект в оригинале).
+- `sim_line` is the cosine similarity of ECAPA embeddings between the dub and the original line; `sim_char` is between the dub and the character reference; `sim` is their mean.
+- `sim_ref` is the character's baseline: the mean pairwise similarity of the character's own clean original lines (up to the 12 longest). Absolute similarity values differ from voice to voice, and cross-lingual similarity is lower than same-language similarity, so the comparison is made against this baseline.
+- Threshold: `sim ≥ qa.min_sim_ratio × sim_ref` (default 0.75). Below it, the reason is `sim`: the CLI auto-decides `regen` until attempts run out, then `keep_original`. The qa role may assign `reref` instead if the defect looks like a prompt problem (shouting, noise, an effect in the original).
 
-Подробно — скилл `babeldub-qa`.
+Details: skill `babeldub-qa`.

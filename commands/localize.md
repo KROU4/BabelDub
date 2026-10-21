@@ -1,10 +1,10 @@
 ---
-description: Локализовать игру и переозвучить её голосами оригинальных героев (BabelDub)
-argument-hint: "<путь к игре> [язык]"
+description: Localize a game and dub it in the voices of its original characters (BabelDub)
+argument-hint: "<path to game> [language]"
 ---
 
-Активируй скилл `babeldub-localize` и выполни его для аргументов: $ARGUMENTS
+Activate the `babeldub-localize` skill and run it for these arguments: $ARGUMENTS
 
-- Первый аргумент — путь к папке игры (если в пути пробелы, он может прийти без кавычек: путь — всё, что стоит перед кодом языка). Второй, необязательный, — целевой язык (`ru`, `en`, `de` …).
-- Если путь не указан, спроси его. Если язык не указан, это вопрос 1 скилла.
-- Дальше действуй строго по скиллу `babeldub-localize`: ровно два вопроса пользователю, дубляж голосом оригинального героя, папка игры только для чтения до `babeldub install`.
+- The first argument is the path to the game folder (a path with spaces may arrive unquoted: the path is everything before the language code). The second, optional one is the target language (`ru`, `en`, `de` …).
+- If the path is missing, ask for it. If the language is missing, that is question 1 of the skill.
+- From here on follow the `babeldub-localize` skill strictly: exactly two questions to the user (target language; which characters: all / main / a list), answers in the user's language, everything else automatic; GPU-first; dub in the original hero's voice; the game folder stays read-only until `babeldub install`.

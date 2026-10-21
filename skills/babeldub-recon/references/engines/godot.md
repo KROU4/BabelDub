@@ -1,45 +1,45 @@
 # Godot
 
-Читай, если в папке игры есть `*.pck` с магией `GDPC` или exe с GDPC в хвосте.
+Read this if the game folder has a `*.pck` with the `GDPC` magic, or an exe with GDPC at its end.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 Godot не разбирает; только инструкции. План поддержки — позже v0.3 (уровень B: нужен Godot той же версии, для шифрованных игр — ключ AES).
+**C**: CLI v0.1 does not parse Godot; instructions only. Support is planned later, in v0.3 (level B: needs Godot of the same version, and the AES key for encrypted games).
 
-## Как опознать
+## How to identify
 
-- `.pck` рядом с exe или PCK, вшитый в exe (магия `GDPC`).
-- Возможно шифрование AES-256, ключ вшит в бинарь; извлекают его утилитой gdke.
+- A `.pck` next to the exe, or a PCK embedded in the exe (`GDPC` magic).
+- AES-256 encryption is possible; the key is embedded in the binary and is extracted with the gdke tool.
 
-## Где голос
+## Where the voice is
 
-При экспорте исходники импортируются в ресурсы `.godot/imported/*.oggvorbisstr` (`AudioStreamOggVorbis`), `.sample` (WAV), `.mp3str`. Исходный путь ведёт к ним через файлы `.import` (по гайдам сообщества).
+On export, source files are imported into resources `.godot/imported/*.oggvorbisstr` (`AudioStreamOggVorbis`), `.sample` (WAV), `.mp3str`. The source path leads to them through `.import` files (per community guides).
 
-## Где текст
+## Where the text is
 
-См. `text/godot.md`: CSV → `.translation` (`OptimizedTranslation` хранит хэши вместо ключей), `.po`/`.mo`; список переводов — в настройках проекта (`project.binary`).
+See `text/godot.md`: CSV → `.translation` (`OptimizedTranslation` stores hashes instead of keys), `.po`/`.mo`; the list of translations is in the project settings (`project.binary`).
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение | Состояние на 2026-10 |
+| Tool | Purpose | Status as of 2026-10 |
 |---|---|---|
 | gdsdecomp / GDRE Tools | Godot 2–4: `--recover`, `--extract`, `--pck-create`, `--pck-patch`, `--patch-translations=<CSV>=<res path>`, `--key` | v2.7.4 |
 | GodotPckTool | extract, list, add | v2.3 |
-| gdke | извлечение ключа шифрования PCK | существует (детали не проверялись) |
+| gdke | extracts the PCK encryption key | exists (details not checked) |
 
-## Нативный путь пересборки
+## Native rebuild path
 
-- **Текст:** GDRE `--patch-translations`.
-- **Звук:** импортировать новые OGG в пустом проекте Godot **той же версии** (`godot --headless --import`, движок открыт), взять импортированные ресурсы и заменить их в PCK через GDRE `--pck-patch`. На практике не проверено.
+- **Text:** GDRE `--patch-translations`.
+- **Audio:** import the new OGG files into an empty Godot project of **the same version** (`godot --headless --import`, the engine is open), take the imported resources and replace them in the PCK with GDRE `--pck-patch`. Not verified in practice.
 
-## Подводные камни
+## Pitfalls
 
-- Формат импортированных ресурсов зависит от версии Godot.
-- MD5 в PCK (у GDRE есть ключи игнорирования).
-- Шифрование PCK.
-- Игры на C# (.NET) — отдельные сборки.
+- The format of imported resources depends on the Godot version.
+- MD5 in the PCK (GDRE has options to ignore it).
+- PCK encryption.
+- C# (.NET) games are separate builds.
 
-## Ссылки
+## Links
 
 - gdsdecomp — https://github.com/GDRETools/gdsdecomp
 - GodotPckTool — https://github.com/hhyyrylainen/GodotPckTool

@@ -1,72 +1,81 @@
-# Контракт разработчика BabelDub (v0.1)
+# BabelDub developer contract (v0.1)
 
-> **LANGUAGE POLICY (binding, from the project owner).** The shipped product is English-first, following the world standard for software: every instruction meant for an AI model (SKILL.md files and their references, agent roles, commands, AGENTS.md, GEMINI.md, hook messages, CLI hints and generated reports) and all repository documentation (README.md, docs/, CONTRIBUTING, SECURITY, CHANGELOG, templates) MUST be written in English. A Russian translation of the README is shipped as README.ru.md. Skill descriptions may list example user phrases in several languages (including Russian) so the skill triggers for non-English users; the agent always talks to the user in the user's language. This contract itself will be translated to English in the English pass.
+This document is the single source of truth for the code in `runtime/` and for the skills that call that code. If the code and this document disagree, fix whichever is wrong and update the document. Checked against the v0.1 implementation (every command, flag and field below exists in `runtime/src/babeldub`); the end-to-end run of all stages is `runtime/tests/e2e/test_pipeline_synthetic.py`.
 
-Этот документ — единственный источник правды для кода в `runtime/` и для скиллов, которые этот код вызывают. Если код и документ расходятся, исправляется то, что неправо, и обновляется документ. Сверено с реализацией v0.1 (все команды, флаги и поля ниже есть в `runtime/src/babeldub`); сквозной прогон всех стадий — `runtime/tests/e2e/test_pipeline_synthetic.py`.
+## 0. Language policy
 
-## 1. Принципы
+Binding, from the project owner. The shipped product is English-first, the world standard for software:
 
-1. **Скиллы задают процедуру, CLI делает массовую работу, агенты выносят суждения.** Всё детерминированное, массовое или опасное (разбор бинарных форматов, декодирование, синтез, метрики, сборка, установка) — команды `babeldub`. Перевод, разметка персонажей, разбор брака — агенты.
-2. **Один писатель канона.** Канонические манифесты (`inventory/*.jsonl`, `translate/translations.jsonl`, `translate/glossary.jsonl`, `cast/characters.jsonl`, `qa/decisions.jsonl` …) пишет только CLI. Агенты пишут `*.agent.jsonl` / `*.out.jsonl`, CLI проверяет их и сливает (`submit`, `apply`) по принципу «всё или ничего».
-3. **Папка игры только для чтения** до `babeldub install`. Установка — с бэкапом и sha1, откат — `babeldub uninstall`. Исполняемые файлы игры CLI никогда не запускает (проверка рантаймом FMOD в `verify --game-runtime` грузит только аудиобиблиотеку игры в дочернем процессе).
-4. **Тяжёлое — вне репозитория и вне CLI.** CLI зависит только от `numpy`, `soundfile`, `PyYAML`, `UnityPy`. Всё, что требует `torch`, работает в отдельных venv (`BABELDUB_HOME/envs/<engine>`) как подпроцесс-воркер с JSONL-протоколом (§6).
-5. **Один JSON на выходе.** Каждая команда печатает в stdout ровно один компактный JSON-объект (цель — до 2 КБ) и возвращает код выхода (§2). Подробности — в файлах проекта, сводка указывает на них. Даже если модуль команды не импортируется, `cli.main` печатает JSON с ошибкой, а не трейсбек.
-6. **GPU в приоритете (требование заказчика).** Если на машине есть NVIDIA GPU, ВСЕ нейросетевые вычисления (TTS, ASR, эмбеддинги голоса, кластеризация на эмбеддингах, сепарация) идут на GPU. Настройка проекта `compute.device`: `auto` (по умолчанию: GPU, если есть) | `cuda` | `cpu`. Устройство для воркера определяет `core.compute.resolve_device(project.compute.device)` и передаёт его в `{"op":"load","device":...}` (`synth` берёт `--device`, иначе `tts.device`, иначе `compute.device`; `cast`/`qa` — `--device`, иначе `compute.device`); воркер в ответе на `load` сообщает фактическое устройство (`"device": "cuda:0"`), а команда, если GPU есть, но воркер оказался на CPU, добавляет в сводку предупреждение `core.compute.device_warning(...)`. `setup` ставит CUDA-колёса torch, когда `core.compute.detect_gpu()` видит GPU, и CPU-колёса только без GPU. Тяжёлые numpy-циклы (например, кодирование FADPCM) — векторизованы; лёгкая DSP-обработка (ресемплинг, громкость) остаётся на CPU.
-7. **Идемпотентность.** Повторный запуск стадии не ломает результат и не повторяет сделанную работу без `--force`.
-8. **Дубляж голосом оригинального героя.** Голосовой промпт по умолчанию — сама оригинальная реплика с её исходным текстом (`tts.ref_strategy`, §4.1); QA сравнивает голос синтеза с оригиналом персонажа.
+- Everything meant for an AI model (SKILL.md files and their references, agent roles, commands, `AGENTS.md`, `GEMINI.md`, hook messages, CLI hints and generated reports) and all repository documentation (`docs/`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, GitHub templates) is written in English.
+- `README.ru.md` is the only Russian document; the `assets/*-ru.*` illustrations that go with it are the only other Russian content.
+- Skill descriptions may list example user phrases in several languages, including Russian, so the skills trigger for non-English users.
+- The agent always talks to the user in the user's language.
 
-## 2. Коды выхода
+## 1. Principles
 
-| Код | Константа | Значение |
+1. **Skills define the procedure, the CLI does the bulk work, agents make judgements.** Everything deterministic, bulk or dangerous (parsing binary formats, decoding, synthesis, metrics, build, install) is a `babeldub` command. Translation, character labelling and triage of bad takes belong to agents.
+2. **One writer of the canon.** Only the CLI writes the canonical manifests (`inventory/*.jsonl`, `translate/translations.jsonl`, `translate/glossary.jsonl`, `cast/characters.jsonl`, `qa/decisions.jsonl` …). Agents write `*.agent.jsonl` / `*.out.jsonl`; the CLI validates them and merges them (`submit`, `apply`) on an all-or-nothing basis.
+3. **The game folder is read-only** until `babeldub install`. Installation makes a backup and checks sha1; rollback is `babeldub uninstall`. The CLI never runs the game's executables (the FMOD runtime check in `verify --game-runtime` loads only the game's audio library, in a child process).
+4. **Heavy things stay outside the repository and outside the CLI.** The CLI depends only on `numpy`, `soundfile`, `PyYAML`, `UnityPy`. Everything that needs `torch` runs in separate venvs (`BABELDUB_HOME/envs/<engine>`) as a subprocess worker with a JSONL protocol (§6).
+5. **One JSON on output.** Every command prints exactly one compact JSON object to stdout (target: under 2 KB) and returns an exit code (§2). Details go to project files; the summary points to them. Even if a command's module fails to import, `cli.main` prints a JSON error, not a traceback.
+6. **GPU-first (a customer requirement).** When the machine has an NVIDIA GPU, ALL neural compute (TTS, ASR, speaker embeddings, clustering on embeddings, separation) runs on the GPU. Project setting `compute.device`: `auto` (default: GPU if present) | `cuda` | `cpu`. The worker's device is resolved by `core.compute.resolve_device(project.compute.device)` and passed in `{"op":"load","device":...}` (`synth` takes `--device`, else `tts.device`, else `compute.device`; `cast`/`qa` take `--device`, else `compute.device`). In its reply to `load` the worker reports the actual device (`"device": "cuda:0"`); if a GPU exists but the worker ended up on the CPU, the command adds the warning `core.compute.device_warning(...)` to its summary. `setup` installs CUDA torch wheels whenever `core.compute.detect_gpu()` sees a GPU, and CPU wheels only when there is no GPU. Heavy numpy loops (for example, FADPCM encoding) are vectorised; light DSP (resampling, loudness) stays on the CPU.
+7. **Idempotence.** Re-running a stage does not break the result and does not repeat finished work without `--force`.
+8. **Dubbing in the original character's voice.** The default voice prompt is the original line itself with its source text (`tts.ref_strategy`, §4.1); QA compares the voice of the synthesis with the character's original.
+
+## 2. Exit codes
+
+| Code | Constant | Meaning |
 |---|---|---|
-| 0 | `EXIT_OK` | стадия завершена, внимания не нужно |
-| 1 | `EXIT_ERROR` | неожиданная ошибка (`error`, `where` в JSON) |
-| 2 | `EXIT_USAGE` | неверные аргументы, не пройдена предыдущая стадия, невалидный файл агента |
-| 3 | `EXIT_ATTENTION` | стадия завершена, но есть элементы, требующие решения (агента или человека) |
-| 4 | `EXIT_ENV` | не хватает окружения: `babeldub doctor` → `babeldub setup` |
+| 0 | `EXIT_OK` | stage finished, no attention needed |
+| 1 | `EXIT_ERROR` | unexpected error (`error`, `where` in the JSON) |
+| 2 | `EXIT_USAGE` | bad arguments, previous stage not passed, invalid agent file |
+| 3 | `EXIT_ATTENTION` | stage finished, but some items need a decision (by the agent or a human) |
+| 4 | `EXIT_ENV` | environment missing: `babeldub doctor` → `babeldub setup` |
 
-Ошибки бросаются как `BabelDubError(message, code=..., hint=..., **extra)` — `cli.main` превращает их в JSON. Поле `ok` в JSON: `true` для кодов 0 и 3.
+Errors are raised as `BabelDubError(message, code=..., hint=..., **extra)`; `cli.main` turns them into JSON. The `ok` field in the JSON is `true` for codes 0 and 3.
 
-Статусы стадий в `state/progress.json` (`project.mark_stage`): `running | done | attention | failed`. Стадия в `attention` считается пройденной (конвейер идёт дальше), её элементы ждут решения. `uninstall` записывает стадию `install` со статусом `attention` и `state: "uninstalled"`.
+Stage statuses in `state/progress.json` (`project.mark_stage`): `running | done | attention | failed`. A stage in `attention` counts as passed (the pipeline moves on); its items wait for a decision. `uninstall` records the `install` stage with status `attention` and `state: "uninstalled"`.
 
-## 3. Расположение данных
+## 3. Data layout
 
 ```text
-BABELDUB_HOME (Windows: %LOCALAPPDATA%\BabelDub; Linux: ~/.local/share/babeldub; env BABELDUB_HOME)
-├── active.json        активный проект {"project": "<dir>"}
-├── games.json         реестр папок игр (для хука-охранника)
-├── envs/<engine>/     venv движков: qwen3tts, chatterbox, qc (маркер babeldub-env.json)
-├── models/<name>/     веса (hf download --local-dir; маркер .babeldub-model.json)
-├── hf-cache/          HF_HOME для воркеров (speechbrain/<model> — рабочая копия ECAPA)
-├── tools/<tool>/      внешние утилиты (vgmstream/INSTALLED.json и т.п.)
-├── cache/downloads/   загрузки setup
+BABELDUB_HOME (default ~/.babeldub, i.e. C:\Users\<user>\.babeldub on Windows; env BABELDUB_HOME)
+├── active.json        active project {"project": "<dir>"}
+├── games.json         registry of game folders (for the guard hook)
+├── envs/<engine>/     engine venvs: qwen3tts, chatterbox, qc (marker babeldub-env.json)
+├── models/<name>/     weights (hf download --local-dir; marker .babeldub-model.json)
+├── hf-cache/          HF_HOME for workers (speechbrain/<model> is the working copy of ECAPA)
+├── tools/<tool>/      external utilities (vgmstream/INSTALLED.json etc.)
+├── cache/downloads/   setup downloads
 ├── logs/              doctor.json, setup-plan.json, setup-<name>.log
-└── projects/<slug>/   рабочие папки проектов
+└── projects/<slug>/   project working folders
 ```
 
-Папка проекта (`core/layout.py` — константы путей):
+The default is not `%LOCALAPPDATA%`: packaged (MSIX) hosts such as the Claude desktop app virtualise it, so data written there from an agent session is invisible to other terminals. `core.paths.legacy_homes()` lists the pre-release defaults (`%LOCALAPPDATA%\BabelDub`, `$XDG_DATA_HOME/babeldub` or `~/.local/share/babeldub`); `doctor` warns when it finds data there.
+
+Project folder (`core/layout.py` holds the path constants):
 
 ```text
 projects/<slug>/
-├─ project.json                         настройки и ответы пользователя
+├─ project.json                         settings and the user's answers
 ├─ state/ progress.json events.jsonl locks/gpu.lock
 ├─ inventory/ recon.json assets.jsonl lines.jsonl texts.jsonl report.md
-├─ audio/orig/<uid>.wav                 декодированные оригиналы
+├─ audio/orig/<uid>.wav                 decoded originals
 ├─ cast/ characters.jsonl assign.jsonl refs.jsonl refs/<char_id>/<uid>.wav casting_sheet.md labels.agent.jsonl
-│        embeddings.npz                 кеш ECAPA-эмбеддингов оригиналов (по size+mtime wav)
+│        embeddings.npz                 cache of ECAPA embeddings of the originals (keyed by wav size+mtime)
 ├─ translate/ glossary.jsonl glossary.agent.jsonl style_bible.md translations.jsonl
 │             batches/index.json batches/<bid>.in.jsonl batches/<bid>.out.jsonl batches/<bid>.errors.json
 │             missing_official.txt glossary_violations.jsonl
-├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav refcache/<sha>.wav (обрезанные длинные референсы)
+├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav refcache/<sha>.wav (trimmed long references)
 ├─ post/ post.jsonl audio/<uid>.wav
 ├─ qa/ qa.jsonl decisions.jsonl decisions.agent.jsonl baseline.json report.md
-├─ build/ out/<relpath> build_manifest.json backup/<relpath> install.json (staging/ — временно во время build)
+├─ build/ out/<relpath> build_manifest.json backup/<relpath> install.json (staging/ exists only during build)
 └─ logs/ synth-<stamp>.log qc_worker.log samples/<label>.jsonl
 ```
 
-## 4. Манифесты
+## 4. Manifests
 
-Все JSONL — UTF-8 без BOM, по объекту на строку; первая строка канонических файлов — заголовок `{"_schema": "...", "_v": 1, "_created": "..."}` (читатели его пропускают, см. `core/jsonl.py`). Повтор того же `id` — новая ревизия, побеждает последняя. Поля сверх перечисленных допустимы; читатели их игнорируют.
+All JSONL files are UTF-8 without BOM, one object per line; the first line of canonical files is a header `{"_schema": "...", "_v": 1, "_created": "..."}` (readers skip it, see `core/jsonl.py`). A repeated `id` is a new revision; the last one wins. Fields beyond those listed are allowed; readers ignore them.
 
 ### 4.1 `project.json`
 ```json
@@ -84,20 +93,20 @@ projects/<slug>/
   "install": {"backup": true}
 }
 ```
-- `cast.policy`: `all` | `main` (минимальный набор персонажей, дающий `main_share` всей речи) | `list` (имена/ID в `cast.list`).
-- `tts.ref_strategy` — **главный принцип BabelDub: дубляж голосом оригинального героя.** `line` — голосовым промптом служит сама оригинальная реплика с её исходным текстом: модель переносит тембр *и* эмоцию, темп, подачу именно этой фразы (крик остаётся криком). `char` — лучший чистый референс персонажа (для коротких реплик, междометий, реплик без транскрипта или с музыкой). `auto` — `line`, если у оригинала есть исходный текст, `line_ref_min_s ≤ dur ≤ 15 с` и нет флагов `has_bed`/`nonverbal`, иначе `char`; если референса персонажа нет, крайний вариант — короткий оригинал. Референс длиннее 15 с режется по самой тихой точке и подаётся в режиме `x_vector_only` (только тембр). QA сравнивает голос синтеза с оригиналом персонажа (speaker similarity) и отправляет «уплывшие» голоса на перегенерацию.
-- `translation.mode`: `auto` (official, если официальный перевод есть у ≥ 95 % связанных озвучиваемых реплик; иначе translate; `adapt` только явно) | `translate` | `adapt` (официальный текст есть, агент адаптирует его под длительность) | `official` (озвучивать официальный текст как есть). Решённый режим `translate plan` пишет в `translation.resolved_mode`.
-- Необязательные ключи, которые читает CLI: `target_locale` (`pt-BR` и т.п., пишет `init`), `tts.device` (`cuda|cpu`), `tts.dtype` (`bf16`), `tts.batch_size` (реплик на один вызов генерации, по умолчанию 4), `tts.params` (kwargs генерации движка), `tts.options` (опции загрузки модели, например `attn_implementation`), `tts.yo` (`keep|strip|restore` для `prepare_for_tts`), `post.tolerance` (0,05 — без растяжения, если дубль длиннее не больше чем на 5 %), `qa.silence_db` (−50), `qa.asr_model`, `qa.sv_model` (папки моделей qc).
-- `tts.best_of` в v0.1 не используется (`synth` пишет об этом в `notes`): слабые реплики переозвучивает цикл QA (`regen`/`reref` → `synth --attempt-next`).
-- `set` проверяет перечисления: `compute.device`, `cast.policy`, `translation.mode`, `tts.ref_strategy`, `tts.tier`, `tts.engine` (`qwen3tts|chatterbox|dummy`); защищены `_schema`, `cli_version`, `created`, `slug`, `game_dir`, `target_lang` (другой язык — новый проект).
+- `cast.policy`: `all` | `main` (the smallest set of characters that covers `main_share` of all speech) | `list` (names/IDs in `cast.list`).
+- `tts.ref_strategy` is **BabelDub's core principle: dubbing in the original character's voice.** `line`: the voice prompt is the original line itself with its source text, so the model carries over the timbre *and* the emotion, pace and delivery of that exact phrase (a scream stays a scream). `char`: the character's best clean reference (for short lines, interjections, lines without a transcript or with music). `auto`: `line` if the original has source text, `line_ref_min_s ≤ dur ≤ 15 s` and no `has_bed`/`nonverbal` flags, otherwise `char`; if the character has no reference, the last resort is the short original. A reference longer than 15 s is cut at its quietest point and fed in `x_vector_only` mode (timbre only). QA compares the voice of the synthesis with the character's original (speaker similarity) and sends drifted voices back for regeneration.
+- `translation.mode`: `auto` (official if an official translation exists for ≥ 95 % of the linked voiced lines; otherwise translate; `adapt` only when set explicitly) | `translate` | `adapt` (the official text exists; the agent adapts it to the duration) | `official` (voice the official text as is). `translate plan` writes the resolved mode to `translation.resolved_mode`.
+- Optional keys the CLI reads: `target_locale` (`pt-BR` etc., written by `init`), `tts.device` (`cuda|cpu`), `tts.dtype` (`bf16`), `tts.batch_size` (lines per generation call, default 4), `tts.params` (engine generation kwargs), `tts.options` (model load options, for example `attn_implementation`), `tts.yo` (`keep|strip|restore` for `prepare_for_tts`), `post.tolerance` (0.05: no stretching if the dub is at most 5 % longer), `qa.silence_db` (−50), `qa.asr_model`, `qa.sv_model` (qc model folders).
+- `tts.best_of` is not used in v0.1 (`synth` says so in `notes`): weak lines are re-voiced by the QA loop (`regen`/`reref` → `synth --attempt-next`).
+- `set` validates the enumerations `compute.device`, `cast.policy`, `translation.mode`, `tts.ref_strategy`, `tts.tier`, `tts.engine` (`qwen3tts|chatterbox|dummy`); `_schema`, `cli_version`, `created`, `slug`, `game_dir`, `target_lang` are protected (another language means a new project).
 
-### 4.2 `inventory/assets.jsonl` — контейнеры (`adapters.base.Asset`)
+### 4.2 `inventory/assets.jsonl`: containers (`adapters.base.Asset`)
 `asset_id`, `adapter`, `relpath`, `role` (`voice|text|audio|other`), `size`, `sha1`, `locale`, `level` (`A|B|C`), `info{}`.
-- `scan` дописывает `info.mtime_ns` (sha1 переиспользуется, если не изменились size и mtime) и `info.sha1_of: "listing"` для ассета-папки (sha1 по списку файлов).
-- FMOD: `info.kind`, `fsbs[{sub, codec, n, dur_s}]`, `audio_table`, `programmer_keys`, `localized_group`, `strings_banks` (relpath'ы `*.strings.bank`, адаптер берёт из них пути событий — при пересоздании `Asset` из строки поле сохраняется), `encrypted`, `fmt_version`, `bank_guid`.
+- `scan` adds `info.mtime_ns` (sha1 is reused if size and mtime did not change) and `info.sha1_of: "listing"` for a folder asset (sha1 over the file list).
+- FMOD: `info.kind`, `fsbs[{sub, codec, n, dur_s}]`, `audio_table`, `programmer_keys`, `localized_group`, `strings_banks` (relpaths of `*.strings.bank`; the adapter takes event paths from them, and the field survives re-creating an `Asset` from a row), `encrypted`, `fmt_version`, `bank_guid`.
 - Unity Localization: `info.kind` (`string-tables|shared-table-data|mixed`), `tables`, `typetree`, `unity_version`, `addressables_crc`, `warning`.
 
-### 4.3 `inventory/lines.jsonl` — КАНОН реплик
+### 4.3 `inventory/lines.jsonl`: the CANON of lines
 ```json
 {
   "id": "fmod:LowBudgetRepairs_Data/StreamingAssets/Dialogue_en-US.bank#fsb1:0042",
@@ -116,101 +125,101 @@ projects/<slug>/
   "flags": []
 }
 ```
-- `id` строит `core.ids.line_id(adapter, relpath, sub, index)`; `uid = core.ids.uid(id)`.
-- `kind`: `dialogue | cutscene | bark | sfx | music | ambience | ui | unknown`. Озвучиваются только `dialogue`, `cutscene`, `bark`.
-- `fixed_length: true` — реплика должна уложиться в исходную длительность (катсцены, таймлайны, видео).
-- `audio.wav` появляется после `extract` (путь относительно проекта); `text` — после `link`.
-- `entry` у FMOD дополнительно: `subsong` (номер vgmstream), `table_key` (ключ аудиотаблицы для `getSoundInfo`), `audio_table`, `event_src` (`strings|programmer`), `fsb_codec`; `audio.samples`. У `loose`: `entry.file` (путь файла в игре).
-- `text`: `src` — реально произнесённый текст без разметки субтитров (метка говорящего `{ColorStart}{CharacterName}:{ColorEnd}`, теги `<i>`, `<color>`, теги Ren'Py); исходная строка — в `src_raw`/`tgt_raw`, если отличается. `match`: `exact | normalized | filename | null`. Источник `asr|agent|human|manual` повторный `link` не перезаписывает.
-- `flags`: `duplicate`, `alt_take` (ставит `link` для нескольких записей одного ключа: основной считается запись с `table_key`, затем с точным ключом, затем `_best`, затем с наибольшим `_vN`), `nonverbal`, `has_bed` (речь смешана с музыкой/шумом), `no_text` (нет текста), `no_audio` (не декодировалось). Повторный `extract` сохраняет `text` и флаги стадий.
+- `id` is built by `core.ids.line_id(adapter, relpath, sub, index)`; `uid = core.ids.uid(id)`.
+- `kind`: `dialogue | cutscene | bark | sfx | music | ambience | ui | unknown`. Only `dialogue`, `cutscene` and `bark` are voiced.
+- `fixed_length: true`: the line must fit the original duration (cutscenes, timelines, video).
+- `audio.wav` appears after `extract` (a path relative to the project); `text` appears after `link`.
+- FMOD `entry` also has: `subsong` (vgmstream number), `table_key` (audio table key for `getSoundInfo`), `audio_table`, `event_src` (`strings|programmer`), `fsb_codec`; and `audio.samples`. `loose` has `entry.file` (the file's path in the game).
+- `text`: `src` is the text actually spoken, without subtitle markup (the speaker label `{ColorStart}{CharacterName}:{ColorEnd}`, `<i>` and `<color>` tags, Ren'Py tags); the raw string is in `src_raw`/`tgt_raw` when it differs. `match`: `exact | normalized | filename | null`. A repeated `link` does not overwrite the sources `asr|agent|human|manual`.
+- `flags`: `duplicate`, `alt_take` (set by `link` for several records with one key: the main record is the one with `table_key`, then the one with the exact key, then `_best`, then the highest `_vN`), `nonverbal`, `has_bed` (speech mixed with music/noise), `no_text` (no text), `no_audio` (failed to decode). A repeated `extract` keeps `text` and the stage flags.
 
 ### 4.4 `inventory/texts.jsonl`
-`{key, table, locale, lang, text, source}` — все строки всех языков из текстовых ассетов (`lang` — двухбуквенный код). Необязательно: `entry_id`, `key_missing` (ключ не найден в общей таблице), `audio`/`file`/`voice` (имя аудиофайла — `link` использует его на проходе по имени файла).
+`{key, table, locale, lang, text, source}`: every string in every language from the text assets (`lang` is a two-letter code). Optional: `entry_id`, `key_missing` (key not found in the shared table), `audio`/`file`/`voice` (audio file name; `link` uses it in the file-name pass).
 
 ### 4.5 `cast/*`
-- `characters.jsonl`: `{char_id, name, name_tgt, gender (m|f|u), age (child|adult|old|u), n_lines, speech_s, share, tier (main|secondary|minor), selected, source (metadata|folder|cluster|unknown), conf, labeled, notes}`. `char_id` — Unicode-slug имени (`cast.characters.char_id_for`), кластеры — `cluster_NN`, реплики без говорящего без воркера qc — `unknown`.
-- `assign.jsonl`: `{id, char_id, conf}` (`conf` кластера — косинус к центроиду).
-- `refs.jsonl`: `{ref_id, char_id, line_id, wav, text, lang, dur_s, score, chosen, centroid_cos?, active_rms_db?}`. У группы `unknown` референсов нет: её реплики озвучиваются стратегией `line`.
-- `labels.agent.jsonl` (пишет агент-кастер): `{char_id, name, name_tgt, gender, age, notes}`; лишние поля и неизвестный `char_id` — отказ всего файла (код 2).
-- `embeddings.npz` — кеш эмбеддингов по `line id`.
+- `characters.jsonl`: `{char_id, name, name_tgt, gender (m|f|u), age (child|adult|old|u), n_lines, speech_s, share, tier (main|secondary|minor), selected, source (metadata|folder|cluster|unknown), conf, labeled, notes}`. `char_id` is the Unicode slug of the name (`cast.characters.char_id_for`); clusters are `cluster_NN`; lines without a speaker when there is no qc worker go to `unknown`.
+- `assign.jsonl`: `{id, char_id, conf}` (for a cluster, `conf` is the cosine to the centroid).
+- `refs.jsonl`: `{ref_id, char_id, line_id, wav, text, lang, dur_s, score, chosen, centroid_cos?, active_rms_db?}`. The `unknown` group has no references: its lines are voiced with the `line` strategy.
+- `labels.agent.jsonl` (written by the caster agent): `{char_id, name, name_tgt, gender, age, notes}`; extra fields or an unknown `char_id` reject the whole file (code 2).
+- `embeddings.npz`: cache of embeddings by `line id`.
 
 ### 4.6 `translate/*`
-- `batches/<bid>.in.jsonl` (CLI): первая строка `{"_batch": bid, "scene", "scenes", "target_lang", "source_lang", "mode", "n", "glossary": [...], "style": "...", "out": "<bid>.out.jsonl", "rules"}`, далее `{id, key, speaker, src, tgt_official, dur_s, budget_syll, fixed_length, placeholders, context_prev, context_next, task?, current?}` (`task`: `adapt | retranslate | shorten`, `current` — текущий `dub_text`).
-- `batches/<bid>.out.jsonl` (агент): `{id, dub_text, sub_text?, variants?: [короче...], notes?}`. Плейсхолдеры и теги исходника обязаны быть в `dub_text`, `sub_text` и каждом варианте (`check_placeholders`; ремарки вида `[snoring]` и переносы — мягкие).
-- `batches/index.json` — состояние пакетов (`open | error | merged`, ids, sha1 слитого `.out`); `<bid>.errors.json` — ошибки последней отправки.
-- `translations.jsonl` (CLI): `{id, dub_text, sub_text, lang, by (official|agent|human), rev, ts, est_syll, budget_syll, fit (ok|over|under|null), batch?, variants?, picked_variant?, agent_text?, notes?}`. `fit = null`, если длительность неизвестна; при `over` CLI сам берёт первый укладывающийся вариант из `variants` (исходный текст агента — в `agent_text`). `dub_text` хранит строку с тегами как в `src`; перед синтезом её чистит `prepare_for_tts`.
-- `glossary.jsonl` (CLI, канон): `{term, translation, pronounce?, note?}`; агент пишет `glossary.agent.jsonl`, CLI сливает (`glossary apply`).
+- `batches/<bid>.in.jsonl` (CLI): first line `{"_batch": bid, "scene", "scenes", "target_lang", "source_lang", "mode", "n", "glossary": [...], "style": "...", "out": "<bid>.out.jsonl", "rules"}`, then `{id, key, speaker, src, tgt_official, dur_s, budget_syll, fixed_length, placeholders, context_prev, context_next, task?, current?}` (`task`: `adapt | retranslate | shorten`; `current` is the current `dub_text`).
+- `batches/<bid>.out.jsonl` (agent): `{id, dub_text, sub_text?, variants?: [shorter...], notes?}`. The source's placeholders and tags must be present in `dub_text`, `sub_text` and every variant (`check_placeholders`; stage directions like `[snoring]` and line breaks are soft).
+- `batches/index.json`: batch state (`open | error | merged`, ids, sha1 of the merged `.out`); `<bid>.errors.json`: errors of the last submit.
+- `translations.jsonl` (CLI): `{id, dub_text, sub_text, lang, by (official|agent|human), rev, ts, est_syll, budget_syll, fit (ok|over|under|null), batch?, variants?, picked_variant?, agent_text?, notes?}`. `fit = null` when the duration is unknown; on `over` the CLI itself picks the first fitting variant from `variants` (the agent's original text goes to `agent_text`). `dub_text` keeps the string with tags as in `src`; `prepare_for_tts` cleans it before synthesis.
+- `glossary.jsonl` (CLI, canonical): `{term, translation, pronounce?, note?}`; the agent writes `glossary.agent.jsonl` and the CLI merges it (`glossary apply`).
 
 ### 4.7 `synth/results.jsonl`
-`{id, attempt, engine, model, wav, sr, dur_s, seed, ref_id, text, status (ok|error), error?, rtf?, ts}` плюс `ref_mode (line|char)`, `ref_wav`, `ref_trimmed`, `lang`, `char_id`, `reason (new|retry|retranslated|regen|reref|force)`, `key` (хеш входов: движок, модель, язык, текст, референс), `batch?` (размер батча; сид у батча общий), `hit_token_limit?`, `vram_peak_gb?`. У ошибочных строк `status=error`, `wav=null`.
+`{id, attempt, engine, model, wav, sr, dur_s, seed, ref_id, text, status (ok|error), error?, rtf?, ts}` plus `ref_mode (line|char)`, `ref_wav`, `ref_trimmed`, `lang`, `char_id`, `reason (new|retry|retranslated|regen|reref|force)`, `key` (hash of the inputs: engine, model, language, text, reference), `batch?` (batch size; a batch shares one seed), `hit_token_limit?`, `vram_peak_gb?`. Failed rows have `status=error`, `wav=null`.
 
 ### 4.8 `post/post.jsonl`
 `{id, attempt, wav, dur_s, orig_dur_s, target_s, ratio, ratio_raw, stretch, stretch_method, lufs_in, lufs_out, level_ref, measure (lufs|rms), peak_db, lead_s, trail_s, sr, ch, fixed_length, over_length, src_wav, src_key, ts}`.
-- `dur_s` — длительность всего файла; `target_s` — речевой отрезок оригинала без краевой тишины; `ratio` = речевой отрезок дубля / `target_s` после подгонки, `ratio_raw` — до неё.
-- Растяжение — если `ratio_raw > 1 + post.tolerance` (для `fixed_length` — `1 + fixed_length_tolerance`), не сильнее `post.max_stretch`. `over_length` — если после подгонки `ratio > 1 + fixed_length_tolerance` (fixed) или `> qa.max_duration_ratio`.
-- Громкость по LUFS оригинала (по RMS, если речь короче 0,4 с), true peak ≤ `post.true_peak_db`, частота и каналы — как у оригинала.
+- `dur_s` is the duration of the whole file; `target_s` is the speech span of the original without edge silence; `ratio` = speech span of the dub / `target_s` after fitting, `ratio_raw` before it.
+- Stretching happens if `ratio_raw > 1 + post.tolerance` (for `fixed_length`, `1 + fixed_length_tolerance`), and never more than `post.max_stretch`. `over_length` is set if after fitting `ratio > 1 + fixed_length_tolerance` (fixed) or `> qa.max_duration_ratio`.
+- Loudness follows the original's LUFS (RMS if the speech is shorter than 0.4 s), true peak ≤ `post.true_peak_db`, sample rate and channels as in the original.
 
 ### 4.9 `qa/*`
-- `qa.jsonl`: `{id, attempt, char_id, wav, asr_text, cer, sim, sim_line, sim_char, sim_ref, ratio, dur_s, peak_db, verdict (pass|fail), reasons[], ts}`; `reasons ∈ missing_file | qc_error | no_dub_text | empty | silent | cer | sim | duration | peak`. `sim` — среднее из сходства с оригиналом этой реплики и с выбранным референсом персонажа; `sim_ref` — базовая линия персонажа (средний попарный косинус его оригиналов, `qa/baseline.json`), проверка `sim ≥ qa.min_sim_ratio · sim_ref`.
-- `decisions.jsonl` (CLI): `{id, decision, attempt, by (auto|agent|human), note, attention, ts}`; `decision ∈ accept | regen | reref | shorten | retranslate | keep_original | skip`. Авто-решения: pass → `accept`; `cer|sim|peak|empty|silent` → `regen`, пока `attempt < tts.max_attempts`, затем `keep_original` + attention; `duration` → `shorten` + attention (до 2 раз, затем `keep_original`); `missing_file|no_dub_text|qc_error` → без решения, attention. Решения agent/human для текущей попытки авто-QA не перезаписывает.
-- `decisions.agent.jsonl` (агент): `{id, decision, attempt?, note?}` (без `by`/`ts`); `attempt` по умолчанию — последняя попытка из `post`. `accept` относится к последней обработанной попытке: `post` хранит только её, решение для старой попытки сборка отбрасывает как `stale_attempt`.
-- `synth --attempt-next` делает новую попытку для решений `regen`/`reref`, у которых `attempt` ≥ последней успешной попытки; `reref` меняет голосовой промпт (`line` → `char`, `char` → другой референс или `line`).
+- `qa.jsonl`: `{id, attempt, char_id, wav, asr_text, cer, sim, sim_line, sim_char, sim_ref, ratio, dur_s, peak_db, verdict (pass|fail), reasons[], ts}`; `reasons ∈ missing_file | qc_error | no_dub_text | empty | silent | cer | sim | duration | peak`. `sim` is the mean of the similarity to the original of this line and to the chosen character reference; `sim_ref` is the character's baseline (the mean pairwise cosine of their originals, `qa/baseline.json`); the check is `sim ≥ qa.min_sim_ratio · sim_ref`.
+- `decisions.jsonl` (CLI): `{id, decision, attempt, by (auto|agent|human), note, attention, ts}`; `decision ∈ accept | regen | reref | shorten | retranslate | keep_original | skip`. Automatic decisions: pass → `accept`; `cer|sim|peak|empty|silent` → `regen` while `attempt < tts.max_attempts`, then `keep_original` + attention; `duration` → `shorten` + attention (up to 2 times, then `keep_original`); `missing_file|no_dub_text|qc_error` → no decision, attention. Automatic QA does not overwrite agent/human decisions for the current attempt.
+- `decisions.agent.jsonl` (agent): `{id, decision, attempt?, note?}` (no `by`/`ts`); `attempt` defaults to the latest attempt in `post`. `accept` applies to the latest processed attempt: `post` keeps only that one, and the build drops a decision for an old attempt as `stale_attempt`.
+- `synth --attempt-next` makes a new attempt for `regen`/`reref` decisions whose `attempt` is ≥ the latest successful attempt; `reref` changes the voice prompt (`line` → `char`, `char` → another reference or `line`).
 
 ### 4.10 `build/build_manifest.json`, `build/install.json`
 - manifest: `{_schema: "babeldub.build/1", created, build_id, game_fingerprint, target_lang, options{codec, sample_rate?}, containers: [...], models: [{name, revision, license, engine, lines}]}`.
-  - `containers[]`: `{asset_id, adapter, relpath, src_sha1, out, out_sha1, replaced, kept, codec, lines, inputs_sha1, built, files: [{relpath, src_sha1 (null = новый файл), out, out_sha1}], replacements: {line_id: {wav, sha1}}}`. `relpath = ""` — ассет в корне игры. `inputs_sha1` (исходник + sha1 wav + опции) делает сборку идемпотентной (`status: up_to_date`).
-  - `build_id` — sha1 содержимого; `verify` записывает его в `progress.verify.build_id`, `install`/`reapply` требуют совпадения.
-- install: `{installed: [{relpath, asset_id, orig_sha1, new_sha1, backup, created}], build_id, ts, state (installing|installed|uninstalled), restored?}`. `installing` — журнал до записи (сбой откатывается); `created: true` — новый файл, `uninstall` его удаляет.
+  - `containers[]`: `{asset_id, adapter, relpath, src_sha1, out, out_sha1, replaced, kept, codec, lines, inputs_sha1, built, files: [{relpath, src_sha1 (null = new file), out, out_sha1}], replacements: {line_id: {wav, sha1}}}`. `relpath = ""` is an asset at the game root. `inputs_sha1` (source + wav sha1s + options) makes the build idempotent (`status: up_to_date`).
+  - `build_id` is the sha1 of the content; `verify` records it in `progress.verify.build_id`, and `install`/`reapply` require a match.
+- install: `{installed: [{relpath, asset_id, orig_sha1, new_sha1, backup, created}], build_id, ts, state (installing|installed|uninstalled), restored?}`. `installing` is the write-ahead journal (a failure is rolled back); `created: true` marks a new file, which `uninstall` deletes.
 
-## 5. Команды CLI
+## 5. CLI commands
 
-Общие флаги: `--project <dir|slug>` (иначе `BABELDUB_PROJECT`, затем активный проект, затем текущая папка), `--pretty`. У подкоманд (`cast apply-labels`, `cast select`, `decide apply`) `--project`/`--pretty` можно ставить и до, и после действия.
+Common flags: `--project <dir|slug>` (otherwise `BABELDUB_PROJECT`, then the active project, then the current folder), `--pretty`. Subcommands (`cast apply-labels`, `cast select`, `decide apply`) accept `--project`/`--pretty` both before and after the action.
 
-| Модуль | Команда | Что делает | Вывод (ключевые поля) |
+| Module | Command | What it does | Output (key fields) |
 |---|---|---|---|
-| `commands/env.py` | `doctor [--no-import-check]` | ОС, Python, uv, ffmpeg/ffprobe, vgmstream-cli, rubberband, git, GPU (nvidia-smi: имя, VRAM, драйвер), свободное место, какие envs (с проверкой импорта) и модели есть; рекомендует тир; полный отчёт — `BABELDUB_HOME/logs/doctor.json`. Код 4 — нет uv/ffmpeg/ffprobe, 3 — нужны envs/модели | `tier`, `gpu`, `tools{}`, `envs{}`, `models[]`, `missing[]`, `optional_missing[]`, `to_install[]`, `install{}`, `next` |
-| | `setup [--engines qwen3tts,qc] [--models auto\|none\|a,b] [--tools] [--tier] [--lang] [--accept-license M] [--force] [--dry-run] [--no-import-check]` | Без флагов: TTS-движок проекта + qc, модели `auto` для тира и языка, vgmstream. Создаёт venv (`uv venv`, torch cu128/cu124/cpu), ставит пакеты по каталогу, скачивает веса (`hf download`) и инструменты (vgmstream с GitHub-релиза, sha256); существующий рабочий venv «усыновляет»; модели `opt_in` — только с `--accept-license`. План — `logs/setup-plan.json` | `planned[]`, `done[]`, `skipped[]`, `failed[]`, `blocked[]`, `download_gb`, `free_gb` |
-| | `models list [--engine E]` / `models fetch a,b [--accept-license M] [--force] [--dry-run]` | Каталог `data/models.yaml` с лицензиями и статусом; загрузка весов | `models[]` / `done[]`, `skipped[]` |
-| `commands/project.py` | `init <game_dir> --lang ru [--cast all\|main\|list] [--chars A,B] [--mode auto\|translate\|adapt\|official] [--slug] [--name] [--project-dir]` | Создаёт проект (движок TTS по языку), регистрирует игру в `games.json`, делает его активным; повтор идемпотентен; другая игра/язык в том же slug — код 2; язык без движка — код 3 | `project`, `slug`, `engine`, `next` |
-| | `status` | Стадии, счётчики, следующий шаг: `next_stage` — первая стадия в `pending`, `running` или `failed`; стадии в `attention`/`failed` — в `attention{стадия: сводка}` и код 3 | `stages{}`, `counts{}`, `next_stage`, `next`, `attention{}`, `done` |
-| | `set <section.key>=<value> ...` | Меняет настройки `project.json`; тип — по текущему значению, проверка перечислений (§4.1) | `changed{}`, `warnings[]` |
-| | `query [--where k=v,k!=v,k~sub ...] [--fields a,b.c] [--limit 20] [--out file]` | Выборка реплик (сливает lines + assign + characters + translations + qa + decisions). Вычисляемые поля: `char` (id или имя), `has_text`, `translated`, `verdict`, `decision`, `voiced`; метрики QA — `qa.*` | `rows[]`, `total`, `file?` |
-| | `sample --scene X \| --char X \| --ids a,b [--n 30] [--out file.jsonl]` | Контекст для агента: реплики в файл (по умолчанию `logs/samples/<label>.jsonl`) | `file`, `n` |
-| | `games` | Реестр игр | `games[]`, `active` |
-| `commands/recon.py` | `scan [--force]` | Определяет движок и middleware (`data/engines.yaml`), вызывает `discover()` всех адаптеров (сбой адаптера — предупреждение), пишет `recon.json` (с `refs.recon`/`refs.pack` — пути справочников скиллов), `assets.jsonl`, `report.md` | `engine`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `anticheat?` |
-| | `extract [--kinds dialogue,cutscene,bark\|all] [--limit N] [--ids a,b] [--locales auto\|all\|en-US,...] [--force] [--dry-run]` | `list_lines()` + `extract_audio()` → `lines.jsonl`, `audio/orig/*.wav`; `read_texts()` → `texts.jsonl`. `lines.jsonl` = только выбранные реплики (запуск с `--limit N` — пробный проект, без лимита — расширяет его); `auto` выбирает одну голосовую локаль (source_lang, затем en, затем самую большую); готовые WAV переиспользуются | `lines`, `by_kind{}`, `minutes`, `decoded`, `reused`, `failed`, `texts`, `locales[]`, `voice_locales[]` |
-| | `link [--dry-run]` | Связывает реплики с текстами (ключ → нормализованный ключ → имя файла), заполняет `text`, `source_lang`, флаги `no_text`/`alt_take`/`duplicate`; код 3 при `unlinked > 0` | `linked`, `unlinked`, `with_official_target`, `by_match{}`, `src_lang`, `alt_takes` |
-| `commands/cast.py` | `cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12] [--threshold 0.35] [--device] [--wait-lock S] [--no-embed] [--force]` | Персонажи из `speaker_hint` (метаданные), остальные — кластеры по эмбеддингам воркера `qc` (если он есть; иначе группа `unknown` с предупреждением), тиры, `cast.policy`, выбор референсов, `casting_sheet.md`. Код 3 — есть неопознанные голоса или выбранный персонаж без референса | `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs` |
-| | `cast apply-labels` | Проверяет и сливает `labels.agent.jsonl` (всё или ничего) | `updated`, `labeled`, `uncertain[]` |
-| | `cast select --chars A,B \| --policy all\|main [--device] [--wait-lock] [--no-embed]` | Меняет выбор персонажей, подбирает референсы новым | `policy`, `selected[]`, `count`, `new_refs`, `no_ref[]` |
-| `commands/translate.py` | `translate plan` | Решает режим (`official/adapt/translate`), считает покрытие | `mode`, `with_official`, `official_share`, `need_agent`, `no_text`, `next` |
-| | `translate use-official [--force]` | Копирует официальный перевод в `translations.jsonl` (`by=official`); agent/human без `--force` не трогает; реплики без официального текста — в `missing_official.txt`, код 3 | `copied`, `unchanged`, `missing`, `over_budget` |
-| | `batch make [--size 60] [--ids a,b] [--from-decisions] [--force]` | Нарезает пакеты по сценам для реплик без перевода (или для `adapt`); `--ids` — перевести заново, `--from-decisions` — реплики с решением `retranslate`/`shorten`; `--force` — пересоздать незакрытые | `batches[]`, `lines`, `open` |
-| | `batch next` | Первый незакрытый пакет | `batch`, `state (new\|ready\|error)`, `in`, `out`, `errors_file?`; `batch: null, done: true` |
-| | `batch submit <bid> [--force]` | Проверяет `.out.jsonl` (все id, лишние id, пустой `dub_text`, типы, плейсхолдеры/теги) и сливает в `translations.jsonl`; ошибки — код 2 и `<bid>.errors.json`; превышение бюджета слогов — код 3 | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants` |
-| | `glossary check` | Термин глоссария в исходнике без согласованного перевода в `dub_text` → нарушение (код 3, `glossary_violations.jsonl`) | `terms`, `checked`, `violations[]`, `total` |
-| | `glossary apply` | Проверяет и сливает `glossary.agent.jsonl` в `glossary.jsonl` | `added`, `updated`, `total` |
-| `commands/voice.py` | `synth [--chars A,B] [--ids a,b] [--limit N] [--attempt-next] [--engine qwen3tts\|chatterbox\|dummy] [--device cuda\|cpu] [--wait-lock S] [--batch N] [--force] [--dry-run]` | Готовит голосовые промпты (§4.1), запускает воркер движка в его venv (одна загрузка модели на запуск, батчи по персонажам), пишет `synth/raw`, `results.jsonl` после каждой реплики; занимает `gpu.lock`. Идемпотентно: тот же текст тем же движком/моделью не повторяется | `done`, `failed`, `remaining`, `rtf`, `batch`, `vram_peak_gb`, `by_ref{}`, `skipped{}`, `attention[]` |
-| | `post [--ids] [--limit] [--force] [--dry-run] [--stretch-method rubberband\|ffmpeg-rubberband\|atempo]` | Обрезка тишины, подгонка длительности (в пределах `max_stretch`), края тишины и громкость как у оригинала, формат как у оригинала (§4.8) | `done`, `up_to_date`, `over_length[]`, `stretch{}` |
-| `commands/qa.py` | `qa [--ids] [--limit] [--force] [--rebaseline] [--device] [--wait-lock S]` | Воркер `qc`: ASR (CER к `dub_text`), сходство голоса с оригиналом и референсом персонажа относительно его базовой линии, длительность, пики → `qa.jsonl`; авто-решения → `decisions.jsonl` (§4.9). Без env `qc` — код 4 | `checked`, `pass`, `fail`, `accept`, `regen`, `shorten`, `keep_original`, `attention[]`, `pending`, `cer_median`, `sim_median`, `device` |
-| | `decide apply [--by agent\|human]` | Проверяет и сливает `decisions.agent.jsonl` (всё или ничего; повторы пропускаются) | `applied`, `skipped`, `by_decision{}` |
-| | `report` | `qa/report.md` с итогами по персонажам и списком «требуют решения» | `file`, `lines`, `checked`, `pass`, `attention` |
-| `commands/pack.py` | `build [--codec auto\|pcm16\|fadpcm] [--only ASSET_ID,...] [--sample-rate N] [--force] [--dry-run]` | Строки с последним решением `accept` группируются по контейнерам; `adapter.build()` в staging, после успеха — в `build/out/<relpath>`; манифест (§4.10). Неизменённые входы — `up_to_date`; сбой одного контейнера не трогает остальные | `containers[{asset_id, status, replaced, kept, codec}]`, `replaced`, `total_containers`, `build_id`, `failed?`, `attention?` |
-| | `verify [--game-runtime]` | Выход существует и совпадает с `out_sha1`; затем `adapter.verify()` для каждого контейнера (§5.1) | `ok`, `verified`, `checks`, `problems[]`, `build_id` |
-| | `install [--force] [--dry-run]` | Требует `verify` текущей сборки. Отказ, если игра запущена или найден античит (`--force` обходит только эти две защиты) или файл игры не совпадает с исходником сборки. Бэкап оригиналов в `build/backup`, атомарная замена, журнал `install.json` | `installed[]`, `unchanged`, `files`, `backup`, `backed_up` |
-| | `uninstall [--force] [--dry-run]` | Возврат оригиналов по бэкапу с проверкой sha1; файл, изменённый и дубляжом, и игрой, не трогается без `--force` | `restored[]`, `already_original`, `state`, `left_changed?` |
-| | `reapply [--force] [--dry-run]` | Повторная установка после обновления игры: оригинальные файлы ставятся заново, изменённые игрой контейнеры — в `changed[]` с подсказкой `build --only` | `reapplied[]`, `current`, `changed[]` |
+| `commands/env.py` | `doctor [--no-import-check]` | OS, Python, uv, ffmpeg/ffprobe, vgmstream-cli, rubberband, git, GPU (nvidia-smi: name, VRAM, driver), free space, which envs (with an import check) and models are present; recommends a tier; the full report is `BABELDUB_HOME/logs/doctor.json`. Code 4: no uv/ffmpeg/ffprobe; 3: envs/models needed | `tier`, `gpu`, `tools{}`, `envs{}`, `models[]`, `missing[]`, `optional_missing[]`, `to_install[]`, `install{}`, `next` |
+| | `setup [--engines qwen3tts,qc] [--models auto\|none\|a,b] [--tools] [--tier] [--lang] [--accept-license M] [--force] [--dry-run] [--no-import-check]` | Without flags: the project's TTS engine + qc, `auto` models for the tier and language, vgmstream. Creates a venv (`uv venv`, torch cu128/cu124/cpu), installs packages per the catalog, downloads weights (`hf download`) and tools (vgmstream from the GitHub release, sha256); "adopts" an existing working venv; `opt_in` models only with `--accept-license`. Plan: `logs/setup-plan.json` | `planned[]`, `done[]`, `skipped[]`, `failed[]`, `blocked[]`, `download_gb`, `free_gb` |
+| | `models list [--engine E]` / `models fetch a,b [--accept-license M] [--force] [--dry-run]` | The `data/models.yaml` catalog with licenses and status; downloading weights | `models[]` / `done[]`, `skipped[]` |
+| `commands/project.py` | `init <game_dir> --lang ru [--cast all\|main\|list] [--chars A,B] [--mode auto\|translate\|adapt\|official] [--slug] [--name] [--project-dir]` | Creates the project (TTS engine by language), registers the game in `games.json`, makes it active; a repeat is idempotent; another game/language in the same slug is code 2; a language without an engine is code 3 | `project`, `slug`, `engine`, `next` |
+| | `status` | Stages, counters, next step: `next_stage` is the first stage in `pending`, `running` or `failed`; stages in `attention`/`failed` go to `attention{stage: summary}` with code 3 | `stages{}`, `counts{}`, `next_stage`, `next`, `attention{}`, `done` |
+| | `set <section.key>=<value> ...` | Changes `project.json` settings; the type follows the current value; enumerations are validated (§4.1) | `changed{}`, `warnings[]` |
+| | `query [--where k=v,k!=v,k~sub ...] [--fields a,b.c] [--limit 20] [--out file]` | Selects lines (merges lines + assign + characters + translations + qa + decisions). Computed fields: `char` (id or name), `has_text`, `translated`, `verdict`, `decision`, `voiced`; QA metrics as `qa.*` | `rows[]`, `total`, `file?` |
+| | `sample --scene X \| --char X \| --ids a,b [--n 30] [--out file.jsonl]` | Context for the agent: lines written to a file (default `logs/samples/<label>.jsonl`) | `file`, `n` |
+| | `games` | Game registry | `games[]`, `active` |
+| `commands/recon.py` | `scan [--force]` | Detects the engine and middleware (`data/engines.yaml`), calls `discover()` of every adapter (an adapter failure is a warning), writes `recon.json` (with `refs.recon`/`refs.pack`: paths of the skill references), `assets.jsonl`, `report.md` | `engine`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `anticheat?` |
+| | `extract [--kinds dialogue,cutscene,bark\|all] [--limit N] [--ids a,b] [--locales auto\|all\|en-US,...] [--force] [--dry-run]` | `list_lines()` + `extract_audio()` → `lines.jsonl`, `audio/orig/*.wav`; `read_texts()` → `texts.jsonl`. `lines.jsonl` holds only the selected lines (a run with `--limit N` makes a trial project; a run without a limit extends it); `auto` picks one voice locale (source_lang, then en, then the largest); existing WAVs are reused | `lines`, `by_kind{}`, `minutes`, `decoded`, `reused`, `failed`, `texts`, `locales[]`, `voice_locales[]` |
+| | `link [--dry-run]` | Links lines to texts (key → normalized key → file name), fills `text`, `source_lang`, the `no_text`/`alt_take`/`duplicate` flags; code 3 when `unlinked > 0` | `linked`, `unlinked`, `with_official_target`, `by_match{}`, `src_lang`, `alt_takes` |
+| `commands/cast.py` | `cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12] [--threshold 0.35] [--device] [--wait-lock S] [--no-embed] [--force]` | Characters from `speaker_hint` (metadata), the rest as clusters of embeddings from the `qc` worker (if present; otherwise an `unknown` group with a warning), tiers, `cast.policy`, choice of references, `casting_sheet.md`. Code 3: unidentified voices exist, or a selected character has no reference | `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs` |
+| | `cast apply-labels` | Validates and merges `labels.agent.jsonl` (all or nothing) | `updated`, `labeled`, `uncertain[]` |
+| | `cast select --chars A,B \| --policy all\|main [--device] [--wait-lock] [--no-embed]` | Changes the character selection, picks references for the new ones | `policy`, `selected[]`, `count`, `new_refs`, `no_ref[]` |
+| `commands/translate.py` | `translate plan` | Resolves the mode (`official/adapt/translate`), computes coverage | `mode`, `with_official`, `official_share`, `need_agent`, `no_text`, `next` |
+| | `translate use-official [--force]` | Copies the official translation into `translations.jsonl` (`by=official`); does not touch agent/human rows without `--force`; lines without official text go to `missing_official.txt`, code 3 | `copied`, `unchanged`, `missing`, `over_budget` |
+| | `batch make [--size 60] [--ids a,b] [--from-decisions] [--force]` | Cuts batches by scene for untranslated lines (or for `adapt`); `--ids` retranslates, `--from-decisions` takes lines with a `retranslate`/`shorten` decision; `--force` recreates open batches | `batches[]`, `lines`, `open` |
+| | `batch next` | The first open batch | `batch`, `state (new\|ready\|error)`, `in`, `out`, `errors_file?`; `batch: null, done: true` |
+| | `batch submit <bid> [--force]` | Validates `.out.jsonl` (all ids, extra ids, empty `dub_text`, types, placeholders/tags) and merges it into `translations.jsonl`; errors give code 2 and `<bid>.errors.json`; exceeding the syllable budget gives code 3 | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants` |
+| | `glossary check` | A glossary term in the source without the agreed translation in `dub_text` is a violation (code 3, `glossary_violations.jsonl`) | `terms`, `checked`, `violations[]`, `total` |
+| | `glossary apply` | Validates and merges `glossary.agent.jsonl` into `glossary.jsonl` | `added`, `updated`, `total` |
+| `commands/voice.py` | `synth [--chars A,B] [--ids a,b] [--limit N] [--attempt-next] [--engine qwen3tts\|chatterbox\|dummy] [--device cuda\|cpu] [--wait-lock S] [--batch N] [--force] [--dry-run]` | Prepares the voice prompts (§4.1), runs the engine worker in its venv (one model load per run, batches per character), writes `synth/raw` and `results.jsonl` after every line; holds `gpu.lock`. Idempotent: the same text with the same engine/model is not repeated | `done`, `failed`, `remaining`, `rtf`, `batch`, `vram_peak_gb`, `by_ref{}`, `skipped{}`, `attention[]` |
+| | `post [--ids] [--limit] [--force] [--dry-run] [--stretch-method rubberband\|ffmpeg-rubberband\|atempo]` | Trims silence, fits the duration (within `max_stretch`), edge silence and loudness as in the original, format as in the original (§4.8) | `done`, `up_to_date`, `over_length[]`, `stretch{}` |
+| `commands/qa.py` | `qa [--ids] [--limit] [--force] [--rebaseline] [--device] [--wait-lock S]` | The `qc` worker: ASR (CER against `dub_text`), voice similarity to the original and to the character reference relative to the character's baseline, duration, peaks → `qa.jsonl`; automatic decisions → `decisions.jsonl` (§4.9). Without the `qc` env: code 4 | `checked`, `pass`, `fail`, `accept`, `regen`, `shorten`, `keep_original`, `attention[]`, `pending`, `cer_median`, `sim_median`, `device` |
+| | `decide apply [--by agent\|human]` | Validates and merges `decisions.agent.jsonl` (all or nothing; repeats are skipped) | `applied`, `skipped`, `by_decision{}` |
+| | `report` | `qa/report.md` with per-character totals and a "needs a decision" list | `file`, `lines`, `checked`, `pass`, `attention` |
+| `commands/pack.py` | `build [--codec auto\|pcm16\|fadpcm] [--only ASSET_ID,...] [--sample-rate N] [--force] [--dry-run]` | Lines whose latest decision is `accept` are grouped by container; `adapter.build()` runs into staging and, on success, the result moves to `build/out/<relpath>`; manifest (§4.10). Unchanged inputs are `up_to_date`; a failure of one container does not affect the others | `containers[{asset_id, status, replaced, kept, codec}]`, `replaced`, `total_containers`, `build_id`, `failed?`, `attention?` |
+| | `verify [--game-runtime]` | The output exists and matches `out_sha1`; then `adapter.verify()` for every container (§5.1) | `ok`, `verified`, `checks`, `problems[]`, `build_id` |
+| | `install [--force] [--dry-run]` | Requires `verify` of the current build. Refuses if the game is running or an anti-cheat is found (`--force` bypasses only these two guards), or if a game file does not match the build's source. Backs up the originals into `build/backup`, replaces atomically, journal `install.json` | `installed[]`, `unchanged`, `files`, `backup`, `backed_up` |
+| | `uninstall [--force] [--dry-run]` | Restores the originals from the backup with a sha1 check; a file changed both by the dub and by the game is left alone without `--force` | `restored[]`, `already_original`, `state`, `left_changed?` |
+| | `reapply [--force] [--dry-run]` | Reinstalls after a game update: files that are original again are replaced again; containers changed by the game go to `changed[]` with a `build --only` hint | `reapplied[]`, `current`, `changed[]` |
 
-### 5.1 Адаптеры и стадии (`adapters/base.py`)
+### 5.1 Adapters and stages (`adapters/base.py`)
 
-- `list_lines(game_dir, asset)` — строки §4.3 без декодирования. `extract_audio(...)` → `[{id, wav, sr, ch, dur_s}]`, где `wav` — абсолютный путь или путь относительно проекта/`out_dir`; можно вернуть `{id, error}` для отдельной реплики; `BabelDubError(EXIT_ENV)` делает всю команду кодом 4.
-- `build(game_dir, asset, replacements{line_id: wav}, out_path, options)`: `out_path = <staging>/<asset.relpath>`; `options = {codec: auto|pcm16|fadpcm, sample_rate?}`. Возврат `{out, replaced, kept, codec, files?}`: без `files` файл сопоставляется с `asset.relpath`, папка — с `asset.relpath/<подпуть>`; дополнительные файлы пишутся в `<staging>/<их relpath>` и перечисляются в `files`. Запись внутрь папки игры — `EXIT_USAGE`. Формат, который v0.1 не пересобирает, — `BabelDubError(EXIT_USAGE, hint=...)` со ссылкой на `skills/babeldub-pack/references/formats/*.md`.
-- `verify(game_dir, asset, built, options)`: `options = {game_runtime, codec, files: [{relpath, path}], replaced_ids: [...], replacements: {line_id: wav}, sample_rate?}` — `replacements` только для wav, чьи sha1 не изменились после сборки. Возврат `{ok, checks[], problems[], details?}`.
-- Адаптеры v0.1: `fmod` (A: банки `.bank` и `.fsb`, пересборка PCM16/FADPCM с сохранением числа, порядка и имён сабсаундов), `loose` (A: отдельные аудиофайлы, перекодирование в формат оригинала), `unity-localization` (только чтение текстов), `wwise` (B: чтение `.bnk/.pck/.wem`, сборка — вручную по справочнику).
+- `list_lines(game_dir, asset)`: §4.3 rows without decoding. `extract_audio(...)` → `[{id, wav, sr, ch, dur_s}]`, where `wav` is an absolute path or a path relative to the project/`out_dir`; it may return `{id, error}` for a single line; `BabelDubError(EXIT_ENV)` turns the whole command into code 4.
+- `build(game_dir, asset, replacements{line_id: wav}, out_path, options)`: `out_path = <staging>/<asset.relpath>`; `options = {codec: auto|pcm16|fadpcm, sample_rate?}`. Returns `{out, replaced, kept, codec, files?}`: without `files`, a file maps to `asset.relpath` and a folder to `asset.relpath/<subpath>`; additional files are written to `<staging>/<their relpath>` and listed in `files`. Writing inside the game folder is `EXIT_USAGE`. A format v0.1 does not rebuild raises `BabelDubError(EXIT_USAGE, hint=...)` pointing to `skills/babeldub-pack/references/formats/*.md`.
+- `verify(game_dir, asset, built, options)`: `options = {game_runtime, codec, files: [{relpath, path}], replaced_ids: [...], replacements: {line_id: wav}, sample_rate?}`; `replacements` contains only wavs whose sha1 did not change after the build. Returns `{ok, checks[], problems[], details?}`.
+- v0.1 adapters: `fmod` (A: `.bank` and `.fsb` banks, PCM16/FADPCM rebuild that keeps the number, order and names of subsounds), `loose` (A: loose audio files, re-encoding into the original's format), `unity-localization` (reading texts only), `wwise` (B: reading `.bnk/.pck/.wem`; the build is manual, per the reference). The per-engine matrix is in `docs/ENGINES.md`.
 
-## 6. Протокол воркеров (JSONL по stdin/stdout)
+## 6. Worker protocol (JSONL over stdin/stdout)
 
-Воркеры — самодостаточные скрипты `runtime/src/babeldub/workers/*.py`. Они **не импортируют** `babeldub` (в venv движка его нет) и запускаются как `<env python> -u <worker.py>`. Логи — только в stderr (fd 1 воркер перенаправляет в stderr, протокол идёт по дублю исходного stdout, чтобы печать нативных библиотек его не портила). Каждая строка stdin — команда, на каждую — ровно одна строка ответа в stdout.
+Workers are self-contained scripts in `runtime/src/babeldub/workers/*.py`. They **do not import** `babeldub` (it is not in the engine venv) and run as `<env python> -u <worker.py>`. Logs go only to stderr (the worker redirects fd 1 to stderr and speaks the protocol over a duplicate of the original stdout, so output from native libraries cannot corrupt it). Each stdin line is a command; each command gets exactly one reply line on stdout.
 
 ```text
 → {"op": "load", "model": "<path or repo>", "device": "cuda", "dtype": "bf16", "options": {...}}
@@ -218,13 +227,13 @@ projects/<slug>/
 → {"op": "synth", "id": "...", "text": "...", "lang": "ru", "ref_wav": "...", "ref_text": "...", "ref_lang": "en", "out": "...wav", "seed": 1234, "params": {"x_vector_only": false, "max_new_tokens": 400}}
 ← {"ok": true, "op": "synth", "id": "...", "wav": "...", "sr": 24000, "dur_s": 2.1, "rtf": 0.4, "gen_s": 0.8, "mode": "icl", "hit_token_limit": false, "vram_peak_gb": 4.3}
 ← {"ok": false, "op": "synth", "id": "...", "error": "CUDA out of memory"}
-→ {"op": "synth_batch", "seed": 1234, "items": [<synth>, ...]}   ← {"ok": true, "results": [<ответ synth>, ...]}
+→ {"op": "synth_batch", "seed": 1234, "items": [<synth>, ...]}   ← {"ok": true, "results": [<synth reply>, ...]}
 → {"op": "stats"} / {"op": "ping"} / {"op": "quit"}
 ```
 
-Движки v0.1: `qwen3tts` (`tts_qwen3.py`, ICL-промпт ref_audio + ref_text), `chatterbox` (`tts_chatterbox.py`), `dummy` (`tts_dummy.py` — ТЕСТОВЫЙ движок без нейросети для CI и сквозных тестов, интерпретатор CLI, поддерживает `synth_batch`).
+v0.1 engines: `qwen3tts` (`tts_qwen3.py`, ICL prompt ref_audio + ref_text), `chatterbox` (`tts_chatterbox.py`), `dummy` (`tts_dummy.py`: a TEST engine without a neural network for CI and end-to-end tests; runs in the CLI interpreter; supports `synth_batch`).
 
-QC-воркер (`workers/qc_worker.py`, env `qc`):
+QC worker (`workers/qc_worker.py`, env `qc`):
 ```text
 → {"op": "load", "asr_model": "<dir>", "sv_model": "<dir>", "sv_savedir": "<dir>", "device": "cuda", "compute_type": null}
 → {"op": "asr", "id": "...", "wav": "...", "lang": "ru"}            ← {"ok": true, "id": "...", "text": "...", "lang": "ru", "dur_s": 2.1}
@@ -232,21 +241,21 @@ QC-воркер (`workers/qc_worker.py`, env `qc`):
 → {"op": "sim", "id": "...", "wav": "...", "refs": ["..."]}         ← {"ok": true, "id": "...", "sim": 0.71, "sims": [...]}
 ```
 
-Клиент на стороне CLI — `babeldub/workers/client.py`: `WorkerClient(env|python_path, script, timeout, load_timeout, log_path).load()/request()/close()` (таймауты с убийством процесса, перезапуск после падения с повтором `load` и одним повтором запроса; ошибки `WorkerError`, `WorkerTimeout`, `WorkerCrashed`; нет env — `EXIT_ENV`). `GpuLock(project/state/locks/gpu.lock, owner, wait_s)` — эксклюзивный PID-лок GPU; лок мёртвого процесса снимается, занятый — `EXIT_USAGE` с подсказкой `--wait-lock`. Сессия qc для `cast`/`qa` — `qa/qc.py:QcSession`.
+The CLI-side client is `babeldub/workers/client.py`: `WorkerClient(env|python_path, script, timeout, load_timeout, log_path).load()/request()/close()` (timeouts kill the process; after a crash it restarts, repeats `load` and retries the request once; errors `WorkerError`, `WorkerTimeout`, `WorkerCrashed`; a missing env is `EXIT_ENV`). `GpuLock(project/state/locks/gpu.lock, owner, wait_s)` is an exclusive PID lock on the GPU; the lock of a dead process is released, a busy lock is `EXIT_USAGE` with a `--wait-lock` hint. The qc session for `cast`/`qa` is `qa/qc.py:QcSession`.
 
-## 7. Аудио-API (`babeldub/audio`)
+## 7. Audio API (`babeldub/audio`)
 
-`io.py`: `read_audio(path) -> (np.ndarray float32 [frames, channels], sr)`, `write_wav(path, data, sr, subtype="PCM_16")` (атомарно), `probe(path) -> {sr, ch, dur_s, frames, subtype, format}`.
-`dsp.py`: `to_mono` (1-D), `to_channels(data, ch)`, `resample(data, sr_in, sr_out, quality=16)` (полифазный sinc с окном Кайзера, без внешних зависимостей), `trim_silence(data, sr, threshold_db=-45, pad_s=0.04) -> (data, lead_s, trail_s)`, `voiced_bounds(data, sr) -> (start, end) | None`, `speech_seconds(data, sr)`, `loudness_lufs(data, sr)` (BS.1770-4, K-взвешивание, gating), `rms_db`, `level_db(data, sr, measure="auto")` (LUFS от 0,4 с, короче — RMS), `peak_db(data)`, `true_peak_db(data, sr)`, `match_loudness(data, sr, target, ceiling_db=-1.0, measure=...)`, `fade(data, sr, ms)`, `pad_silence(data, sr, lead_s, trail_s)`.
-`stretch.py`: `time_stretch(in_wav, out_wav, ratio, method=None) -> "rubberband" | "ffmpeg-rubberband" | "atempo" | "copy"` (ratio = длительность выхода / входа; rubberband CLI `-3 -D`, затем фильтр rubberband в ffmpeg, затем цепочка `atempo`; ничего нет — `EXIT_ENV`), `available_methods()`, `atempo_chain(tempo)`.
+`io.py`: `read_audio(path) -> (np.ndarray float32 [frames, channels], sr)`, `write_wav(path, data, sr, subtype="PCM_16")` (atomic), `probe(path) -> {sr, ch, dur_s, frames, subtype, format}`.
+`dsp.py`: `to_mono` (1-D), `to_channels(data, ch)`, `resample(data, sr_in, sr_out, quality=16)` (polyphase sinc with a Kaiser window, no external dependencies), `trim_silence(data, sr, threshold_db=-45, pad_s=0.04) -> (data, lead_s, trail_s)`, `voiced_bounds(data, sr) -> (start, end) | None`, `speech_seconds(data, sr)`, `loudness_lufs(data, sr)` (BS.1770-4, K-weighting, gating), `rms_db`, `level_db(data, sr, measure="auto")` (LUFS from 0.4 s, RMS for shorter), `peak_db(data)`, `true_peak_db(data, sr)`, `match_loudness(data, sr, target, ceiling_db=-1.0, measure=...)`, `fade(data, sr, ms)`, `pad_silence(data, sr, lead_s, trail_s)`.
+`stretch.py`: `time_stretch(in_wav, out_wav, ratio, method=None) -> "rubberband" | "ffmpeg-rubberband" | "atempo" | "copy"` (ratio = output duration / input duration; the rubberband CLI with `-3 -D`, then ffmpeg's rubberband filter, then an `atempo` chain; nothing available is `EXIT_ENV`), `available_methods()`, `atempo_chain(tempo)`.
 
-## 8. Текст (`babeldub/text`)
+## 8. Text (`babeldub/text`)
 
 `placeholders.py`: `extract_placeholders(text) -> list[str]` (`{0}`, `{name}`, `%s`, `%d`, `<tag>`, `[tag]`, `\n`, Unity Smart Strings `{Var:plural:...}`), `check_placeholders(src, tgt) -> [{severity: error|warn, kind: missing|extra, token, expected, found}]`, `has_errors(problems)`.
-`syllables.py`: `count_syllables(text, lang)` (гласные для ru/uk/pl…; группы гласных для de/es/fr…; эвристика для en; CJK по символам), `budget_syllables(dur_s, lang) -> int | None` (слогов в секунду по языку), `fit_status(est, budget, over=1.15, under=0.5) -> ok|over|under|None`.
-`normalize.py`: `prepare_for_tts(text, lang, numbers=True, yo="keep"|"strip"|"restore")` — удаление разметки (`strip_markup`, в том числе метки говорящего), числа словами (`numbers_to_words`, если есть `num2words`), `ё` (`apply_yo`).
+`syllables.py`: `count_syllables(text, lang)` (vowels for ru/uk/pl…; vowel groups for de/es/fr…; a heuristic for en; CJK by characters), `budget_syllables(dur_s, lang) -> int | None` (syllables per second by language), `fit_status(est, budget, over=1.15, under=0.5) -> ok|over|under|None`.
+`normalize.py`: `prepare_for_tts(text, lang, numbers=True, yo="keep"|"strip"|"restore")`: removes markup (`strip_markup`, including speaker labels), spells numbers out (`numbers_to_words`, if `num2words` is available), handles `ё` (`apply_yo`).
 
-## 9. Каталог моделей (`runtime/src/babeldub/data/models.yaml`)
+## 9. Model catalog (`runtime/src/babeldub/data/models.yaml`)
 
 ```yaml
 engines:
@@ -266,14 +275,15 @@ models:
     vram_gb: 6
     tiers: [8gb, 12gb, 24gb]
 ```
-- Движки: `qwen3tts`, `chatterbox`, `qc` (faster-whisper + SpeechBrain ECAPA), `dummy` (`env: null`, тестовый). API — `babeldub.envsetup.catalog` (`load_catalog`, `default_model`, `model_dir`, `is_model_downloaded`, `engine_for_language`, `tier_for_vram`).
-- Модели с `commercial: false` получают `opt_in` и ставятся только с `--accept-license`.
-- `synth` по умолчанию берёт скачанную общую (не языковую) модель движка, крупнее; языковые дообучения (`qwen3-tts-12hz-1.7b-ru-stress-cf`) — только явно через `tts.model`: на тестовых репликах они хуже сохраняли голос оригинального актёра.
+- Engines: `qwen3tts`, `chatterbox`, `qc` (faster-whisper + SpeechBrain ECAPA), `dummy` (`env: null`, for tests). API: `babeldub.envsetup.catalog` (`load_catalog`, `default_model`, `model_dir`, `is_model_downloaded`, `engine_for_language`, `tier_for_vram`).
+- Models with `commercial: false` get `opt_in` and are installed only with `--accept-license`.
+- By default `synth` takes the downloaded general (not language-specific) model of the engine, the larger one first; language fine-tunes (`qwen3-tts-12hz-1.7b-ru-stress-cf`) are used only when set explicitly in `tts.model`: on the test lines they preserved the original actor's voice worse.
+- Human-readable overview of models, tiers, licenses and measured VRAM: `docs/MODELS.md`.
 
-## 10. Тесты и качество кода
+## 10. Tests and code quality
 
-- `pytest` в `runtime/tests/<область>/`; только синтетические данные (сгенерированные FSB5/банки/тексты). Никаких ассетов игр в репозитории.
-- `runtime/tests/e2e/test_pipeline_synthetic.py` прогоняет все стадии через `cli.main` на синтетической Unity-игре с FMOD-банком (движок `dummy`, поддельный воркер qc, установка в копию игры и откат); в нём проверяется и честный `EXIT_ENV` у `qa` без env `qc`.
-- Python ≥ 3.10, аннотации типов, `ruff` (конфиг в `pyproject.toml`).
-- WAV/FLAC — через `soundfile`; пути — `pathlib`; UTF-8 везде; атомарная запись через `core.jsonl`.
-- Каждая команда: обработчик `def cmd_x(args) -> int`, в конце `return emit({...}, code)`; прогресс стадии — `project.mark_stage(stage, status, **summary)`.
+- `pytest` in `runtime/tests/<area>/`; synthetic data only (generated FSB5/banks/texts). No game assets in the repository.
+- `runtime/tests/e2e/test_pipeline_synthetic.py` runs every stage through `cli.main` on a synthetic Unity game with an FMOD bank (the `dummy` engine, a fake qc worker, installation into a copy of the game and rollback); it also checks the honest `EXIT_ENV` of `qa` without the `qc` env.
+- Python ≥ 3.10, type annotations, `ruff` (config in `pyproject.toml`).
+- WAV/FLAC through `soundfile`; paths through `pathlib`; UTF-8 everywhere; atomic writes through `core.jsonl`.
+- Every command: a handler `def cmd_x(args) -> int` that ends with `return emit({...}, code)`; stage progress through `project.mark_stage(stage, status, **summary)`.

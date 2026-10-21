@@ -1,61 +1,61 @@
-# Глоссарий и style bible
+# Glossary and style bible
 
-Читай, если ты роль lexicon или правишь глоссарий после `glossary check`.
+Read this if you are the lexicon role or are fixing the glossary after `glossary check`.
 
-## 1. Файлы и кто их пишет
+## 1. Files and who writes them
 
-| Файл | Кто пишет | Как попадает в работу |
+| File | Who writes it | How it gets into the work |
 |---|---|---|
-| `translate/glossary.agent.jsonl` | агент (lexicon) | `babeldub glossary apply` проверяет строки и сливает в канон |
-| `translate/glossary.jsonl` | только CLI | термины, найденные в исходном тексте пакета, попадают в заголовок пакета (`glossary`); `glossary check` сверяет переводы |
-| `translate/style_bible.md` | агент (lexicon) | CLI вставляет текст в заголовок каждого пакета (`style`, до 8000 символов) |
+| `translate/glossary.agent.jsonl` | the agent (lexicon) | `babeldub glossary apply` validates the lines and merges them into the canon |
+| `translate/glossary.jsonl` | the CLI only | terms found in a batch's source text go into the batch header (`glossary`); `glossary check` verifies the translations |
+| `translate/style_bible.md` | the agent (lexicon) | the CLI inserts the text into the header of every batch (`style`, up to 8000 characters) |
 
-Делай оба файла **до** `babeldub batch make`.
+Write both files **before** `babeldub batch make`.
 
-## 2. Формат `glossary.agent.jsonl`
+## 2. Format of `glossary.agent.jsonl`
 
-UTF-8 без BOM, по объекту на строку:
+UTF-8 without BOM, one object per line:
 
 ```json
-{"term": "Zbyszek", "translation": "Збышек", "pronounce": "Збы́шек", "note": "главный герой, мужчина"}
-{"term": "Maciek", "translation": "Мачек", "note": "друг героя; на «ты» со Збышеком"}
+{"term": "Zbyszek", "translation": "Збышек", "pronounce": "Збы́шек", "note": "protagonist, male"}
+{"term": "Maciek", "translation": "Мачек", "note": "the hero's friend; informal «ты» with Zbyszek"}
 {"term": "PZPM", "translation": "ПЗПМ", "pronounce": "пэ-зэ-пэ-эм"}
-{"term": "Hmm", "translation": "Хм", "note": "междометие"}
+{"term": "Hmm", "translation": "Хм", "note": "interjection"}
 ```
 
-| Поле | Обязательно | Что писать |
+| Field | Required | What to write |
 |---|---|---|
-| `term` | да | термин как в исходном тексте (регистр не важен: поиск без учёта регистра, с окончаниями до 3 букв) |
-| `translation` | да | как писать на целевом языке; в режимах `official` и `adapt` — как в официальном переводе |
-| `pronounce` | нет | как произносить, если чтение неочевидно: ударение знаком U+0301, буквы аббревиатуры через дефис, транслитерация латиницы |
-| `note` | нет | пол, роль, контекст, «не склонять» и т. п. |
+| `term` | yes | the term as in the source text (case does not matter: the search is case-insensitive and allows endings of up to 3 letters) |
+| `translation` | yes | how to write it in the target language; in the `official` and `adapt` modes, as in the official translation |
+| `pronounce` | no | how to pronounce it when the reading is not obvious: stress with the U+0301 mark, letters of an acronym separated by hyphens, transliteration of Latin script |
+| `note` | no | gender, role, context, "do not inflect", and so on |
 
-Повтор `term` — новая версия, побеждает последняя. `glossary apply` отклонит строку без `term` или `translation` (код 2, список в `errors`).
+A repeated `term` is a new version; the last one wins. `glossary apply` rejects a line without `term` or `translation` (exit code 2, list in `errors`).
 
-## 3. Что включать
+## 3. What to include
 
-1. **Имена персонажей** — все из `main[]` кастинга обязательно, из `name_tgt` листа кастинга или официального перевода. Имена должны совпадать с `name_tgt` кастинга.
-2. **Топонимы, организации, предметы, игровые термины** — всё, что встречается больше одного раза или важно для сюжета.
-3. **Междометия и звуки** с переводом, чтобы все переводчики писали одинаково.
-4. **`pronounce`** для всего, что модель синтеза может прочитать неверно: латиница, аббревиатуры, иностранные имена, числа с единицами, омографы.
+1. **Character names**: every character in `main[]` of the casting is mandatory, taken from `name_tgt` in the casting sheet or from the official translation. Names must match the casting's `name_tgt`.
+2. **Place names, organizations, items, game terms**: everything that occurs more than once or matters to the plot.
+3. **Interjections and sounds** with their translation, so that all translators write them the same way.
+4. **`pronounce`** for anything the synthesis model may read wrongly: Latin script, acronyms, foreign names, numbers with units, homographs.
 
-Не включай обычные слова языка «на всякий случай»: каждый термин проверяется `glossary check`, и лишние дают ложные нарушения.
+Do not include ordinary words of the language "just in case": every term is checked by `glossary check`, and extra terms produce false violations.
 
 ## 4. Style bible
 
-Короткий markdown (1–3 экрана), разделы:
+A short markdown file (1–3 screens) with these sections:
 
-1. **Дубляж голосом героя.** Перевод сохраняет эмоциональную форму оригинала: восклицания, вопросы, запинки и повторы, обрывы, смех, вздохи, шёпот. Голосовой промпт — сама оригинальная реплика, поэтому текст должен «лечь» на её интонацию и темп.
-2. **Персонажи.** По 1–2 строки на главного: регистр, характер речи, словечки, возраст.
-3. **«Ты/вы».** Матрица по парам персонажей и обращение к игроку; неясное отмечай «по умолчанию».
-4. **Брань и грубость** — уровень как в оригинале, примеры замен.
-5. **Числа, даты, единицы** — словами в нужном падеже; «ё» везде, где произносится.
-6. **Что не переводить** — имена по глоссарию, названия брендов по `pronounce`.
+1. **Dubbing in the character's voice.** The translation keeps the emotional shape of the original: exclamations, questions, hesitations and repetitions, cut-offs, laughter, sighs, whispering. The voice prompt is the original line itself, so the text must "sit" on its intonation and pace.
+2. **Characters.** One or two lines per main character: register, speech character, pet words, age.
+3. **Formal and informal "you".** A matrix by character pairs, plus how the player is addressed; mark unclear cases "default".
+4. **Swearing and rudeness**: the same level as the original, with example substitutions.
+5. **Numbers, dates, units**: in words, in the correct grammatical case; for Russian, «ё» wherever it is pronounced.
+6. **What not to translate**: names per the glossary, brand names per `pronounce`.
 
-## 5. После `glossary check`
+## 5. After `glossary check`
 
-`violations[]` значит: термин из глоссария есть в исходнике реплики, а его перевода в `dub_text` нет (проверка допускает окончания). Варианты:
+`violations[]` means: a glossary term is in the line's source, but its translation is not in `dub_text` (the check allows for endings). Options:
 
-- перевод действительно ошибочен → `babeldub batch make --ids <id1>,<id2>` → переводчик исправляет → `batch submit`;
-- термин в этой реплике значит другое (омоним) → оставить и объяснить в отчёте;
-- глоссарий неудачен (слишком общий термин) → исправить строку в `glossary.agent.jsonl` → `babeldub glossary apply` → снова `glossary check`.
+- the translation really is wrong → `babeldub batch make --ids <id1>,<id2>` → the translator fixes it → `batch submit`;
+- the term means something else in this line (a homonym) → leave it and explain in the report;
+- the glossary entry is poor (too general a term) → fix the line in `glossary.agent.jsonl` → `babeldub glossary apply` → `glossary check` again.

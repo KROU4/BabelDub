@@ -65,7 +65,7 @@ def test_file_tools_inside_game_are_blocked(tool: str, key: str, path: str) -> N
 @pytest.mark.parametrize(
     "path",
     [
-        r"C:\Users\me\AppData\Local\BabelDub\projects\lbr\translate\batches\b001.out.jsonl",
+        r"C:\Users\me\.babeldub\projects\lbr\translate\batches\b001.out.jsonl",
         r"G:\Low-Budget Repairs Mods\x.txt",  # sibling folder with the same prefix
         r"G:\x.txt",
     ],
@@ -370,8 +370,8 @@ def test_session_summary_points_to_next_stage(tmp_path: Path) -> None:
     assert 5 <= len(lines) <= 10
     text = "\n".join(lines)
     assert "Some Game" in text and "→ ru" in text
-    assert "стадия cast ждёт решений" in text and "babeldub-cast" in text
-    assert "ref_strategy=auto" in text and "оригинального героя" in text
+    assert "stage cast is waiting for decisions" in text and "babeldub-cast" in text
+    assert "ref_strategy=auto" in text and "original hero's voice" in text
     proc = _run([sys.executable, str(GUARD), "session"], tmp_path)
     assert proc.returncode == 0 and "Some Game" in proc.stdout.decode("utf-8")
 
@@ -381,22 +381,22 @@ def test_session_summary_points_to_next_stage(tmp_path: Path) -> None:
     [
         ({}, "`babeldub init"),
         ({"init": {"status": "done"}}, "`babeldub scan`"),
-        ({"init": {"status": "done"}, "scan": {"status": "failed"}}, "завершилась ошибкой"),
-        ({"init": {"status": "done"}, "scan": {"status": "running"}}, "не завершена"),
+        ({"init": {"status": "done"}, "scan": {"status": "failed"}}, "stage scan failed"),
+        ({"init": {"status": "done"}, "scan": {"status": "running"}}, "stage scan is not finished"),
         (
             {s: {"status": "done"} for s in ("init", "scan", "extract")} | {"link": {"status": "attention"}},
-            "`babeldub cast` (скилл babeldub-cast); стадия link ждёт решений",
+            "`babeldub cast` (skill babeldub-cast); stage link is waiting for decisions",
         ),
-        ({s: {"status": "done", "updated": "1"} for s in guard.STAGES}, "озвучка установлена"),
+        ({s: {"status": "done", "updated": "1"} for s in guard.STAGES}, "dub installed"),
         (
             {s: {"status": "done", "updated": "1"} for s in guard.STAGES}
             | {"install": {"status": "attention", "state": "uninstalled"}},
-            "озвучка снята",
+            "dub uninstalled",
         ),
         (
             {s: {"status": "done"} for s in guard.STAGES}
             | {"install": {"status": "done", "state": "installed"}},
-            "озвучка установлена",
+            "dub installed",
         ),
     ],
 )

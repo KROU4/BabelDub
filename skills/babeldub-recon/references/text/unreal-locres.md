@@ -1,44 +1,44 @@
-# Unreal: тексты `.locres`
+# Unreal: `.locres` texts
 
-Читай, если игра на Unreal Engine 4/5 (см. `engines/unreal.md`).
+Read this if the game is on Unreal Engine 4/5 (see `engines/unreal.md`).
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 `.locres` не читает. План — v0.3, уровень B (если пак зашифрован, нужен ключ AES).
+**C**: CLI v0.1 does not read `.locres`. Planned for v0.3 at level B (an encrypted pak needs the AES key).
 
-## Где лежит
+## Where the text is
 
-- `Content/Localization/<Target>/<culture>/<Target>.locres` (+ `.locmeta`) внутри `.pak` или IoStore (`.utoc`/`.ucas`).
-- Ключи — namespace + key + hash.
-- Строки субтитров могут лежать и в `SoundWave.Subtitles` (тайминги внутри ассета звука).
+- `Content/Localization/<Target>/<culture>/<Target>.locres` (+ `.locmeta`) inside a `.pak` or IoStore (`.utoc`/`.ucas`).
+- Keys are namespace + key + hash.
+- Subtitle strings may also sit in `SoundWave.Subtitles` (with timings inside the sound asset).
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |---|---|
-| FModel / CUE4Parse | просмотр паков, экспорт `.locres` → JSON, AES-ключи |
+| FModel / CUE4Parse | browses paks, exports `.locres` → JSON, AES keys |
 | UnrealLocres | `.locres` ↔ CSV |
-| UnrealLocresEditor | редактор `.locres` |
-| LocRes-Builder | сборка `.locres` |
-| UEExtractor | извлечение текста из pak/ucas |
+| UnrealLocresEditor | `.locres` editor |
+| LocRes-Builder | builds `.locres` |
+| UEExtractor | extracts text from pak/ucas |
 
-UE4LocalizationsTool архивирован.
+UE4LocalizationsTool is archived.
 
-## Нативный путь
+## Native path
 
-Заменить `.locres` существующей культуры и положить его в пак мода с суффиксом `_P` (`repak pack` для `.pak`, `retoc to-zen` для IoStore). Новая культура должна быть разрешена игрой (список культур или настройки).
+Replace the `.locres` of an existing culture and put it into a mod pak with the `_P` suffix (`repak pack` for `.pak`, `retoc to-zen` for IoStore). A new culture must be allowed by the game (culture list or settings).
 
-## Связь с озвучкой
+## Link to the voice
 
-`DialogueWave`, имена SoundWave или события Wwise/FMOD рядом с ключом строки в данных диалогов. Прямого общего ключа может не быть: ищи по выборке.
+`DialogueWave`, SoundWave names or Wwise/FMOD events next to the string key in the dialogue data. There may be no direct shared key: search by sampling.
 
-## Подводные камни
+## Pitfalls
 
-- AES-шифрование паков, подписи `.sig`.
-- Шрифты без кириллицы.
-- Тайминги субтитров в SoundWave при изменении длины реплик.
+- AES encryption of paks, `.sig` signatures.
+- Fonts without Cyrillic.
+- Subtitle timings in SoundWave when line lengths change.
 
-## Ссылки
+## Links
 
 - FModel — https://github.com/4sval/FModel ; CUE4Parse — https://github.com/FabianFG/CUE4Parse
 - UnrealLocres — https://github.com/akintos/UnrealLocres ; UnrealLocresEditor — https://github.com/Snoozeds/UnrealLocresEditor

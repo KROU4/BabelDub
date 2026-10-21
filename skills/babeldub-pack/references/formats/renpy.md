@@ -1,25 +1,25 @@
-# Ren'Py: `game/tl/<язык>/` и озвучка
+# Ren'Py: `game/tl/<language>/` and voice
 
-Уровень в v0.1: **C** — отдельного адаптера Ren'Py в CLI v0.1 нет. Если голос лежит отдельными файлами (`game/voice/*.ogg`, не в `.rpa`), его извлекает и собирает адаптер `loose` ([loose.md](loose.md)), заменяя оригиналы на их местах. Нативный путь ниже — для ручной работы. Разведка — скилл `babeldub-recon`, `references/engines/renpy.md` и `references/text/renpy.md`.
+Level in v0.1: **C** — CLI v0.1 has no dedicated Ren'Py adapter. If the voice is stored as separate files (`game/voice/*.ogg`, not inside `.rpa`), the `loose` adapter extracts and builds it ([loose.md](loose.md)), replacing the originals in place. The native path below is for manual work. Recon — the `babeldub-recon` skill, `references/engines/renpy.md` and `references/text/renpy.md`.
 
-Пометки: [проверено] — документация Ren'Py; [по гайдам]; [не проверено].
+Markers: [verified] — Ren'Py documentation; [per guides]; [not verified].
 
-## 1. Нативная локализация [проверено: документация Ren'Py]
+## 1. Native localization [verified: Ren'Py documentation]
 
-- Переводы лежат в `game/tl/<язык>/*.rpy`: блоки `translate <язык> <id>:` для диалогов и `translate <язык> strings:` для строк интерфейса.
-- Голос: оператор `voice "file.ogg"`, `config.voice_filename_format`, а также **`config.auto_voice`**, где `{id}` заменяется идентификатором реплики.
-- **Перевод файлов:** файл `game/tl/<язык>/<путь>` используется вместо `game/<путь>`, когда активен этот язык. Пример из документации: `game/tl/french/omelette.ogg` заменяет `game/omelette.ogg` при французском. Автоголос работает так же, если путь под `tl/<язык>` повторяет оригинальный.
+- Translations live in `game/tl/<language>/*.rpy`: `translate <language> <id>:` blocks for dialogue and `translate <language> strings:` for UI strings.
+- Voice: the `voice "file.ogg"` statement, `config.voice_filename_format`, and also **`config.auto_voice`**, where `{id}` is replaced with the line identifier.
+- **File translation:** the file `game/tl/<language>/<path>` is used instead of `game/<path>` when that language is active. Example from the documentation: `game/tl/french/omelette.ogg` replaces `game/omelette.ogg` in French. Auto-voice works the same way if the path under `tl/<language>` mirrors the original.
 
-Это значит, что для Ren'Py озвучку можно поставить **рядом**, не трогая оригиналы: положить файлы `post/audio` под `game/tl/<язык>/` по тем же относительным путям и включить язык в игре.
+This means that for Ren'Py the dub can be installed **alongside**, without touching the originals: put the `post/audio` files under `game/tl/<language>/` at the same relative paths and switch the language on in the game.
 
-## 2. Как это сделать до появления адаптера [не автоматизировано в v0.1]
+## 2. How to do it before an adapter exists [not automated in v0.1]
 
-1. Если голос в `game/voice/` отдельными файлами — проще всего обычный путь BabelDub: адаптер `loose` соберёт и `babeldub install` заменит файлы с бэкапом. Озвучка будет звучать при любом языке интерфейса.
-2. Если нужна именно «языковая» озвучка (оригинал остаётся для других языков) — ручной путь по разделу 1. Его делает пользователь (или агент **только по его явной просьбе** и только в копии), потому что в папку игры BabelDub пишет только CLI.
-3. Если голос и скрипты в `.rpa` — их распаковывают `unrpa` или `rpatool` (переехал на Codeberg), скрипты `.rpyc` декомпилирует `unrpyc` [по гайдам]. Ren'Py SDK умеет «Generate Translations» и «Extract Dialogue» (идентификаторы реплик для `auto_voice`) [проверено: документация].
+1. If the voice is in `game/voice/` as separate files, the simplest option is the normal BabelDub path: the `loose` adapter builds it and `babeldub install` replaces the files with a backup. The dub will play with any UI language.
+2. If a "per-language" dub is required (the original stays for other languages), use the manual path from section 1. The user does it (or the agent, **only at the user's explicit request** and only in a copy), because only the CLI writes to the game folder in BabelDub.
+3. If the voice and scripts are inside `.rpa`, they are unpacked with `unrpa` or `rpatool` (moved to Codeberg), and `.rpyc` scripts are decompiled with `unrpyc` [per guides]. The Ren'Py SDK can "Generate Translations" and "Extract Dialogue" (line identifiers for `auto_voice`) [verified: documentation].
 
-## 3. Подводные камни
+## 3. Pitfalls
 
-- Совместимость `unrpyc` с версией Ren'Py; модифицированные RPA-архивы [по гайдам].
-- Шрифты без кириллицы: для перевода текстов задают стиль шрифта в блоке `translate <язык> python:` [по гайдам].
-- Длительность: Ren'Py обычно не обрезает реплику, но автопродвижение текста может зависеть от длины звука [не проверено].
+- `unrpyc` compatibility with the Ren'Py version; modified RPA archives [per guides].
+- Fonts without Cyrillic (or another target script): for translated texts, set a font style in a `translate <language> python:` block [per guides].
+- Duration: Ren'Py usually does not cut a line off, but text auto-advance may depend on the audio length [not verified].

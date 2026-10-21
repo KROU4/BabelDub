@@ -1,82 +1,82 @@
 ---
 name: babeldub-qa
-description: "Quality control of a game dub made in the original characters' voices: measure intelligibility (ASR, CER), voice similarity of every dubbed line to the original hero, duration and peaks, then decide accept, regen, reref, shorten, retranslate, keep_original or skip and apply the decisions. Use after synthesis, when qa returns attention items or when asked about dub quality: проверь озвучку, голос не похож, брак синтеза, контроль качества, отчёт по персонажам."
+description: "Quality control of a game dub voiced in the original characters' voices: measure intelligibility (ASR, CER), voice similarity of every dubbed line to the original hero, duration and peaks, then decide accept, regen, reref, shorten, retranslate, keep_original or skip and apply the decisions. Use after synthesis, when qa returns attention items, or when the user asks about dub quality, e.g. 'check the dub', 'the voice doesn't sound like him', 'bad synthesis', 'QA report per character', 'проверь озвучку', 'голос не похож', 'брак синтеза', 'отчёт по персонажам', 'revisa el doblaje', 'vérifie le doublage'."
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 with the qc engine installed (babeldub setup --engines qc, faster-whisper and SpeechBrain ECAPA); NVIDIA GPU recommended, CPU works slower."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: контроль качества дубляжа
+# BabelDub: dub quality control
 
-Скилл стадии `qa`. Критерий качества дубляжа BabelDub: реплика звучит **голосом своего оригинального героя**, разборчиво и в длину оригинала. QA проверяет это метриками, принимает решения по браку и доводит каждую реплику до терминального состояния: в сборку (`accept`) или с оригинальным голосом (`keep_original`, `skip`).
+This skill covers the `qa` stage. BabelDub's quality bar for a dub: every line sounds **in the voice of its original hero**, is intelligible and fits the length of the original. QA checks this with metrics, decides what to do with defective lines and brings every line to a terminal state: into the build (`accept`) or in the original voice (`keep_original`, `skip`).
 
-Ты звук не слышишь. Решения — **только по метрикам**; «на слух» выводов не делай. Скилл дополняет роль `qa` из скилла `babeldub-localize` (`references/roles/qa.md`).
+You cannot hear audio. Decide **from metrics only**; never draw conclusions "by ear". This skill complements the `qa` role from the `babeldub-localize` skill (`references/roles/qa.md`). Talk to the user in the user's language.
 
-## Команды
+## Commands
 
 ```text
-babeldub qa                 метрики последней обработанной попытки каждой реплики + авто-решения
-babeldub decide apply       слить qa/decisions.agent.jsonl в канон
-babeldub report             qa/report.md: итоги по персонажам и список на внимание
+babeldub qa                 metrics for the latest processed attempt of each line + auto-decisions
+babeldub decide apply       merge qa/decisions.agent.jsonl into the canonical decisions
+babeldub report             qa/report.md: per-character totals and the attention list
 ```
 
-Предусловие `qa` — стадия `post`. `qa` занимает GPU (`state/locks/gpu.lock`): не запускай его параллельно с `synth`. Повторный `qa` проверяет только новые попытки; ранее проверенные пропускаются.
+`qa` requires the `post` stage. `qa` holds the GPU (`state/locks/gpu.lock`): do not run it in parallel with `synth`. A repeated `qa` checks only new attempts; attempts already checked are skipped.
 
-## Что измеряется
+## What is measured
 
-| Метрика | Как | Порог по умолчанию |
+| Metric | How | Default threshold |
 |---|---|---|
-| `cer` — разборчивость | распознавание речи дубля (faster-whisper large-v3-turbo) против `dub_text`, нормализованные тексты | `qa.max_cer` = 0,15 |
-| `sim` — тот же ли голос | среднее из `sim_line` (сходство ECAPA с оригинальной репликой) и `sim_char` (с референсом персонажа) | `sim ≥ qa.min_sim_ratio × sim_ref`, `min_sim_ratio` = 0,75 |
-| `sim_ref` — базовая линия персонажа | среднее попарное сходство его собственных чистых оригиналов | — |
-| `ratio` — длина | речь дубля / речь оригинала (из `post`) | `qa.max_duration_ratio` = 1,35; для `fixed_length` 1 + `post.fixed_length_tolerance` = 1,03 |
-| `peak_db`, клиппинг | пик и доля клиппированных отсчётов | пик не выше `post.true_peak_db` + 0,5 дБ |
-| тишина | громкость речи | не тише −50 дБ |
+| `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo) against `dub_text`, both texts normalized | `qa.max_cer` = 0.15 |
+| `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ qa.min_sim_ratio × sim_ref`, `min_sim_ratio` = 0.75 |
+| `sim_ref` — the character's baseline | mean pairwise similarity of the character's own clean originals | — |
+| `ratio` — length | dub speech / original speech (from `post`) | `qa.max_duration_ratio` = 1.35; for `fixed_length` 1 + `post.fixed_length_tolerance` = 1.03 |
+| `peak_db`, clipping | peak and share of clipped samples | peak no higher than `post.true_peak_db` + 0.5 dB |
+| silence | speech loudness | not quieter than −50 dB |
 
-Подробно о каждой метрике, её слабостях и о том, почему сходство считается относительно базовой линии, — [references/metrics.md](references/metrics.md).
+Each metric in detail, its weak spots, and why similarity is measured against a baseline — [references/metrics.md](references/metrics.md).
 
-## Ход работы
+## Workflow
 
-1. `babeldub qa`. Вывод: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (авто-решения этого прогона), `attention[]`, `pending`, `cer_median`, `sim_median`, `errors[]`, `next`.
-2. **Код 0** — всё решено автоматически. Если `regen` > 0 — цикл голоса (`synth --attempt-next` → `post` → `qa`, скилл `babeldub-voice`); если `shorten` > 0 — перевод (скилл `babeldub-translate`, `batch make --from-decisions`).
-3. **Код 3** — `attention[]`: реплики, где авто-решения не хватило или оно помечено для проверки. Разбери их (шаги 4–6).
-4. **Посмотри метрики** только нужных реплик:
+1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `errors[]`, `next`.
+2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `qa`, skill `babeldub-voice`); if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
+3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
+4. **Look at the metrics** of the relevant lines only:
    `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_ref,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
-   Метрики QA в `query` лежат под префиксом `qa.`; для сравнения текста и распознанного добавь `translation.dub_text` и `qa.asr_text`.
-5. **Системный брак.** Если у одного персонажа в чанке больше 20 % брака, не решай построчно: это проблема промпта, референса или атрибуции. Верни персонажа в `failing_chars` (оркестратору, ролям voice и caster).
-6. **Решения** запиши в `qa/decisions.agent.jsonl` и выполни `babeldub decide apply`. Таблица решений — ниже, подробно — [references/decisions.md](references/decisions.md).
-7. **Отчёт:** `babeldub report` → `qa/report.md`. Оттуда в итоговый отчёт пользователю идут таблица по персонажам и не больше 30 реплик на внимание.
+   In `query`, QA metrics live under the `qa.` prefix; to compare the text with what was recognized, add `translation.dub_text` and `qa.asr_text`.
+5. **Systemic defects.** If more than 20 % of one character's lines in a chunk fail, do not decide line by line: this is a prompt, reference or attribution problem. Return the character in `failing_chars` (to the orchestrator and to the voice and caster roles).
+6. **Decisions:** write them to `qa/decisions.agent.jsonl` and run `babeldub decide apply`. The decision table is below; details — [references/decisions.md](references/decisions.md).
+7. **Report:** `babeldub report` → `qa/report.md`. From it, the per-character table and no more than 30 attention lines go into the final report for the user, written in the user's language.
 
-## Решения
+## Decisions
 
-| Решение | Когда | Что будет дальше |
+| Decision | When | What happens next |
 |---|---|---|
-| `accept` | метрики в порогах, либо отклонение допустимо и объяснено в `note` | реплика пойдёт в сборку |
-| `regen` | случайный брак (`cer`, пики, тишина, зацикливание) при нормальном промпте, попытки остались | новая попытка с другим seed |
-| `reref` | голос «уплыл»: низкое `sim`, особенно `sim_line`, на крике, шёпоте, шуме, эффекте рации | новая попытка с другим промптом (`line` → `char`) |
-| `shorten` | `ratio` выше предела, `fixed_length` не влез | переводчик сокращает текст, затем новый синтез |
-| `retranslate` | `cer` высокий повторно при нормальном голосе: числа, латиница, сложные слова | переводчик правит текст, затем новый синтез |
-| `keep_original` | нет речи, исчерпаны попытки, ничего не помогает | звучит оригинал; причина в `note` |
-| `skip` | реплику озвучивать не нужно (дубль, служебная запись) | звучит оригинал; причина в `note` |
+| `accept` | metrics within thresholds, or the deviation is acceptable and explained in `note` | the line goes into the build |
+| `regen` | a random defect (`cer`, peaks, silence, looping) with a sound prompt, attempts remain | a new attempt with a different seed |
+| `reref` | the voice "drifted": low `sim`, especially `sim_line`, on shouting, whispering, noise, a radio effect | a new attempt with a different prompt (`line` → `char`) |
+| `shorten` | `ratio` above the limit, `fixed_length` does not fit | the translator shortens the text, then a new synthesis |
+| `retranslate` | `cer` high again while the voice is fine: numbers, Latin script, hard words | the translator fixes the text, then a new synthesis |
+| `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
+| `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-Авто-решения CLI: `pass` → `accept`; провал качества (`cer`, `sim`, `peak`, `empty`, `silent`) → `regen`, пока номер попытки меньше `tts.max_attempts` (3), затем `keep_original` с пометкой; длина → `shorten`, не больше двух раз, затем `keep_original`. `reref` и `retranslate` CLI сам не назначает — это решения агента.
+CLI auto-decisions: `pass` → `accept`; a quality failure (`cer`, `sim`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
 
-## Пороги
+## Thresholds
 
-Пороги по умолчанию — ориентир, а не истина: они не откалиброваны на голосах конкретной игры. Когда и как их менять (`babeldub set qa.max_cer=…`), почему абсолютный порог сходства не годится и что делать после смены порога — [references/thresholds.md](references/thresholds.md).
+The default thresholds are a starting point, not the truth: they are not calibrated on the voices of a particular game. When and how to change them (`babeldub set qa.max_cer=…`), why an absolute similarity threshold does not work, and what to do after changing a threshold — [references/thresholds.md](references/thresholds.md).
 
-## Правила
+## Rules
 
-1. Папка игры только для чтения.
-2. Канон (`qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/baseline.json`, `qa/report.md`) пишет CLI. Агент пишет только `qa/decisions.agent.jsonl`.
-3. Не читать файлы проекта целиком: `query` с `--fields` и `--limit`, отчёт — по разделам.
-4. Не обращаться к человеку: неясное — в `human_pending` ответа роли с причиной; сборку это не блокирует (реплика получает `keep_original`).
-5. Человеку — не больше 30 реплик за раунд и только с конкретным вопросом.
-6. Каждая реплика должна прийти в терминальное состояние или в очередь (`regen`, `reref`, `shorten`, `retranslate`).
+1. The game folder is read-only.
+2. The canon (`qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/baseline.json`, `qa/report.md`) is written by the CLI. The agent writes only `qa/decisions.agent.jsonl`.
+3. Do not read project files whole: use `query` with `--fields` and `--limit`, and read the report section by section.
+4. Do not address the human directly: put anything unclear into `human_pending` of the role's response, with a reason; this does not block the build (the line gets `keep_original`).
+5. Bring the human no more than 30 lines per round, and only with a concrete question.
+6. Every line must reach a terminal state or a queue (`regen`, `reref`, `shorten`, `retranslate`).
 
-## Справочники
+## References
 
-- Что значит каждая метрика, где она ошибается, как читать `sim_line` и `sim_char` — [references/metrics.md](references/metrics.md). Читай при первом разборе брака.
-- Пороги по умолчанию, калибровка на пилоте, когда их менять — [references/thresholds.md](references/thresholds.md). Читай, если брака подозрительно много или мало.
-- Дерево решений, формат `qa/decisions.agent.jsonl`, типичные случаи с примерами — [references/decisions.md](references/decisions.md). Читай перед записью решений.
+- What each metric means, where it goes wrong, how to read `sim_line` and `sim_char` — [references/metrics.md](references/metrics.md). Read it the first time you review defects.
+- Default thresholds, calibration on the pilot, when to change them — [references/thresholds.md](references/thresholds.md). Read it when there are suspiciously many or few defects.
+- The decision tree, the `qa/decisions.agent.jsonl` format, typical cases with examples — [references/decisions.md](references/decisions.md). Read it before writing decisions.

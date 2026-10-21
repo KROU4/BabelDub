@@ -1,40 +1,40 @@
 # Unreal Engine 4/5: `.pak`, IoStore, `.locres`
 
-Уровень в v0.1: **C** — в CLI v0.1 нет адаптера Unreal. Если голос игры лежит в FMOD или Wwise внутри UE-игры (часто), собирай по [fmod.md](fmod.md) или [wwise.md](wwise.md). Разведка — скилл `babeldub-recon`, `references/engines/unreal.md`.
+Level in v0.1: **C** — CLI v0.1 has no Unreal adapter. If the game's voice sits in FMOD or Wwise inside a UE game (common), build it per [fmod.md](fmod.md) or [wwise.md](wwise.md). Recon — the `babeldub-recon` skill, `references/engines/unreal.md`.
 
-Пометки: [проверено] — первоисточник; [по гайдам] — вторичный источник (гайды моддеров, форумы); [не проверено].
+Markers: [verified] — a primary source; [per guides] — a secondary source (modder guides, forums); [not verified].
 
-## 1. Где что лежит
+## 1. Where things live
 
-- Контейнеры в `Content/Paks/`: `.pak` (версии 1–11) или IoStore (`.utoc` + `.ucas` + «пустой» `.pak`) в UE5 и позднем UE4; возможны шифрование AES-256 (ключ в исполняемом файле) и подписи `.sig` [по гайдам].
-- Звук: `SoundWave` (`.uasset/.uexp`, данные в `.ubulk` или внутри; OGG, ADPCM, Opus, в UE5 и Bink Audio), `DialogueWave` + `DialogueVoice`; локализованные ассеты в `Content/L10N/<культура>/...`. Часто — FMOD или Wwise (`Content/FMOD/Desktop/*.bank`, `.bnk/.wem`) [по гайдам].
-- Тексты: `Content/Localization/<Target>/<культура>/<Target>.locres`; субтитры могут лежать и в `SoundWave.Subtitles` [по гайдам].
+- Containers in `Content/Paks/`: `.pak` (versions 1–11) or IoStore (`.utoc` + `.ucas` + an "empty" `.pak`) in UE5 and late UE4; AES-256 encryption (key in the executable) and `.sig` signatures are possible [per guides].
+- Audio: `SoundWave` (`.uasset/.uexp`, data in `.ubulk` or inside; OGG, ADPCM, Opus, and in UE5 Bink Audio), `DialogueWave` + `DialogueVoice`; localized assets in `Content/L10N/<culture>/...`. Often FMOD or Wwise (`Content/FMOD/Desktop/*.bank`, `.bnk/.wem`) [per guides].
+- Texts: `Content/Localization/<Target>/<culture>/<Target>.locres`; subtitles can also live in `SoundWave.Subtitles` [per guides].
 
-## 2. Инструменты
+## 2. Tools
 
-| Инструмент | Для чего | Состояние |
+| Tool | Purpose | Status |
 |---|---|---|
-| FModel / CUE4Parse | просмотр и экспорт (звук, `.locres` → JSON), работа с AES-ключом | [проверено: репозитории] |
-| repak | `.pak`: распаковка и упаковка, AES; чтение и запись версий 2–5, 7, 8A/8B, 9, 11 (UE 4.0–5.3); 1, 6, 10 не проверены авторами | [проверено: README] |
-| retoc | IoStore: `unpack`, `unpack-raw`, `pack-raw`, `to-zen` (сборка мода из legacy), `to-legacy`; отдельной команды `pack` нет | [проверено: README] |
-| UnrealLocres, LocRes-Builder, UnrealLocresEditor | `.locres` ↔ CSV | [проверено: репозитории] |
-| RE-UE4SS | рантайм-моды (Lua/C++) | [проверено: репозиторий] |
+| FModel / CUE4Parse | browsing and export (audio, `.locres` → JSON), working with the AES key | [verified: repositories] |
+| repak | `.pak`: unpack and pack, AES; reads and writes versions 2–5, 7, 8A/8B, 9, 11 (UE 4.0–5.3); 1, 6, 10 not tested by the authors | [verified: README] |
+| retoc | IoStore: `unpack`, `unpack-raw`, `pack-raw`, `to-zen` (build a mod from legacy), `to-legacy`; there is no separate `pack` command | [verified: README] |
+| UnrealLocres, LocRes-Builder, UnrealLocresEditor | `.locres` ↔ CSV | [verified: repositories] |
+| RE-UE4SS | runtime mods (Lua/C++) | [verified: repository] |
 
-## 3. Сборка мода [по гайдам]
+## 3. Building a mod [per guides]
 
-- **Игры с `.pak`:** папка `ИмяМода_P/<Game>/Content/...` с файлами по тем же путям → `repak pack` → `ИмяМода_P.pak` в `Content/Paks/` или `Content/Paks/~mods/`. **Суффикс `_P` обязателен** (патч-пак с приоритетом). Для UE до 4.27 с подписями — скопировать любой `.sig` под именем мода.
-- **Игры с IoStore:** мод тоже в IoStore (`.pak` + `.utoc` + `.ucas`), сборка `retoc to-zen` или UnrealReZen.
-- **Аудио SoundWave:** cook в **Unreal Editor той же версии** (бесплатен) с тем же путём пакета — без редактора своего `.uasset` не собрать. Это ручная работа пользователя.
-- **Текст:** заменить `.locres` существующей культуры в `_P`-паке; новая культура должна быть разрешена игрой.
+- **Games with `.pak`:** a folder `ModName_P/<Game>/Content/...` with files at the same paths → `repak pack` → `ModName_P.pak` into `Content/Paks/` or `Content/Paks/~mods/`. **The `_P` suffix is mandatory** (a patch pak with priority). For UE before 4.27 with signatures, copy any `.sig` under the mod's name.
+- **Games with IoStore:** the mod is IoStore too (`.pak` + `.utoc` + `.ucas`), built with `retoc to-zen` or UnrealReZen.
+- **SoundWave audio:** cook in an **Unreal Editor of the same version** (free) with the same package path — without the editor you cannot build your own `.uasset`. This is manual work for the user.
+- **Text:** replace the `.locres` of an existing culture in a `_P` pak; a new culture must be allowed by the game.
 
-## 4. Подводные камни [по гайдам]
+## 4. Pitfalls [per guides]
 
-- AES: без ключа паки не прочитать (ключ ищут в исполняемом файле — это делает пользователь, не агент).
-- Подписи паков, EasyAntiCheat во многих UE-играх — при античите BabelDub по умолчанию отказывается.
-- FaceFX и кривые липсинка привязаны к исходной длительности.
-- Тайминги субтитров в `SoundWave`.
-- Версия cook должна совпадать с игрой.
+- AES: without the key the paks cannot be read (the key is searched for in the executable — the user does this, not the agent).
+- Pak signatures, EasyAntiCheat in many UE games — with anti-cheat BabelDub refuses by default.
+- FaceFX and lip-sync curves are tied to the original duration.
+- Subtitle timings in `SoundWave`.
+- The cook version must match the game.
 
-## 5. Что сказать пользователю
+## 5. What to tell the user
 
-Озвучка (если реплики удалось извлечь, например через FMOD или Wwise) готова в `post/audio/`. Для Unreal-ассетов v0.1 не собирает мод автоматически: нужен Unreal Editor той же версии и упаковка в `_P`-пак (`repak` или `retoc`). Альтернатива — рантайм-мод через UE4SS ([runtime-mods.md](runtime-mods.md)).
+The dub (if the lines could be extracted, for example through FMOD or Wwise) is ready in `post/audio/`. For Unreal assets v0.1 does not build a mod automatically: an Unreal Editor of the same version and packing into a `_P` pak (`repak` or `retoc`) are needed. The alternative is a runtime mod through UE4SS ([runtime-mods.md](runtime-mods.md)).

@@ -1,73 +1,73 @@
-# Движки синтеза: что есть в v0.1, тиры по железу, лицензии
+# Synthesis engines: what v0.1 has, hardware tiers, licenses
 
-Читай при выборе движка для языка, при нехватке видеопамяти и при вопросах о лицензиях. Источник правды о том, что реально установлено и доступно, — `babeldub models list` и `babeldub doctor`; эта страница объясняет, почему каталог такой.
+Read this when choosing an engine for a language, when video memory is short, and for license questions. The source of truth about what is actually installed and available is `babeldub models list` and `babeldub doctor`; this page explains why the catalog looks the way it does.
 
-Пометки: **[v0.1]** — есть в CLI v0.1 (движок, воркер, модель в каталоге); **[кандидат]** — изучено, но в v0.1 нет воркера; «❓» — не проверено.
+Markers: **[v0.1]** means present in CLI v0.1 (engine, worker, model in the catalog); **[candidate]** means studied, but there is no worker in v0.1; "❓" means not verified.
 
-## 1. Что умеет v0.1
+## 1. What v0.1 can do
 
-| Движок (`tts.engine`) | Модели каталога | Языки | Лицензия весов | Особенности |
+| Engine (`tts.engine`) | Catalog models | Languages | Weights license | Notes |
 |---|---|---|---|---|
-| `qwen3tts` **[v0.1, по умолчанию]** | `Qwen3-TTS-12Hz-1.7B-Base` (и для `ru`); запасная `Qwen3-TTS-12Hz-0.6B-Base`; `qwen3-tts-12hz-1.7b-ru-stress-cf` — только явно через `tts.model` | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | ICL-клонирование: звук промпта + его текст; эмоция из промпта |
-| `chatterbox` **[v0.1]** | `chatterbox-multilingual` (Multilingual V3) | ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh | MIT | клонирование по звуку без транскрипта; `exaggeration`; водяной знак PerTh |
-| `dummy` | — | любые | MIT | тестовый движок: пишет тон нужной длины; только для проверки конвейера |
+| `qwen3tts` **[v0.1, default]** | `Qwen3-TTS-12Hz-1.7B-Base` (also for `ru`); fallback `Qwen3-TTS-12Hz-0.6B-Base`; `qwen3-tts-12hz-1.7b-ru-stress-cf` only explicitly via `tts.model` | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | ICL cloning: prompt audio + its text; emotion comes from the prompt |
+| `chatterbox` **[v0.1]** | `chatterbox-multilingual` (Multilingual V3) | ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh | MIT | cloning from audio without a transcript; `exaggeration`; PerTh watermark |
+| `dummy` | — | any | MIT | test engine: writes a tone of the required length; only for checking the pipeline |
 
-Окружение каждого движка — свой venv в `BABELDUB_HOME/envs/<движок>`: пакеты конфликтуют (qwen-tts закрепляет одну версию transformers, Chatterbox — torch 2.6.0 и другую transformers). Ставит их `babeldub setup --engines <движок>` (скилл `babeldub-doctor`).
+Every engine has its own venv in `BABELDUB_HOME/envs/<engine>`, because the packages conflict (qwen-tts pins one transformers version, Chatterbox pins torch 2.6.0 and a different transformers). `babeldub setup --engines <engine>` installs them (skill `babeldub-doctor`).
 
-Выбор: `babeldub set tts.engine=<движок>` или разово `babeldub synth --engine <движок>`. Модель внутри движка: `babeldub set tts.model=<имя>`; без этого CLI берёт модель каталога по тиру (`tts.tier=auto`) и языку.
+Choosing: `babeldub set tts.engine=<engine>`, or for one run `babeldub synth --engine <engine>`. The model within the engine: `babeldub set tts.model=<name>`; without it the CLI takes the catalog model by tier (`tts.tier=auto`) and language.
 
-## 2. Язык → движок (8 ГБ VRAM, только разрешительные лицензии)
+## 2. Language → engine (8 GB VRAM, permissive licenses only)
 
-| Целевой язык | Движок v0.1 | Комментарий |
+| Target language | v0.1 engine | Comment |
 |---|---|---|
-| ru | `qwen3tts` (1.7B-Base; `ru-stress-cf` — только явно) | ударения по знаку U+0301 (см. раздел 3) |
+| ru | `qwen3tts` (1.7B-Base; `ru-stress-cf` only explicitly) | stress via the U+0301 mark (see section 3) |
 | en, de, fr, es, pt, it, zh, ja, ko | `qwen3tts` | Apache-2.0 |
-| pl, tr, а также ar, da, el, fi, he, hi, ms, nl, no, sv, sw | `chatterbox` | MIT; водяной знак в каждом файле — сообщи пользователю |
-| uk и прочие | нет | честно сообщи: в v0.1 нет движка с разрешительной лицензией; кандидаты — раздел 5 |
+| pl, tr, and also ar, da, el, fi, he, hi, ms, nl, no, sv, sw | `chatterbox` | MIT; watermark in every file: tell the user |
+| uk and others | none | say so honestly: v0.1 has no engine with a permissive license; candidates are in section 5 |
 
-## 3. Qwen3-TTS: что важно знать
+## 3. Qwen3-TTS: what matters
 
-- **Чекпойнты.** 1.7B-Base (≈4,5 ГБ) и 0.6B-Base (≈2,5 ГБ); опубликованы только 12-герцевые варианты. Варианты CustomVoice и VoiceDesign (пресеты и голос по описанию) для дубляжа не нужны: у них нет клонирования конкретного героя.
-- **Клонирование.** `ref_audio` + `ref_text`. Без транскрипта (`x_vector_only_mode`) модель клонирует только тембр по эмбеддингу и звучит хуже; CLI включает этот режим сам, когда текста промпта нет или промпт обрезан.
-- **Эмоции.** У Base нет текстовых инструкций стиля: эмоция и паралингвистика переносятся из промпта. Отсюда стратегия `line` (`references/ref-strategy.md`).
-- **Длительность.** Явного параметра длительности нет. Длину держат бюджет слогов при переводе, сжатие в `post` и сокращение текста (`references/length-policy.md`).
-- **Качество по самоотчёту авторов** (набор MiniMax Multilingual): русский WER 3,21 и SIM 0,792 у 1.7B; 4,46 и 0,781 у 0.6B. Это цифры авторов модели, а не независимый замер; на голосах конкретной игры смотри метрики пилота.
-- **Ударения в русском.** Базовая модель следует знаку ударения U+0301 в 65 % случаев на словарной гласной и в 17 % против словаря; дообучение `ru-stress-cf` — в 100 % и 96 % (замер автора дообучения). Но на трёх репликах Low-Budget Repairs оно хуже сохранило голос оригинального актёра (ECAPA-сходство с оригиналом 0,05–0,37 против 0,37–0,51 у 1.7B-Base), поэтому `setup` его не ставит, а `synth` не выбирает сам: включай явно (`babeldub models fetch …`, `babeldub set tts.model=…`) и сверяй `sim` на пилоте. Оговорка из карточки модели: веса Apache-2.0, но часть обучающих текстов взята из датасета без объявленной лицензии — для коммерческого использования это нужно проверить.
-- **Скорость.** Официальный пакет `qwen-tts` медленный: около 0,23× реального времени на RTX 4060 под Windows. Ускоритель `faster-qwen3-tts` (CUDA Graphs) на той же карте даёт 1,83× реального времени для 1.7B и 2,26× для 0.6B (замер автора ускорителя). В каталоге v0.1 — официальный `qwen-tts`; `faster-qwen3-tts` **[кандидат]**: он требует другой версии transformers и не ставится в тот же venv. На RTX 3060 Ti (8 ГБ, официальный `qwen-tts`, 1.7B-Base) замер BabelDub: `rtf` ≈ 4,5 по одной реплике и ≈ 1,4–2,1 батчем из 3–4 реплик, пик VRAM 4,3–5,5 ГБ — смотри `rtf` в выводе `synth`.
-- **Windows.** FlashAttention 2 под Windows не поставляется; используется `sdpa`.
+- **Checkpoints.** 1.7B-Base (≈4.5 GB) and 0.6B-Base (≈2.5 GB); only the 12 Hz variants are published. The CustomVoice and VoiceDesign variants (presets and voice from a description) are not needed for dubbing: they cannot clone a specific character.
+- **Cloning.** `ref_audio` + `ref_text`. Without a transcript (`x_vector_only_mode`) the model clones only the timbre from the embedding and sounds worse; the CLI enables this mode itself when the prompt has no text or the prompt was trimmed.
+- **Emotions.** Base has no text style instructions: emotion and paralinguistics come from the prompt. Hence the `line` strategy (`references/ref-strategy.md`).
+- **Duration.** There is no explicit duration parameter. Length is held by the syllable budget during translation, compression in `post` and shortening of the text (`references/length-policy.md`).
+- **Quality as self-reported by the authors** (MiniMax Multilingual set): Russian WER 3.21 and SIM 0.792 for 1.7B; 4.46 and 0.781 for 0.6B. These are the model authors' numbers, not an independent measurement; for the voices of a specific game, look at the pilot metrics.
+- **Russian stress.** The base model follows the U+0301 stress mark in 65% of cases on the dictionary vowel and in 17% against the dictionary; the `ru-stress-cf` fine-tune follows it in 100% and 96% (measured by the fine-tune's author). But on three Low-Budget Repairs lines it preserved the original actor's voice worse (ECAPA similarity to the original 0.05–0.37 versus 0.37–0.51 for 1.7B-Base), so `setup` does not install it and `synth` never picks it by itself: enable it explicitly (`babeldub models fetch …`, `babeldub set tts.model=…`) and check `sim` in the pilot. A caveat from the model card: the weights are Apache-2.0, but part of the training text comes from a dataset with no declared license; check this before commercial use.
+- **Speed.** The official `qwen-tts` package is slow: about 0.23× real time on an RTX 4060 under Windows. The `faster-qwen3-tts` accelerator (CUDA Graphs) on the same card gives 1.83× real time for 1.7B and 2.26× for 0.6B (measured by the accelerator's author). The v0.1 catalog uses the official `qwen-tts`; `faster-qwen3-tts` is a **[candidate]**: it needs a different transformers version and cannot be installed into the same venv. On an RTX 3060 Ti (8 GB, official `qwen-tts`, 1.7B-Base), BabelDub measured `rtf` ≈ 4.5 for a single line and ≈ 1.4–2.1 for a batch of 3–4 lines, with a VRAM peak of 4.3–5.5 GB; check `rtf` in the `synth` output.
+- **Windows.** FlashAttention 2 is not shipped for Windows; `sdpa` is used.
 
-## 4. Тиры по видеопамяти
+## 4. Video-memory tiers
 
-| Тир | Что ставит `setup` по умолчанию | Что ожидать |
+| Tier | What `setup` installs by default | What to expect |
 |---|---|---|
-| CPU | `Qwen3-TTS-12Hz-0.6B-Base` | работает, но в разы медленнее реального времени; предупреди, что игра будет озвучиваться часами ❓ |
-| 8 ГБ | 1.7B-Base, Chatterbox V3 | основной сценарий; одна модель на GPU за раз; при `CUDA out of memory` — 0.6B |
-| 12 ГБ | то же | запас памяти; второй движок для сравнения — **[кандидат]** VoxCPM2 |
-| 16–24 ГБ | то же | **[кандидаты]** VoxCPM2, FireRedTTS3 (лучшие опубликованные SIM для русского), MOSS-TTS с параметром длительности |
+| CPU | `Qwen3-TTS-12Hz-0.6B-Base` | works, but many times slower than real time; warn that dubbing the game will take hours ❓ |
+| 8 GB | 1.7B-Base, Chatterbox V3 | the main scenario; one model on the GPU at a time; on `CUDA out of memory`, use 0.6B |
+| 12 GB | the same | memory headroom; a second engine for comparison is a **[candidate]**: VoxCPM2 |
+| 16–24 GB | the same | **[candidates]** VoxCPM2, FireRedTTS3 (best published SIM for Russian), MOSS-TTS with a duration parameter |
 
-Оценки VRAM из каталога: 1.7B ≈ 6 ГБ, 0.6B ≈ 4 ГБ, Chatterbox ≈ 7 ГБ (цифра сообщества для исходного английского Chatterbox 2025 года; для V3 не проверено ❓). Часть памяти в Windows занимает рабочий стол. Фактический пик смотри в `vram_peak_gb` вывода `synth`.
+VRAM estimates from the catalog: 1.7B ≈ 6 GB, 0.6B ≈ 4 GB, Chatterbox ≈ 7 GB (a community figure for the original 2025 English Chatterbox; not verified for V3 ❓). On Windows the desktop takes part of the memory. See the actual peak in `vram_peak_gb` of the `synth` output.
 
-На одной GPU синтез и QA не работают одновременно: CLI держит `state/locks/gpu.lock`, модели грузятся в отдельных процессах по очереди.
+On one GPU, synthesis and QA do not run at the same time: the CLI holds `state/locks/gpu.lock`, and models load in separate processes one after another.
 
-## 5. Кандидаты следующих версий (в v0.1 нет)
+## 5. Candidates for future versions (not in v0.1)
 
-| Модель | Почему интересна | Ограничение |
+| Model | Why it is interesting | Limitation |
 |---|---|---|
-| OmniVoice | параметр `duration=` в секундах (точная длина для катсцен), 600+ языков, в том числе uk | **веса CC-BY-NC** (некоммерческие); автор прямо предупреждает о переносе акцента языка промпта |
-| VoxCPM2 | Apache-2.0, 30 языков, 48 кГц; ru SIM 81,1 в таблице авторов | ~8 ГБ VRAM: на 8-гигабайтной карте впритык; seed только в версии с GitHub |
-| FireRedTTS3 | Apache-2.0, 24 языка с uk; лучший опубликованный ru SIM (84,7) | веса 8,5 ГБ + кодек 3,8 ГБ, на 8 ГБ скорее всего не влезет ❓; русскую нормализацию чисел делать самим |
-| MOSS-TTS v1.5 | Apache-2.0, длительность через `tokens=` | 8B; режим для 8 ГБ официально только у версии 1.0 |
-| IndexTTS-2 / 2.5 | лучший контроль эмоций (отдельный эмо-референс, вектор эмоций) | нет русского; своя лицензия bilibili |
-| Fish Audio S2-Pro, Higgs TTS 3 | эталонное качество | некоммерческие лицензии, ≥24 ГБ, Linux/WSL |
-| MOSS-TTS-Nano-100M | клонирование на CPU (ONNX), 20 языков с ru, pl, tr | качество ниже |
+| OmniVoice | `duration=` parameter in seconds (exact length for cutscenes), 600+ languages including uk | **CC-BY-NC weights** (non-commercial); the author explicitly warns that the accent of the prompt language carries over |
+| VoxCPM2 | Apache-2.0, 30 languages, 48 kHz; ru SIM 81.1 in the authors' table | ~8 GB VRAM: a tight fit on an 8 GB card; seed only in the GitHub version |
+| FireRedTTS3 | Apache-2.0, 24 languages including uk; best published ru SIM (84.7) | weights 8.5 GB + codec 3.8 GB, most likely does not fit into 8 GB ❓; Russian number normalization must be done by us |
+| MOSS-TTS v1.5 | Apache-2.0, duration via `tokens=` | 8B; an 8 GB mode officially exists only for version 1.0 |
+| IndexTTS-2 / 2.5 | best emotion control (separate emotion reference, emotion vector) | no Russian; bilibili's own license |
+| Fish Audio S2-Pro, Higgs TTS 3 | reference-grade quality | non-commercial licenses, ≥24 GB, Linux/WSL |
+| MOSS-TTS-Nano-100M | cloning on the CPU (ONNX), 20 languages including ru, pl, tr | lower quality |
 
-Готового перевода «речь в речь» с сохранением голоса для русского нет (SeamlessExpressive, Hibiki-Zero, Index-Echo-S2ST русский не поддерживают), поэтому BabelDub использует каскад: текст оригинала → перевод → клонирующий TTS.
+There is no ready-made speech-to-speech translation that preserves the voice for Russian (SeamlessExpressive, Hibiki-Zero and Index-Echo-S2ST do not support Russian), so BabelDub uses a cascade: original text → translation → voice-cloning TTS.
 
-## 6. Лицензии и согласие
+## 6. Licenses and consent
 
-1. **По умолчанию — только Apache-2.0 и MIT.** Всё из раздела 1 сюда входит.
-2. **Некоммерческие модели (NC)** в v0.1 не входят. Когда появятся, включать их только после показа лицензии пользователю и явного «да»; каталог пометит их как `commercial: false`, и `setup` поставит такую модель только с отдельным подтверждением.
-3. **Лицензия каждой использованной модели** попадает в `build/build_manifest.json` (`models[]`) и в итоговый отчёт.
-4. **Водяной знак Chatterbox** (PerTh) неслышим, но есть в каждом файле — скажи об этом пользователю, если движок использовался.
-5. **Голоса актёров.** Клонирование голосов актёров озвучки ограничено законами многих стран и условиями ряда моделей; EULA игры может запрещать модификацию. BabelDub — инструмент для личной фанатской локализации; собранные игровые файлы не распространяют.
-6. Веса BabelDub не распространяет: их скачивает `babeldub setup` на машину пользователя, условия моделей принимает пользователь.
+1. **By default, only Apache-2.0 and MIT.** Everything in section 1 qualifies.
+2. **Non-commercial (NC) models** are not part of v0.1. When they arrive, enable them only after showing the license to the user and getting an explicit "yes"; the catalog will mark them `commercial: false`, and `setup` will install such a model only with a separate confirmation.
+3. **The license of every model used** goes into `build/build_manifest.json` (`models[]`) and into the final report.
+4. **The Chatterbox watermark** (PerTh) is inaudible but present in every file; tell the user if the engine was used.
+5. **Actors' voices.** Cloning the voices of voice actors is restricted by the laws of many countries and by the terms of several models; the game's EULA may prohibit modification. BabelDub is a tool for personal fan localization; built game files are not distributed.
+6. BabelDub does not distribute weights: `babeldub setup` downloads them to the user's machine, and the user accepts the model terms.

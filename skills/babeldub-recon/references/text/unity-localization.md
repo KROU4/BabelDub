@@ -1,40 +1,40 @@
-# Unity Localization (StringTable в Addressables)
+# Unity Localization (StringTable in Addressables)
 
-Читай, если в `StreamingAssets/aa/<платформа>/` есть бандлы `localization-string-tables-*`, `localization-assets-shared*`, `localization-locales*`.
+Read this if `StreamingAssets/aa/<platform>/` has bundles `localization-string-tables-*`, `localization-assets-shared*`, `localization-locales*`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-- **Чтение — да (A):** адаптер `unity-localization` (через UnityPy) читает строки всех языков в `inventory/texts.jsonl`, а `babeldub link` связывает их с репликами и находит официальный перевод (`tgt_official`). Поля MonoBehaviour берутся из typetree бандлов (в Addressables-бандлах он обычно есть даже у IL2CPP). Если typetree нет, CLI пробует необязательный пакет TypeTreeGeneratorAPI; без него ассет помечается уровнем C с предупреждением.
-- **Запись в игру — нет** (план v0.2): субтитры в v0.1 не меняются. Round-trip правки StringTable через UnityPy проверен на тестовой игре, поведение в игре не проверено.
+- **Reading: yes (A).** The `unity-localization` adapter (via UnityPy) reads the strings of all languages into `inventory/texts.jsonl`, and `babeldub link` links them to voice lines and finds the official translation (`tgt_official`). MonoBehaviour fields are taken from the bundles' typetree (Addressables bundles usually have one, even with IL2CPP). If there is no typetree, the CLI tries the optional TypeTreeGeneratorAPI package; without it the asset is marked level C with a warning.
+- **Writing into the game: no** (planned for v0.2): subtitles do not change in v0.1. A round trip of StringTable edits via UnityPy is verified on a test game; in-game behavior is not verified.
 
-## Как устроено (по исходникам `com.unity.localization` 1.5.13)
+## How it works (per the `com.unity.localization` 1.5.13 sources)
 
-- `LocalizationTable`: `m_LocaleId`, `m_SharedData` (ссылка на SharedTableData), `m_Metadata`, `m_TableData: List<TableEntryData>`.
+- `LocalizationTable`: `m_LocaleId`, `m_SharedData` (reference to SharedTableData), `m_Metadata`, `m_TableData: List<TableEntryData>`.
 - `TableEntryData`: `long m_Id`, `string m_Localized`, `m_Metadata`.
 - `SharedTableData`: `m_TableCollectionName`, `m_TableCollectionNameGuidString`, `m_Entries: List<{long m_Id, string m_Key, m_Metadata}>`, `m_KeyGenerator`.
-- Связь: `SharedTableData.m_Entries` (`m_Id` → `m_Key`) + `StringTable.m_TableData` (`m_Id` → `m_Localized`) нужной локали (`m_LocaleId.m_Code`, например `ru-RU`).
-- Бандлы string tables бывают по языку; имя может содержать **самоназвание языка в нижнем регистре**, а не код локали (в Low-Budget Repairs: `localization-string-tables-русский_assets_all.bundle`, `…-polski_…`, `…-english_…`). Ключи — в общем `localization-assets-shared_assets_all.bundle`.
-- **Asset tables** (`localization-asset-tables-*`) локализуют ассеты (спрайты, иногда AudioClip или ссылки).
+- Link: `SharedTableData.m_Entries` (`m_Id` → `m_Key`) + `StringTable.m_TableData` (`m_Id` → `m_Localized`) of the required locale (`m_LocaleId.m_Code`, for example `ru-RU`).
+- String table bundles can be per language; the name may contain the **native language name in lowercase** rather than the locale code (in Low-Budget Repairs: `localization-string-tables-русский_assets_all.bundle`, `…-polski_…`, `…-english_…`). The keys are in the shared `localization-assets-shared_assets_all.bundle`.
+- **Asset tables** (`localization-asset-tables-*`) localize assets (sprites, sometimes AudioClips or references).
 
-## Связь с озвучкой
+## Link to the voice
 
-Частый случай — ключ строки = имя аудиофайла или сабсаунда. В Low-Budget Repairs ключ строки Unity Localization = имя сабсаунда FSB = ключ аудиотаблицы FMOD (1187 совпадений из 1252 диалоговых ключей). Хвосты: дубли `_vN`/`_BEST`, монтажные куски, ключи без аудио.
+A common case: the string key = the audio file or subsound name. In Low-Budget Repairs the Unity Localization string key = the FSB subsound name = the FMOD audio table key (1187 matches out of 1252 dialogue keys). Leftovers: duplicates `_vN`/`_BEST`, edit fragments, keys without audio.
 
-## Smart Strings и разметка
+## Smart Strings and markup
 
-- Unity Smart Strings: `{0:plural:…}`, `{0:choose(1|2|3):…}`, вложенные области. Для русского у `plural` нужны три формы.
-- TMP/uGUI-теги (`<color=…>`, `<b>`, `<i>`, `<size=…>`, `<sprite …>`, `<link=…>`) и плейсхолдеры игры (в Low-Budget Repairs: `{ColorStart}{CharacterName}:{ColorEnd}`).
-- Всё это в субтитре сохраняется байт в байт; в произносимый текст (`dub_text`) не попадает.
+- Unity Smart Strings: `{0:plural:…}`, `{0:choose(1|2|3):…}`, nested scopes. For Russian, `plural` needs three forms.
+- TMP/uGUI tags (`<color=…>`, `<b>`, `<i>`, `<size=…>`, `<sprite …>`, `<link=…>`) and the game's placeholders (in Low-Budget Repairs: `{ColorStart}{CharacterName}:{ColorEnd}`).
+- All of this is preserved byte for byte in the subtitle and does not go into the spoken text (`dub_text`).
 
-## Если понадобится запись (вне v0.1)
+## If writing is needed (outside v0.1)
 
-1. Найти StringTable нужной локали по `m_LocaleId.m_Code`, заменить `m_Localized`.
+1. Find the StringTable of the required locale by `m_LocaleId.m_Code` and replace `m_Localized`.
 2. UnityPy: `obj.patch(tree)` → `env.file.save(packer="lz4")`.
-3. Обнулить CRC изменённого бандла в каталоге Addressables (`AddressablesTools patchcrc`, см. `engines/unity.md`).
-4. Новый язык добавить трудно (ассет `Locale`, таблицы на каждую коллекцию, записи каталога). Практичнее заменить содержимое существующей ненужной локали (не проверено).
-5. Шрифты TextMeshPro без кириллицы потребуют замены Font Asset или fallback.
+3. Zero the CRC of the changed bundle in the Addressables catalog (`AddressablesTools patchcrc`, see `engines/unity.md`).
+4. Adding a new language is hard (a `Locale` asset, tables for every collection, catalog entries). Replacing the contents of an existing unneeded locale is more practical (not verified).
+5. TextMeshPro fonts without Cyrillic will need a Font Asset replacement or a fallback.
 
-## Ссылки
+## Links
 
 - Unity Localization 1.5.13, Tables — https://github.com/needle-mirror/com.unity.localization/tree/1.5.13/Runtime/Tables
 - Smart Strings — https://docs.unity3d.com/Packages/com.unity.localization@1.5/manual/Smart/SmartStrings.html

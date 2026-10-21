@@ -1,19 +1,20 @@
-## Что изменено
+## What changed
 
-<!-- Кратко: что и зачем. Ссылка на issue, если есть: Closes #123 -->
+<!-- In short: what and why. Link the issue if there is one: Closes #123 -->
 
-## Как проверено
+## How it was tested
 
-<!-- Команды и результат. Для адаптера: на какой синтетике и (локально) на какой игре проверено. -->
+<!-- Commands and results. For an adapter: which synthetic data and (locally) which game it was tested on. -->
 
-## Чек-лист
+## Checklist
 
-- [ ] `uv run --project runtime ruff check runtime` и `ruff check --config runtime/pyproject.toml scripts` без ошибок
-- [ ] `uv run --project runtime pytest runtime/tests -q` и `pytest scripts -q` проходят
-- [ ] `python scripts/validate_skills.py` без ошибок
-- [ ] `python scripts/bump_version.py --check` и `python scripts/gen_agents.py --check` проходят
-- [ ] `claude plugin validate . --strict` проходит (если менялись скиллы, агенты, команды, хуки или манифесты)
-- [ ] Тесты только на синтетических данных; **в PR нет файлов игр**, аудио реплик и извлечённых текстов
-- [ ] Если менялся CLI или формат файлов проекта, обновлён `docs/dev/CONTRACT.md`
-- [ ] Если менялись роли агентов, правки сделаны в `skills/babeldub-localize/references/roles/`, а `claude/agents/` перегенерирован
-- [ ] В `CHANGELOG.md` добавлена запись в раздел «Не выпущено»
+- [ ] `uv run --project runtime ruff check runtime` and `ruff check --config runtime/pyproject.toml scripts` report no errors
+- [ ] `uv run --project runtime pytest runtime/tests -q` and `pytest scripts -q` pass
+- [ ] `python scripts/validate_skills.py` reports no errors
+- [ ] `python scripts/bump_version.py --check` and `python scripts/gen_agents.py --check` pass
+- [ ] `claude plugin validate . --strict` passes (if skills, agents, commands, hooks or manifests changed)
+- [ ] Tests use synthetic data only; **the PR contains no game files**, line audio or extracted texts
+- [ ] If the CLI or the project file format changed, `docs/dev/CONTRACT.md` is updated
+- [ ] If agent roles changed, the edits are in `skills/babeldub-localize/references/roles/` and `claude/agents/` is regenerated
+- [ ] Docs, skills and messages are in English (only `README.ru.md` is Russian)
+- [ ] `CHANGELOG.md` has an entry under "Unreleased"

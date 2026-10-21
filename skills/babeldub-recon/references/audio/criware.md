@@ -1,40 +1,40 @@
 # CRIWARE (ADX2, Sofdec): ACB, AWB, HCA, CPK, USM
 
-Читай, если в папке игры есть `*.acb`, `*.awb`, `*.cpk`, `*.usm` или `cri_*.dll`.
+Read this if the game folder has `*.acb`, `*.awb`, `*.cpk`, `*.usm` or `cri_*.dll`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 форматы CRIWARE не разбирает; только инструкции. План — позже, уровень B (для зашифрованных HCA нужен ключ).
+**C**: CLI v0.1 does not parse CRIWARE formats; instructions only. Planned later at level B (encrypted HCA needs the key).
 
-## Форматы
+## Formats
 
-- **ACB** — таблица `@UTF`: cue, waveform, sequence.
-- **AWB** — `AFS2` с HCA или ADX; стриминговые AWB лежат отдельно.
-- **CPK** — архивы; **USM** — видео (см. `audio/video.md`).
-- **Шифрование HCA:** 56-битный ключ; с середины 2018 добавляется subkey из AWB. Файл vgmstream `hca_keys.h` содержит около 1200 строк с известными ключами.
+- **ACB**: a `@UTF` table: cue, waveform, sequence.
+- **AWB**: `AFS2` holding HCA or ADX; streaming AWBs are stored separately.
+- **CPK**: archives; **USM**: video (see `audio/video.md`).
+- **HCA encryption:** a 56-bit key; since mid-2018 a subkey from the AWB is added. The vgmstream file `hca_keys.h` has about 1200 lines of known keys.
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение | Состояние на 2026-10 |
+| Tool | Purpose | Status as of 2026-10 |
 |---|---|---|
-| vgmstream | декодирование HCA/ADX/ACB/AWB | активен |
-| CriCodecs / CriStudio | CPK, USM, ACB/AWB, HCA, ADX, UTF: сборка, мультиплексирование, ключи, `--recover-key` | v1.2.0 |
-| VGAudio | кодирование HCA/ADX, `--hcaquality` | последний релиз 2018 |
-| SonicAudioTools (AcbEditor) | правка ACB/AWB | «no longer maintained» |
+| vgmstream | decodes HCA/ADX/ACB/AWB | active |
+| CriCodecs / CriStudio | CPK, USM, ACB/AWB, HCA, ADX, UTF: building, muxing, keys, `--recover-key` | v1.2.0 |
+| VGAudio | encodes HCA/ADX, `--hcaquality` | last release 2018 |
+| SonicAudioTools (AcbEditor) | edits ACB/AWB | "no longer maintained" |
 
-## Нативный путь пересборки (не проверено)
+## Native rebuild path (not verified)
 
-1. Закодировать HCA **тем же ключом**, с теми же каналами и частотой (VGAudio или CriCodecs).
-2. Переупаковать AWB и обновить ACB: в таблице waveform хранятся длины.
-3. Сохранить порядок и ID записей.
+1. Encode HCA with **the same key**, the same channels and sample rate (VGAudio or CriCodecs).
+2. Repack the AWB and update the ACB: the waveform table stores lengths.
+3. Keep the order and IDs of the entries.
 
-## Подводные камни
+## Pitfalls
 
-- Ключ шифрования HCA (и subkey из AWB).
-- Длины записей в ACB.
-- Видео USM со сведённым звуком — отдельная задача (`audio/video.md`).
+- The HCA encryption key (and the subkey from the AWB).
+- Entry lengths in the ACB.
+- USM video with mixed-down audio is a separate task (`audio/video.md`).
 
-## Ссылки
+## Links
 
 - vgmstream — https://github.com/vgmstream/vgmstream (`src/meta/hca_keys.h`)
 - CriCodecs — https://github.com/Youjose/CriCodecs

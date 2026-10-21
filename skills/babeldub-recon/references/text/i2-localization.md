@@ -1,37 +1,37 @@
 # I2 Localization (Unity)
 
-Читай, если в Unity-игре есть ассет `I2Languages` (обычно в `resources.assets`).
+Read this if a Unity game has an `I2Languages` asset (usually in `resources.assets`).
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — адаптера I2 в v0.1 нет; только инструкции. Тексты из I2 не попадут в `inventory/texts.jsonl`, и `babeldub link` их не свяжет. План — v0.3, уровень B. Сведения ниже — по дампу сообщества (вторичный источник).
+**C**: v0.1 has no I2 adapter; instructions only. Texts from I2 do not get into `inventory/texts.jsonl`, and `babeldub link` does not link them. Planned for v0.3 at level B. The details below come from a community dump (secondary source).
 
-## Как устроено
+## How it works
 
-- Ассет `I2Languages` (`LanguageSourceAsset`):
+- The `I2Languages` asset (`LanguageSourceAsset`):
   - `mSource.mTerms: List<TermData{string Term; int TermType; string[] Languages; byte[] Flags; string[] Languages_Touch}>`;
   - `mSource.mLanguages: List<LanguageData{string Name; string Code; byte Flags}>`.
-- Строка термина на языке N — элемент `Languages[N]`; язык N описан в `mLanguages[N]`.
-- **Новый язык** = элемент в `mLanguages` плюс строка в `Languages[]` каждого термина.
-- I2 умеет подтягивать таблицы из Google Sheets или локального CSV, если разработчик это включил (не проверено).
+- The term's string in language N is the element `Languages[N]`; language N is described in `mLanguages[N]`.
+- **A new language** = an element in `mLanguages` plus a string in `Languages[]` of every term.
+- I2 can pull tables from Google Sheets or a local CSV if the developer enabled it (not verified).
 
-## Чем извлечь
+## Extraction tools
 
-- UABEA (дамп ассета), UnityPy.
-- i2loc-manager — экспорт и импорт CSV/TSV.
-- Для IL2CPP генератор typetree иногда ошибается — тогда нужен ручной разбор.
+- UABEA (asset dump), UnityPy.
+- i2loc-manager: CSV/TSV export and import.
+- For IL2CPP the typetree generator sometimes gets it wrong; then manual parsing is needed.
 
-## Связь с озвучкой
+## Link to the voice
 
-Имя термина (`Term`) часто совпадает с именем аудио или ключом события; проверяй выборкой. Если голос через FMOD или Wwise — связь по ключу аудиотаблицы или имени события.
+The term name (`Term`) often equals the audio name or the event key; check with a sample. If the voice goes through FMOD or Wwise, the link is via the audio table key or the event name.
 
-## Подводные камни
+## Pitfalls
 
-- Шрифты TextMeshPro без кириллицы.
-- Порядок языков в `mLanguages` и в `Languages[]` должен совпадать.
+- TextMeshPro fonts without Cyrillic.
+- The order of languages in `mLanguages` and in `Languages[]` must match.
 
-## Ссылки
+## Links
 
 - I2 Localization — http://inter-illusion.com/tools/i2-localization/
 - i2loc-manager — https://github.com/Veydzher/i2loc-manager
-- Разбор I2 (дамп сообщества) — https://github.com/truix/travellers-rest-planner/blob/main/scripts/dump_i2l.py
+- I2 parsing (community dump) — https://github.com/truix/travellers-rest-planner/blob/main/scripts/dump_i2l.py

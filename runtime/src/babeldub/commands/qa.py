@@ -439,16 +439,16 @@ def cmd_report(args: argparse.Namespace) -> int:
     total_checked = sum(a["checked"] for a in per.values())
     total_pass = sum(a["pass"] for a in per.values())
     out = [
-        f"# Отчёт QA — {project.data.get('game_name') or project.slug}",
+        f"# QA report — {project.data.get('game_name') or project.slug}",
         "",
-        f"Проверено реплик: **{total_checked}** из {len(post_latest)}, прошли: **{total_pass}**, "
-        f"требуют внимания: **{len(state['attention'])}**, ещё не проверено: {state['pending']}.",
+        f"Lines checked: **{total_checked}** of {len(post_latest)}, passed: **{total_pass}**, "
+        f"need attention: **{len(state['attention'])}**, not checked yet: {state['pending']}.",
         "",
-        "Сходство голоса (`sim`) — косинус ECAPA между дубляжом и оригинальным голосом героя; `sim_ref` — базовая",
-        "линия персонажа (насколько похожи друг на друга его собственные оригинальные реплики). Проверка:",
+        "Voice similarity (`sim`) is the ECAPA cosine between the dub and the hero's original voice; `sim_ref` is the",
+        "character's baseline (how similar the character's own original lines are to each other). Check:",
         f"`sim ≥ {project.setting('qa', 'min_sim_ratio', 0.75)} × sim_ref`, CER ≤ {project.setting('qa', 'max_cer', 0.15)}.",
         "",
-        "| Персонаж | ID | Реплик | Проверено | Прошли | Брак | Принято | Перегенерация | Сократить | Оставить оригинал | Внимание | CER (медиана) | sim (медиана) | sim_ref |",
+        "| Character | ID | Lines | Checked | Passed | Failed | Accepted | Regenerate | Shorten | Keep original | Attention | CER (median) | sim (median) | sim_ref |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     order = sorted(per, key=lambda c: (c == UNKNOWN_ID, -per[c]["lines"], c))
@@ -465,11 +465,11 @@ def cmd_report(args: argparse.Namespace) -> int:
     if state["attention"]:
         out += [
             "",
-            "## Требуют решения",
+            "## Need a decision",
             "",
-            "Решение записывается в `qa/decisions.agent.jsonl` (`{\"id\", \"decision\", \"note\"}`), затем `babeldub decide apply`.",
+            "Write the decision to `qa/decisions.agent.jsonl` (`{\"id\", \"decision\", \"note\"}`), then run `babeldub decide apply`.",
             "",
-            "| ID | Персонаж | Попытка | Причины | CER | sim | Длина | Авто-решение | Текст дубляжа | Распознано |",
+            "| ID | Character | Attempt | Reasons | CER | sim | Length | Auto decision | Dub text | Recognized |",
             "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for lid in state["attention"][:30]:
@@ -482,7 +482,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                 f"{_cell((translations.get(lid) or {}).get('dub_text'))} | {_cell(q.get('asr_text'))} |"
             )
         if len(state["attention"]) > 30:
-            out.append(f"\n… и ещё {len(state['attention']) - 30}: см. `qa/qa.jsonl`.")
+            out.append(f"\n… and {len(state['attention']) - 30} more: see `qa/qa.jsonl`.")
     out.append("")
     path = project.path(layout.QA_REPORT)
     path.parent.mkdir(parents=True, exist_ok=True)

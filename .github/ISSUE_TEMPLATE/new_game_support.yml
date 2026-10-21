@@ -1,18 +1,18 @@
-name: Поддержка новой игры или движка
-description: BabelDub не находит озвучку или тексты, не умеет собрать формат или игра работает не до конца
+name: New game or engine support
+description: BabelDub does not find the voice-over or texts, cannot rebuild a format, or the game does not work all the way through
 title: "[game] "
 labels: ["game-support"]
 body:
   - type: markdown
     attributes:
       value: |
-        Опишите игру так, чтобы её формат можно было разобрать **без пересылки файлов игры**. Нам нужны названия, размеры и структура файлов, вывод `babeldub scan`, но не сами банки и архивы.
+        Describe the game so that its format can be worked out **without sending game files**. We need names, sizes and the structure of the files and the output of `babeldub scan`, but not the banks and archives themselves. Check [docs/ENGINES.md](https://github.com/KROU4/BabelDub/blob/main/docs/ENGINES.md) first: it lists what each engine supports today.
 
   - type: input
     id: game
     attributes:
-      label: Игра
-      description: Название, магазин, ссылка на страницу и версия (номер сборки).
+      label: Game
+      description: Title, store, link to the store page and version (build number).
       placeholder: My Game (Steam, https://store.steampowered.com/app/..., build 1.2.0)
     validations:
       required: true
@@ -20,7 +20,7 @@ body:
   - type: dropdown
     id: engine
     attributes:
-      label: Движок
+      label: Engine
       options:
         - Unity (Mono)
         - Unity (IL2CPP)
@@ -32,37 +32,37 @@ body:
         - GameMaker
         - Creation Engine (Bethesda)
         - Source / Source 2
-        - Собственный движок
-        - Не знаю
+        - Custom engine
+        - I don't know
     validations:
       required: true
 
   - type: dropdown
     id: middleware
     attributes:
-      label: Аудио-middleware
+      label: Audio middleware
       options:
         - FMOD (.bank)
         - Wwise (.bnk, .wem, .pck)
-        - Встроенный звук движка
-        - Отдельные аудиофайлы (.ogg, .wav, .mp3)
-        - Не знаю
+        - Built-in engine audio
+        - Loose audio files (.ogg, .wav, .mp3)
+        - I don't know
     validations:
       required: true
 
   - type: textarea
     id: scan
     attributes:
-      label: Вывод `babeldub scan`
-      description: JSON сводки и при желании `inventory/report.md` из папки проекта.
+      label: Output of `babeldub scan`
+      description: The summary JSON and, optionally, `inventory/report.md` from the project folder.
       render: json
 
   - type: textarea
     id: files
     attributes:
-      label: Структура файлов игры
+      label: Game file structure
       description: |
-        Список папок и крупных файлов с размерами (без содержимого). Например:
+        A list of folders and large files with sizes (no contents). For example:
         Windows: `Get-ChildItem -Recurse "D:\Games\MyGame" -Include *.bank,*.pck,*.pak,*.assets,*.bundle | Select-Object FullName,Length`
         Linux: `find ~/Games/MyGame -size +1M -printf '%s %p\n'`
       render: text
@@ -72,29 +72,29 @@ body:
   - type: textarea
     id: languages
     attributes:
-      label: Языки
-      description: На каких языках в игре есть озвучка и тексты; есть ли официальный перевод на нужный вам язык.
+      label: Languages
+      description: Which languages the game has voice-over and texts in; whether an official translation into your language exists.
     validations:
       required: true
 
   - type: input
     id: target
     attributes:
-      label: Целевой язык
+      label: Target language
       placeholder: ru
 
   - type: textarea
     id: notes
     attributes:
-      label: Что уже известно
-      description: Ссылки на моддинг-инструменты и вики, существующие фан-переводы, особенности (катсцены в видео, липсинк, античит).
+      label: What is already known
+      description: Links to modding tools and wikis, existing fan translations, special cases (cutscenes in video, lip sync, anti-cheat).
 
   - type: checkboxes
     id: confirm
     attributes:
-      label: Подтверждение
+      label: Confirmation
       options:
-        - label: У меня легальная копия игры, локализация нужна для личного использования или некоммерческого фан-перевода.
+        - label: I own a legal copy of the game and need the localization for personal use or a non-commercial fan translation.
           required: true
-        - label: Я не прикладываю файлы игры, аудио реплик и извлечённые тексты.
+        - label: I am not attaching game files, line audio or extracted texts.
           required: true

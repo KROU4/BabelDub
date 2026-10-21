@@ -2,7 +2,7 @@
   "name": "babeldub",
   "displayName": "BabelDub",
   "version": "0.1.0",
-  "description": "AI localization and dubbing of any game: finds voice-over and text, translates it and re-voices every line in the original character's own voice (same timbre, emotion and delivery, new language) with local voice-cloning TTS, then repacks the assets into the engine's native formats.",
+  "description": "AI localization and dubbing of any game: finds voice-over and text, translates it and re-voices every line in the original character's own voice (same timbre, emotion and delivery, new language) with local voice-cloning TTS on your GPU, checks quality, then repacks the assets into the engine's native formats with backup and rollback.",
   "author": {
     "name": "KROU4",
     "url": "https://github.com/KROU4"
@@ -17,8 +17,10 @@
     "tts",
     "translation",
     "game-modding",
+    "game-localization",
     "unity",
     "fmod",
+    "wwise",
     "agent-skills"
   ],
   "agents": [

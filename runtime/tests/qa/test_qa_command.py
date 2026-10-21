@@ -98,7 +98,7 @@ def test_qa_verdicts_and_auto_decisions(dub, fake_qc, run) -> None:
     code, out = run(["report", "--project", root])
     assert code == EXIT_OK and out["attention"] == 1
     report = dub.project.path(layout.QA_REPORT).read_text(encoding="utf-8")
-    assert report.startswith("# Отчёт QA — Demo Game")
+    assert report.startswith("# QA report — Demo Game")
     assert "| Hero | `hero` | 8 |" in report
     assert ids["long"] in report
 

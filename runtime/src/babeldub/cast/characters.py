@@ -216,14 +216,14 @@ def apply_label(char: dict[str, Any], row: dict[str, Any]) -> bool:
 
 
 # ---- casting sheet -------------------------------------------------------------------------
-_TIER_RU = {"main": "главный", "secondary": "второстепенный", "minor": "эпизодический"}
-_SOURCE_RU = {"metadata": "метаданные", "folder": "папка", "cluster": "кластер голоса", "unknown": "не определён"}
-_GENDER_RU = {"m": "м", "f": "ж", "u": "?"}
-_AGE_RU = {"child": "ребёнок", "adult": "взрослый", "old": "пожилой", "u": "?"}
-_POLICY_RU = {
-    "all": "все персонажи",
-    "main": "главные персонажи (минимальный набор, дающий {share:.0%} всей речи)",
-    "list": "список: {names}",
+_TIER_TEXT = {"main": "main", "secondary": "secondary", "minor": "minor"}
+_SOURCE_TEXT = {"metadata": "metadata", "folder": "folder", "cluster": "voice cluster", "unknown": "unknown"}
+_GENDER_TEXT = {"m": "m", "f": "f", "u": "?"}
+_AGE_TEXT = {"child": "child", "adult": "adult", "old": "old", "u": "?"}
+_POLICY_TEXT = {
+    "all": "all characters",
+    "main": "main characters (the smallest set that covers {share:.0%} of all speech)",
+    "list": "list: {names}",
 }
 
 
@@ -249,74 +249,79 @@ def render_casting_sheet(
 ) -> str:
     total_s = sum(c["speech_s"] for c in chars)
     selected = [c for c in chars if c.get("selected")]
-    policy_text = _POLICY_RU.get(policy, policy).format(share=main_share, names=", ".join(policy_list) or "—")
+    policy_text = _POLICY_TEXT.get(policy, policy).format(share=main_share, names=", ".join(policy_list) or "—")
     out: list[str] = [
-        f"# Лист кастинга — {game_name}",
+        f"# Casting sheet — {game_name}",
         "",
-        f"Целевой язык: **{target_lang}**. Политика выбора: **{policy}** — {policy_text}.",
-        f"Персонажей: **{len(chars)}**, выбрано: **{len(selected)}**, всего речи: **{total_s / 60:.1f} мин**.",
+        f"Target language: **{target_lang}**. Selection policy: **{policy}** — {policy_text}.",
+        f"Characters: **{len(chars)}**, selected: **{len(selected)}**, total speech: **{total_s / 60:.1f} min**.",
         "",
-        "Принцип BabelDub: каждый герой говорит на целевом языке **своим собственным голосом** — тот же тембр,",
-        "те же эмоции и подача. Голосовым промптом служит сама оригинальная реплика (`ref_strategy=line`),",
-        "а для коротких и шумных реплик — референс персонажа из этой таблицы.",
+        "BabelDub principle: every hero speaks the target language **in their own voice** — the same timbre,",
+        "the same emotion and delivery. The voice prompt is the original line itself (`ref_strategy=line`);",
+        "for short and noisy lines it is the character reference from this table.",
         "",
-        "| # | Персонаж | ID | Пол | Возраст | Имя (цель) | Реплик | Минут речи | Доля | Уровень | Выбран | Источник | Референс | Пример текста |",
+        "| # | Character | ID | Gender | Age | Name (target) | Lines | Speech, min | Share | Tier | Selected | Source | Reference | Sample text |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for i, c in enumerate(chars, 1):
         refs = refs_by_char.get(c["char_id"]) or []
         chosen = next((r for r in refs if r.get("chosen")), refs[0] if refs else None)
-        ref_cell = f"`{chosen['wav']}` ({chosen['dur_s']:.1f} с)" if chosen else "нет"
+        ref_cell = f"`{chosen['wav']}` ({chosen['dur_s']:.1f} s)" if chosen else "none"
         sample = (samples.get(c["char_id"]) or [{}])[0].get("text")
         out.append(
             "| {i} | {name} | `{cid}` | {g} | {a} | {nt} | {n} | {m:.1f} | {sh:.0%} | {tier} | {sel} | {src} | {ref} | {ex} |".format(
                 i=i,
                 name=_cell(c.get("name"), 40),
                 cid=c["char_id"],
-                g=_GENDER_RU.get(c.get("gender", "u"), "?"),
-                a=_AGE_RU.get(c.get("age", "u"), "?"),
+                g=_GENDER_TEXT.get(c.get("gender", "u"), "?"),
+                a=_AGE_TEXT.get(c.get("age", "u"), "?"),
                 nt=_cell(c.get("name_tgt"), 40),
                 n=c["n_lines"],
                 m=c["speech_s"] / 60,
                 sh=c.get("share", 0.0),
-                tier=_TIER_RU.get(c["tier"], c["tier"]),
-                sel="да" if c.get("selected") else "нет",
-                src=_SOURCE_RU.get(c["source"], c["source"]),
+                tier=_TIER_TEXT.get(c["tier"], c["tier"]),
+                sel="yes" if c.get("selected") else "no",
+                src=_SOURCE_TEXT.get(c["source"], c["source"]),
                 ref=ref_cell,
                 ex=_cell(sample, 80),
             )
         )
     if uncertain:
-        out += ["", "## Требуют проверки", ""]
+        out += ["", "## Needs review", ""]
         by_id = {c["char_id"]: c for c in chars}
         for cid in uncertain:
             c = by_id.get(cid)
             if c is None:
                 continue
             conf = "—" if c.get("conf") is None else f"{c['conf']:.2f}"
-            why = "смесь неопознанных голосов" if cid == UNKNOWN_ID else f"низкая уверенность кластера ({conf})"
-            out.append(f"- `{cid}` — {why}, {c['n_lines']} реплик, {c['speech_s'] / 60:.1f} мин.")
+            why = "mix of unidentified voices" if cid == UNKNOWN_ID else f"low cluster confidence ({conf})"
+            out.append(f"- `{cid}` — {why}, {c['n_lines']} lines, {c['speech_s'] / 60:.1f} min.")
     cluster_ids = [c["char_id"] for c in chars if c["source"] in ("cluster", "unknown")]
     if cluster_ids:
-        out += ["", "## Примеры реплик кластеров", "", "Кластер — это голос без имени из метаданных. Определите по текстам, кто это."]
+        out += [
+            "",
+            "## Cluster line samples",
+            "",
+            "A cluster is a voice that has no name in the metadata. Use its lines to work out who it is.",
+        ]
         for cid in cluster_ids[:40]:
             c = next(x for x in chars if x["char_id"] == cid)
-            out += ["", f"### `{cid}` — {c['n_lines']} реплик, {c['speech_s'] / 60:.1f} мин", ""]
+            out += ["", f"### `{cid}` — {c['n_lines']} lines, {c['speech_s'] / 60:.1f} min", ""]
             for s in (samples.get(cid) or [])[:8]:
-                out.append(f"- `{s['id']}` ({s['dur_s']:.1f} с): «{_cell(s.get('text'), 140)}»")
+                out.append(f"- `{s['id']}` ({s['dur_s']:.1f} s): “{_cell(s.get('text'), 140)}”")
         if len(cluster_ids) > 40:
-            out.append(f"\n… ещё {len(cluster_ids) - 40} кластеров: `babeldub query --where char=<id>`.")
+            out.append(f"\n… {len(cluster_ids) - 40} more clusters: `babeldub query --where char=<id>`.")
     if warnings:
-        out += ["", "## Предупреждения", ""] + [f"- {_cell(w, 300)}" for w in warnings]
+        out += ["", "## Warnings", ""] + [f"- {_cell(w, 300)}" for w in warnings]
     out += [
         "",
-        "## Что сделать агенту-кастеру",
+        "## What the casting agent should do",
         "",
-        "1. Для каждого кластера и каждого персонажа без пола/возраста добавить строку в `cast/labels.agent.jsonl`:",
-        '   `{"char_id": "cluster_01", "name": "Мачек", "name_tgt": "Мачек", "gender": "m", "age": "adult", "notes": "..."}`',
-        "   (`gender`: m|f|u, `age`: child|adult|old|u; поля, которые не меняются, можно не писать).",
-        "2. Слить метки: `babeldub cast apply-labels`.",
-        "3. Изменить выбор при необходимости: `babeldub cast select --policy main|all` или `babeldub cast select --chars A,B`.",
+        "1. For every cluster and every character without a gender or age, add a row to `cast/labels.agent.jsonl`:",
+        '   `{"char_id": "cluster_01", "name": "Maciek", "name_tgt": "Мачек", "gender": "m", "age": "adult", "notes": "..."}`',
+        "   (`gender`: m|f|u, `age`: child|adult|old|u; fields that do not change can be omitted).",
+        "2. Merge the labels: `babeldub cast apply-labels`.",
+        "3. Change the selection if needed: `babeldub cast select --policy main|all` or `babeldub cast select --chars A,B`.",
         "",
     ]
     return "\n".join(out)

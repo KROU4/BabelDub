@@ -1,79 +1,81 @@
 ---
 name: babeldub-cast
-description: "Cast a game for dubbing in the original characters' voices: group voice lines by speaker (metadata or voice clusters), label characters with name, gender and age, rank them into main, secondary and minor, pick clean voice references and choose who gets a new voice. Use for the cast stage, the characters question and voice-reference problems: кто говорит, персонажи игры, лист кастинга, голосовые референсы, кого озвучивать, главные герои."
+description: "Cast a game for dubbing in the original characters' own voices: group voice lines by speaker (game metadata or voice clusters), label characters with name, gender and age, rank them into main, secondary and minor tiers, pick clean voice references and decide who gets a new voice. Use for the cast stage, questions about the game's characters and voice-reference problems. Example requests: 'who speaks in this game', 'list the characters', 'casting sheet', 'which characters should we dub', 'voice references', 'main characters only', 'кто говорит', 'персонажи игры', 'лист кастинга', 'голосовые референсы', 'кого озвучивать', 'главные герои', 'quién habla en el juego', 'qué personajes doblar', 'quels personnages doubler'."
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill). Voice clustering and typical-timbre references need the qc engine (babeldub setup --engines qc) and preferably an NVIDIA GPU; without it speakers come from game metadata only."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: кастинг — кто говорит и чьим голосом
+# BabelDub: casting — who speaks, and in whose voice
 
-Скилл стадии `cast`. От кастинга зависит главное в дубляже: каждая реплика должна прозвучать **голосом своего оригинального героя**. Ошибка атрибуции даёт «чужой голос» или смену пола посреди сцены — это худший брак, его не исправит ни перевод, ни пост-обработка.
+This skill covers the `cast` stage. Casting decides the most important thing in a dub: every line must sound **in the voice of its own original character**. A misattribution produces a "wrong voice" or a gender switch in the middle of a scene. That is the worst defect of all, and neither translation nor post-processing can fix it.
 
-Скилл дополняет роль `caster` из скилла `babeldub-localize` (`references/roles/caster.md`); вопрос пользователю о персонажах задаёт оркестратор (`references/questions-defaults.md` там же).
+The skill complements the `caster` role of the `babeldub-localize` skill (`references/roles/caster.md`); the orchestrator asks the user about characters (`references/questions-defaults.md` in the same skill).
 
-## Что делает `babeldub cast`
+Talk to the user in the user's language. Keep commands, field names and identifiers as they are.
+
+## What `babeldub cast` does
 
 ```text
 babeldub cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12]
 ```
 
-1. **Персонажи из метаданных.** Говорящий берётся из `speaker_hint` реплики: папка события FMOD (`event:/Dialogue/Act1/<Персонаж>/...`), токен имени в ключе, данные диалогов. Такие персонажи надёжны (`source: metadata`, уверенность 1,0).
-2. **Кластеры голосов** для реплик без говорящего — если установлен воркер `qc` (эмбеддинги ECAPA, агломеративная кластеризация по косинусу, порог 0,35; короткие реплики присоединяются к ближайшему кластеру потом). Кластер получает имя `cluster_NN` и уверенность; кластеры с уверенностью ниже 0,6 считаются неуверенными.
-3. **Группа `unknown`** — реплики без говорящего, которые не удалось сравнить (нет воркера `qc` или файл не прочитался). Это не один голос: она не ранжируется и не озвучивается как персонаж.
-4. **Уровни** (`tier`): `main`, `secondary`, `minor` — по минутам речи (`references/tiers.md`).
-5. **Выбор** по `cast.policy`: `main` (по умолчанию), `all` или `list`.
-6. **Референсы** для выбранных персонажей: до `--refs` чистых оригинальных реплик 3–12 с с известным текстом (`cast/refs.jsonl`, копии в `cast/refs/<char_id>/`). Правила отбора — `references/ref-selection.md`.
-7. **Лист кастинга** `cast/casting_sheet.md`: таблица персонажей, их референсы, предупреждения.
+1. **Characters from metadata.** The speaker comes from the line's `speaker_hint`: the FMOD event folder (`event:/Dialogue/Act1/<Character>/...`), a name token in the key, the game's dialogue data. These characters are reliable (`source: metadata`, confidence 1.0).
+2. **Voice clusters** for lines without a speaker, if the `qc` worker is installed (ECAPA embeddings, agglomerative clustering by cosine similarity, threshold 0.35; short lines are attached to the nearest cluster afterwards). A cluster gets the name `cluster_NN` and a confidence; clusters with confidence below 0.6 count as uncertain. Embeddings run on the NVIDIA GPU when one is present (project `compute.device`, default `auto`; override per run with `--device auto|cuda|cpu`).
+3. **The `unknown` group** holds lines without a speaker that could not be compared (no `qc` worker, or the file could not be read). It is not one voice: it is not ranked and never dubbed as a character.
+4. **Tiers** (`tier`): `main`, `secondary`, `minor`, by minutes of speech (`references/tiers.md`).
+5. **Selection** by `cast.policy`: `main` (default), `all` or `list`.
+6. **References** for the selected characters: up to `--refs` clean original lines of 3–12 s with known text (`cast/refs.jsonl`, copies in `cast/refs/<char_id>/`). Selection rules: `references/ref-selection.md`.
+7. **Casting sheet** `cast/casting_sheet.md`: a table of characters, their references and warnings.
 
-Вывод: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs`, `warnings[]`, `next`. Код 3 — есть `uncertain[]` или `no_ref[]`.
+Output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs`, `warnings[]`, `next`. Exit code 3 means `uncertain[]` or `no_ref[]` is not empty.
 
-Метки, которые уже поставил агент, переживают повторный `cast` (они переносятся по `char_id`).
+Labels the agent has already set survive a repeated `cast` (they carry over by `char_id`).
 
-## Шаги
+## Steps
 
-1. **Запусти** `babeldub cast`. Предусловие — стадия `extract` (иначе код 2).
-2. **Прочитай вывод**, а не файлы целиком. Лист кастинга читай по разделам.
-3. **Если в `warnings` есть «qc worker unavailable»** и много реплик без говорящего (большая группа `unknown`), предложи в отчёте установить `qc` (`babeldub setup --engines qc`, скилл `babeldub-doctor`) и повторить `cast`: без кластеров эти реплики останутся с оригинальным голосом.
-4. **Неуверенные персонажи** (`uncertain[]`, а также кластеры без имени): роль caster размечает их.
-   - Смотрит до 20 реплик персонажа: `babeldub query --where char=<char_id> --fields id,entry.key,scene,text.src,audio.dur_s --limit 20`.
-   - Пишет `cast/labels.agent.jsonl` — формат в `references/labels-format.md`.
-   - `babeldub cast apply-labels` → вывод `updated`, `uncertain[]`. Код 2 — невалидная строка: исправить по `errors[]` (до 3 итераций).
-5. **Проверка референсов главных персонажей** (роль caster): текст референса для тембра — нейтральный, без крика, шёпота, смеха и музыки. Плохой референс отметь в `notes` персонажа и в отчёте (`references/ref-selection.md`, раздел 4).
-6. **Вопрос 2 пользователю** (задаёт оркестратор): все / главные / список. Покажи из листа кастинга таблицу: имя, пол, реплик, минут речи, уровень. По умолчанию — главные.
-7. **Применяй ответ:**
-   - `babeldub cast select --policy main` или `--policy all`;
-   - `babeldub cast select --chars <char_id или имя>,<...>` для списка.
-   Вывод: `selected[]`. Невыбранные персонажи останутся с оригинальным голосом.
+1. **Run** `babeldub cast`. Precondition: the `extract` stage is done (otherwise exit code 2).
+2. **Read the output**, not whole files. Read the casting sheet section by section.
+3. **If `warnings` contains "qc worker unavailable"** and many lines have no speaker (a large `unknown` group), recommend in the report installing `qc` (`babeldub setup --engines qc`, skill `babeldub-doctor`) and re-running `cast`. Without clusters these lines keep the original voice.
+4. **Uncertain characters** (`uncertain[]`, plus unnamed clusters): the caster role labels them.
+   - Look at up to 20 lines of the character: `babeldub query --where char=<char_id> --fields id,entry.key,scene,text.src,audio.dur_s --limit 20`.
+   - Write `cast/labels.agent.jsonl` (format in `references/labels-format.md`).
+   - Run `babeldub cast apply-labels` → output `updated`, `uncertain[]`. Exit code 2 means an invalid line: fix it from `errors[]` (up to 3 iterations).
+5. **Check the references of the main characters** (caster role): the reference text for timbre must be neutral, with no shouting, whispering, laughter or music. Record a bad reference in the character's `notes` and in the report (`references/ref-selection.md`, section 4).
+6. **Question 2 to the user** (the orchestrator asks it): all / main / a list. Show the table from the casting sheet: name, gender, lines, minutes of speech, tier. The default is main.
+7. **Apply the answer:**
+   - `babeldub cast select --policy main` or `--policy all`;
+   - `babeldub cast select --chars <char_id or name>,<...>` for a list.
+   Output: `selected[]`. Characters that are not selected keep their original voice.
 
-## Как понять, что кастинг удался
+## How to tell casting succeeded
 
-- У каждого выбранного персонажа есть хотя бы один референс (`no_ref[]` пуст).
-- `uncertain[]` пуст или каждый оставшийся неуверенный персонаж объяснён в `human_pending` (например, кластер смешал двух говорящих).
-- Имена главных персонажей есть и на языке оригинала, и на целевом (`name_tgt`) — их возьмёт глоссарий (скилл `babeldub-translate`).
-- Пол указан у всех главных: от него зависит грамматика перевода (род глаголов прошедшего времени, прилагательных) и проверка «смены пола» в QA.
+- Every selected character has at least one reference (`no_ref[]` is empty).
+- `uncertain[]` is empty, or every remaining uncertain character is explained in `human_pending` (for example, a cluster mixed two speakers).
+- The main characters have names both in the original language and in the target language (`name_tgt`); the glossary takes them over (skill `babeldub-translate`).
+- Every main character has a gender. It drives the grammar of the translation (gender of past-tense verbs and adjectives) and the "gender switch" check in QA.
 
-## Ошибки и что с ними делать
+## Errors and what to do
 
-| Признак | Причина | Действие |
+| Symptom | Cause | Action |
 |---|---|---|
-| код 2 «no voiced lines with audio» | `extract` не дал реплик со звуком | вернуться к разведке (скилл `babeldub-recon`) |
-| `no_ref[]` не пуст | у персонажа нет пригодных реплик даже после ослабления правил | в отчёт; реплики персонажа озвучатся по собственным оригиналам (`line`), если они пригодны |
-| `warnings`: «no ideal reference, rules relaxed» | референс короче 3 с, длиннее 12 с или без текста | проверить его в листе кастинга; при плохом тембре — `notes` и отчёт |
-| `warnings`: «cast.list names not found» | имя из списка пользователя не совпало | `babeldub cast select --chars` с `char_id` из листа кастинга |
-| один «персонаж» говорит разными голосами | метаданные врут (папка события ≠ говорящий) или кластер смешал актёров | `notes` + `human_pending`; канон руками не делить |
+| exit code 2 "no voiced lines with audio" | `extract` produced no lines with audio | go back to recon (skill `babeldub-recon`) |
+| `no_ref[]` is not empty | the character has no usable lines even after relaxing the rules | note it in the report; the character's lines are voiced from their own originals (`line`) where those are usable |
+| `warnings`: "no ideal reference, rules relaxed" | the reference is shorter than 3 s, longer than 12 s, or has no text | check it in the casting sheet; if the timbre is bad, record it in `notes` and the report |
+| `warnings`: "cast.list names not found" | a name from the user's list did not match | `babeldub cast select --chars` with the `char_id` from the casting sheet |
+| one "character" speaks in different voices | the metadata is wrong (event folder ≠ speaker) or a cluster merged several actors | `notes` + `human_pending`; do not split the canon by hand |
 
-## Правила
+## Rules
 
-1. Папка игры только для чтения.
-2. Канон (`cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`) пишет только CLI. Агент пишет только `cast/labels.agent.jsonl`.
-3. Не читать файлы проекта целиком: `query` с `--fields` и `--limit` (до 20 реплик на персонажа), лист кастинга — по разделам.
-4. Звук ты не слышишь: пол и возраст определяй по тексту (обращения, грамматика официального перевода, ключи), а не «на слух».
-5. Не подменять референс вручную копированием файлов: выбор референсов — работа `cast`.
+1. The game folder is read-only.
+2. Only the CLI writes the canon (`cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`). The agent writes only `cast/labels.agent.jsonl`.
+3. Do not read project files whole: use `query` with `--fields` and `--limit` (up to 20 lines per character), and read the casting sheet section by section.
+4. You cannot hear audio. Determine gender and age from text (forms of address, grammar of the official translation, keys), not "by ear".
+5. Do not swap a reference by copying files manually: choosing references is the job of `cast`.
 
-## Справочники
+## References
 
-- Как CLI выбирает референсы, что делает референс хорошим, почему эмоция берётся из самой реплики — [references/ref-selection.md](references/ref-selection.md). Читай при проверке референсов и при `no_ref[]`.
-- Уровни персонажей, `cast.policy`, `main_share`, что сказать пользователю о выборе — [references/tiers.md](references/tiers.md). Читай перед вопросом 2.
-- Формат `cast/labels.agent.jsonl`, правила имён, пола, возраста и заметок — [references/labels-format.md](references/labels-format.md). Читай перед разметкой.
+- How the CLI picks references, what makes a good reference, why emotion comes from the line itself: [references/ref-selection.md](references/ref-selection.md). Read it when checking references and when `no_ref[]` is not empty.
+- Character tiers, `cast.policy`, `main_share`, what to tell the user about the choice: [references/tiers.md](references/tiers.md). Read it before question 2.
+- Format of `cast/labels.agent.jsonl`, rules for names, gender, age and notes: [references/labels-format.md](references/labels-format.md). Read it before labelling.

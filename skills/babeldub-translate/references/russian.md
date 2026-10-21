@@ -1,72 +1,72 @@
-# Русский язык в дубляже
+# Russian in dubbing
 
-Читай при переводе или адаптации на русский. Правила касаются `dub_text` — того, что произнесёт голос героя; для субтитров действуют обычные нормы.
+Read this when translating or adapting into Russian. The rules apply to `dub_text`, the text the character's voice will speak; subtitles follow the usual norms. Russian examples below are sample dub text; keep them in Russian.
 
-## 1. «Ты» и «вы»
+## 1. «Ты» and «вы» (informal and formal "you")
 
-- **Источник правды** — официальный перевод (если он есть) и style bible: матрица «кто к кому как обращается» по парам персонажей.
-- По умолчанию: друзья, ровесники, родственники, враги в ссоре — «ты»; незнакомые взрослые, начальство, клиенты, пожилые, официальная обстановка — «вы». Обращение к игроку в интерфейсе и подсказках — как в официальном переводе; если его нет, «вы».
-- **Переход** с «вы» на «ты» — событие сюжета. Не переключай его сам посреди сцены; если в оригинале есть явный повод (знакомство, ссора), отметь в `notes`.
-- Английское *you* к группе — «вы» (множественное) независимо от отношений.
-- Польское *pan/pani* — вежливое «вы»; в официальном переводе может остаться «пан» как колорит — следуй глоссарию.
+- **The source of truth** is the official translation (if there is one) and the style bible: a matrix of who addresses whom and how, by character pairs.
+- Defaults: friends, peers, relatives, enemies in a quarrel use «ты»; unfamiliar adults, superiors, clients, elderly people and formal settings use «вы». Addressing the player in the UI and in hints follows the official translation; if there is none, use «вы».
+- **Switching** from «вы» to «ты» is a plot event. Do not switch it yourself in the middle of a scene; if the original has an explicit reason (getting acquainted, a quarrel), mark it in `notes`.
+- English *you* addressed to a group is «вы» (plural) regardless of the relationship.
+- Polish *pan/pani* is the polite «вы»; the official translation may keep «пан» as local colour. Follow the glossary.
 
-## 2. Род и согласование
+## 2. Gender and agreement
 
-- Глаголы прошедшего времени, краткие прилагательные и причастия согласуются с полом говорящего («я пришёл/пришла», «я рад/рада») и адресата («ты готов/готова?»).
-- Пол берётся из кастинга (`gender` персонажа), style bible и контекста. Если пол неизвестен (`u`), строй фразу нейтрально: настоящее время («я тут»), безличные конструкции («Готово»), «мне удалось» вместо «я смог/смогла»; отметь в `notes`.
-- Если игрок может выбрать пол героя, а реплика записана одна на оба варианта, пиши нейтрально. Раздельных вариантов текста по полу в v0.1 нет.
+- Past-tense verbs, short adjectives and participles agree with the gender of the speaker («я пришёл / пришла», «я рад / рада») and of the addressee («ты готов / готова?»).
+- Gender comes from casting (the character's `gender`), the style bible and the context. If the gender is unknown (`u`), phrase the line neutrally: present tense («я тут»), impersonal constructions («Готово»), «мне удалось» instead of «я смог / смогла»; mark it in `notes`.
+- If the player can choose the hero's gender and one line is recorded for both, write neutrally. v0.1 has no separate per-gender text variants.
 
-## 3. Буква «ё»
+## 3. The letter «ё»
 
-- В `dub_text` ставь «ё» везде, где она произносится («ещё», «всё», «идём», «её»): TTS читает «е» как «е», и «все» вместо «всё» меняет смысл и звучание.
-- CLI по умолчанию оставляет «ё» как написано (`tts.yo=keep`). Режим `restore` восстанавливает «ё» только в небольшом списке однозначных слов — полагаться на него нельзя.
-- В субтитрах «ё» — по правилам официального перевода.
+- In `dub_text`, write «ё» wherever it is pronounced («ещё», «всё», «идём», «её»): TTS reads «е» as «е», and «все» instead of «всё» changes both the meaning and the sound.
+- By default the CLI keeps «ё» as written (`tts.yo=keep`). The `restore` mode restores «ё» only in a small list of unambiguous words; do not rely on it.
+- In subtitles, «ё» follows the rules of the official translation.
 
-## 4. Ударения
+## 4. Stress marks
 
-- Модели Qwen3-TTS понимают знак ударения **U+0301** (комбинирующий акут после ударной гласной: «за́мок» / «замо́к»). Базовая модель, которая озвучивает по умолчанию, следует ему не всегда; дообучение `qwen3-tts-12hz-1.7b-ru-stress-cf` — надёжнее, но хуже сохраняет голос героя и включается только явно (скилл `babeldub-voice`).
-- Ставь знак ударения **только** там, где ошибка вероятна и меняет смысл или режет слух: омографы (за́мок/замо́к, мука́/му́ка, до́рога/доро́га), редкие имена и топонимы, иностранные слова. Источник — поле `pronounce` глоссария.
-- Не расставляй ударения во всех словах: это лишняя работа и риск ошибок.
-- Знак ударения не мешает подсчёту слогов и проверке плейсхолдеров. В `sub_text` ударения не ставь.
+- Qwen3-TTS models understand the stress mark **U+0301** (a combining acute after the stressed vowel: «за́мок» / «замо́к»). The base model, which voices by default, does not always follow it; the fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` is more reliable but preserves the hero's voice worse and is enabled only explicitly (skill `babeldub-voice`).
+- Place a stress mark **only** where an error is likely and changes the meaning or grates on the ear: homographs (за́мок / замо́к, мука́ / му́ка, до́рога / доро́га), rare names and place names, foreign words. The source is the glossary's `pronounce` field.
+- Do not put stress marks on every word: it is extra work and a risk of errors.
+- The stress mark does not interfere with syllable counting or the placeholder check. Do not put stress marks in `sub_text`.
 
-## 5. Числа, даты, единицы
+## 5. Numbers, dates, units
 
-- В `dub_text` — **словами и в нужном падеже**: «Мне нужно три детали», «к пяти часам», «двадцать первого мая», «пятьдесят процентов». Не надейся на автоматическое преобразование: в CLI оно работает, только если установлен пакет `num2words`, и падеж не угадывает.
-- Время: «в семь тридцать» или «в половине восьмого» — как естественнее для персонажа.
-- Деньги и единицы раскрывай: «$20» → «двадцать долларов», «5 km» → «пять километров».
-- Номера, коды и названия моделей — по `pronounce` глоссария («Т-34» → «тэ тридцать четыре»).
+- In `dub_text`, write them **in words and in the correct case**: «Мне нужно три детали», «к пяти часам», «двадцать первого мая», «пятьдесят процентов». Do not count on automatic conversion: in the CLI it works only if the `num2words` package is installed, and it does not guess the case.
+- Time: «в семь тридцать» or «в половине восьмого», whichever is more natural for the character.
+- Expand money and units: «$20» → «двадцать долларов», «5 km» → «пять километров».
+- Numbers, codes and model names follow the glossary's `pronounce` («Т-34» → «тэ тридцать четыре»).
 
-## 6. Сокращения, аббревиатуры, латиница
+## 6. Abbreviations, acronyms, Latin script
 
-- Аббревиатуры произноси так, как их скажет носитель: «ФБР» → «эф-бэ-эр», «НАТО» → «нато»; правило — в `pronounce` глоссария.
-- Латиница в `dub_text` нежелательна: модель произнесёт её с английским акцентом или неверно. Бренды и названия — транслитерацией по глоссарию («Ford» → «Форд»).
-- «т. е.», «и т. д.», «г.», «ул.» — раскрывай полностью («то есть», «и так далее»).
-- Интернет-сленг и аббревиатуры чата («ок», «лол») — как их реально говорят; «OK» → «окей» или «ладно» по характеру персонажа.
+- Pronounce acronyms the way a native speaker says them: «ФБР» → «эф-бэ-эр», «НАТО» → «нато»; the rule goes into the glossary's `pronounce`.
+- Latin script in `dub_text` is undesirable: the model pronounces it with an English accent or wrongly. Transliterate brands and names per the glossary («Ford» → «Форд»).
+- Expand «т. е.», «и т. д.», «г.», «ул.» in full («то есть», «и так далее»).
+- Internet slang and chat abbreviations («ок», «лол»): write them the way people actually say them; «OK» → «окей» or «ладно», depending on the character.
 
-## 7. Сокращение текста для дубляжа
+## 7. Shortening text for dubbing
 
-Русский текст обычно длиннее английского на 10–20 % по слогам. Приёмы, которые экономят слоги без потери смысла и интонации:
+Russian text is usually 10–20% longer than English in syllables. Techniques that save syllables without losing meaning or intonation:
 
-- **убрать избыточные местоимения**: «Я думаю, что я знаю» → «Кажется, знаю»;
-- **короткие синонимы**: «необходимо» → «надо», «в настоящий момент» → «сейчас», «потому что» → «раз», «так как»;
-- **разговорные формы** там, где их скажет персонаж: «сейчас» → «щас» только для просторечной речи и только если это есть в style bible;
-- **сжать обращение**: «Послушай меня, Мачек» → «Мачек, слушай»;
-- **глагол вместо отглагольного существительного**: «осуществить проверку» → «проверить»;
-- **неполные предложения**, естественные в живой речи: «Ты куда?» вместо «Куда ты идёшь?»;
-- **убрать вводные и смягчители**, если они не несут характер: «ну», «вообще-то», «как бы» — но оставить, если это манера персонажа.
+- **remove redundant pronouns**: «Я думаю, что я знаю» → «Кажется, знаю»;
+- **short synonyms**: «необходимо» → «надо», «в настоящий момент» → «сейчас», «потому что» → «раз», «так как»;
+- **colloquial forms** where the character would use them: «сейчас» → «щас» only for vernacular speech and only if the style bible allows it;
+- **compress the form of address**: «Послушай меня, Мачек» → «Мачек, слушай»;
+- **a verb instead of a verbal noun**: «осуществить проверку» → «проверить»;
+- **incomplete sentences**, natural in live speech: «Ты куда?» instead of «Куда ты идёшь?»;
+- **remove parentheticals and softeners** if they carry no character: «ну», «вообще-то», «как бы»; keep them if they are the character's manner.
 
-Не сокращай за счёт: имён из глоссария, отрицаний, ключевой информации квеста, эмоции фразы.
+Do not shorten at the expense of glossary names, negations, key quest information, or the emotion of the phrase.
 
-## 8. Эмоции, междометия, брань
+## 8. Emotions, interjections, profanity
 
-- Междометия переводи русскими: *Ugh* → «Тьфу» или «Фу», *Wow* → «Ого», *Hmm* → «Хм», *Ouch* → «Ай»; таблица — в глоссарии.
-- Запинки и повторы передавай так, как их произносят: «Я… я не знаю», «Н-нет!»; дефис и многоточие модель отрабатывает паузой.
-- Смех, кашель, вздох без слов не переводятся (это `keep_original` или короткое междометие).
-- Брань — того же уровня, что в оригинале: *damn* → «чёрт», *shit* → «блин» или «чёрт» в мягком регистре, крепче — если оригинал крепче и это в style bible. Без звёздочек: их нельзя произнести.
+- Translate interjections into Russian ones: *Ugh* → «Тьфу» or «Фу», *Wow* → «Ого», *Hmm* → «Хм», *Ouch* → «Ай»; the table lives in the glossary.
+- Render hesitations and repetitions the way they are pronounced: «Я… я не знаю», «Н-нет!»; the model renders a hyphen and an ellipsis as a pause.
+- Wordless laughter, coughing and sighs are not translated (they are `keep_original` or a short interjection).
+- Profanity at the same level as the original: *damn* → «чёрт», *shit* → «блин» or «чёрт» in a mild register, stronger if the original is stronger and the style bible says so. No asterisks: they cannot be pronounced.
 
-## 9. Пунктуация для голоса
+## 9. Punctuation for the voice
 
-- Восклицательный и вопросительный знаки обязательны там, где они есть в оригинале: модель строит по ним интонацию.
-- Многоточие — пауза или обрыв; тире — пауза перед пояснением.
-- Не ставь кавычки и скобки вокруг произносимого текста.
-- Не дели одну реплику на несколько предложений там, где в оригинале одно: модель сделает лишние паузы, и реплика станет длиннее.
+- Exclamation and question marks are mandatory wherever the original has them: the model builds the intonation from them.
+- An ellipsis is a pause or a cut-off; a dash is a pause before an explanation.
+- Do not put quotation marks or brackets around spoken text.
+- Do not split one line into several sentences where the original has one: the model adds extra pauses and the line gets longer.

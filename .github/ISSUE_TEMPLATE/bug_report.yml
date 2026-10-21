@@ -1,26 +1,26 @@
-name: Ошибка
-description: Что-то работает не так, как описано в документации
+name: Bug report
+description: Something does not work as the documentation describes
 title: "[bug] "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Спасибо, что сообщаете об ошибке. **Не прикладывайте файлы игры** (банки, архивы, аудио реплик, таблицы текстов): их нельзя распространять. Хватит вывода команд и путей.
+        Thank you for reporting a bug. **Do not attach game files** (banks, archives, line audio, text tables): they must not be distributed. Command output and paths are enough.
 
   - type: textarea
     id: what
     attributes:
-      label: Что произошло
-      description: Кратко опишите проблему и что вы ожидали увидеть.
+      label: What happened
+      description: Describe the problem briefly and what you expected to see.
     validations:
       required: true
 
   - type: textarea
     id: steps
     attributes:
-      label: Как воспроизвести
-      description: Команды или запрос агенту, после которых появляется ошибка.
+      label: How to reproduce
+      description: The commands or the request to the agent after which the error appears.
       placeholder: |
         1. babeldub init "D:/Games/MyGame" --lang ru
         2. babeldub scan
@@ -31,8 +31,8 @@ body:
   - type: textarea
     id: output
     attributes:
-      label: Вывод команды
-      description: JSON, который напечатала команда `babeldub`, и код выхода. Пути с именем пользователя можно заменить на `<user>`.
+      label: Command output
+      description: The JSON printed by the `babeldub` command and the exit code. You may replace paths that contain your user name with `<user>`.
       render: json
     validations:
       required: true
@@ -40,8 +40,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: Версия BabelDub
-      description: Вывод `babeldub --version`
+      label: BabelDub version
+      description: Output of `babeldub --version`
       placeholder: babeldub 0.1.0
     validations:
       required: true
@@ -49,7 +49,7 @@ body:
   - type: dropdown
     id: host
     attributes:
-      label: Хост агента
+      label: Agent host
       options:
         - Claude Code
         - Codex CLI / ChatGPT
@@ -58,57 +58,57 @@ body:
         - Cursor
         - GitHub Copilot
         - OpenCode
-        - Веб-чат (claude.ai, ChatGPT)
-        - Без агента (только CLI)
-        - Другой
+        - Web chat (claude.ai, ChatGPT)
+        - No agent (CLI only)
+        - Other
     validations:
       required: true
 
   - type: dropdown
     id: stage
     attributes:
-      label: Стадия
+      label: Stage
       options:
-        - doctor / setup (окружение, модели)
+        - doctor / setup (environment, models)
         - init / status
-        - scan / extract / link (разбор игры)
-        - cast (персонажи, референсы)
-        - translate / batch (перевод)
-        - synth / post (озвучка)
-        - qa (проверка качества)
-        - build / verify (сборка)
-        - install / uninstall / reapply (установка и откат)
-        - скиллы, агенты, хуки, установка плагина
+        - scan / extract / link (game analysis)
+        - cast (characters, references)
+        - translate / batch (translation)
+        - synth / post (voice)
+        - qa (quality control)
+        - build / verify (build)
+        - install / uninstall / reapply (install and rollback)
+        - skills, agents, hooks, plugin installation
     validations:
       required: true
 
   - type: textarea
     id: doctor
     attributes:
-      label: Окружение
-      description: Вывод `babeldub doctor --pretty` (ОС, GPU, VRAM, драйвер, найденные инструменты).
+      label: Environment
+      description: Output of `babeldub doctor --pretty` (OS, GPU, VRAM, driver, tools found).
       render: json
 
   - type: input
     id: game
     attributes:
-      label: Игра и движок
-      description: Название, магазин и версия игры, движок и аудио-middleware, если известны.
+      label: Game and engine
+      description: Title, store and version of the game, engine and audio middleware, if known.
       placeholder: Low-Budget Repairs (Steam, build 1.0.3), Unity + FMOD
 
   - type: textarea
     id: logs
     attributes:
-      label: Логи
-      description: Последние строки из `<проект>/logs/` или stderr. Без содержимого файлов игры.
+      label: Logs
+      description: The last lines from `<project>/logs/` or stderr. No contents of game files.
       render: text
 
   - type: checkboxes
     id: confirm
     attributes:
-      label: Подтверждение
+      label: Confirmation
       options:
-        - label: Я не прикладываю файлы игры, аудио реплик или синтезированные голоса актёров.
+        - label: I am not attaching game files, line audio or synthesized actor voices.
           required: true
-        - label: Я проверил, что такой ошибки ещё нет в issues.
+        - label: I checked that this bug is not already reported in the issues.
           required: true

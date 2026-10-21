@@ -1,41 +1,41 @@
-# Хост: Gemini CLI и Antigravity
+# Host: Gemini CLI and Antigravity
 
-Читай один раз в начале работы, если ты работаешь в Gemini CLI или Antigravity. Субагентов BabelDub здесь нет: **все роли выполняются в основной сессии**, как в Codex.
+Read once at the start of work if you run in Gemini CLI or Antigravity. There are no BabelDub subagents here: **all roles run in the main session**, as in Codex.
 
-## Установка
+## Installation
 
-- **Gemini CLI** (расширение): `gemini extensions install https://github.com/KROU4/BabelDub` (можно добавить `--ref v0.1.0`, `--auto-update`). Расширение даёт скиллы `skills/babeldub-*` и контекст `GEMINI.md`. Установка с локального пути проверена на Gemini CLI 0.65.
-- Только скиллы: `gemini skills install <git-url или папка>` или `npx skills add KROU4/BabelDub -a gemini-cli`.
-- **Antigravity CLI.** С 2026-06-18 Gemini CLI для потребительских аккаунтов заменён Antigravity CLI. Скиллы Antigravity ищет в `<рабочая папка>/.agents/skills/` и в `~/.gemini/antigravity-cli/skills/`; универсальный путь — `npx skills add KROU4/BabelDub`. Формат плагинов Antigravity (`agy plugin install`) не изучен, не проверено.
+- **Gemini CLI** (extension): `gemini extensions install https://github.com/KROU4/BabelDub` (you can add `--ref v0.1.0`, `--auto-update`). The extension provides the `skills/babeldub-*` skills and the `GEMINI.md` context. Installation from a local path is verified on Gemini CLI 0.65.
+- Skills only: `gemini skills install <git url or folder>` or `npx skills add KROU4/BabelDub -a gemini-cli`.
+- **Antigravity CLI.** Since 2026-06-18 Gemini CLI for consumer accounts has been replaced by Antigravity CLI. Antigravity looks for skills in `<working folder>/.agents/skills/` and in `~/.gemini/antigravity-cli/skills/`; the universal path is `npx skills add KROU4/BabelDub`. The Antigravity plugin format (`agy plugin install`) has not been studied; not verified.
 
-Скилл активируется инструментом `activate_skill` с подтверждением пользователя. Если пользователь просит перевести, локализовать или переозвучить игру, активируй `babeldub-localize`.
+A skill is activated by the `activate_skill` tool with the user's confirmation. If the user asks to translate, localize or revoice a game, in any language, activate `babeldub-localize`.
 
-CLI `babeldub` ставит скилл `babeldub-doctor` (`skills/babeldub-doctor/scripts/bootstrap.py`): из `runtime/` рядом со скиллами или из git-тега релиза. Папку моделей и проектов можно задать настройкой расширения `BABELDUB_HOME`.
+The `babeldub-doctor` skill installs the `babeldub` CLI (`skills/babeldub-doctor/scripts/bootstrap.py`): from `runtime/` next to the skills or from the release git tag. The folder for models and projects is `BABELDUB_HOME` (default `~/.babeldub`, `C:\Users\<user>\.babeldub` on Windows); it can be changed with the `BABELDUB_HOME` extension setting.
 
-## Действие → инструмент
+## Action → tool
 
-| Действие в скилле | Gemini CLI / Antigravity |
+| Action in the skill | Gemini CLI / Antigravity |
 |---|---|
-| запустить команду `babeldub …` | инструмент запуска команд оболочки; одна команда на вызов; JSON из stdout |
-| прочитать раздел отчёта | чтение файла с ограничением диапазона строк; файлы проекта целиком не читать |
-| записать файл агента | инструмент записи файла (UTF-8 без BOM) |
-| задать вопрос пользователю | обычное сообщение с вариантами (только 2 вопроса) |
-| делегировать роль | выполнить роль самому |
+| run a `babeldub …` command | the shell command tool; one command per call; JSON from stdout |
+| read a report section | read a file with a line range limit; never read project files whole |
+| write an agent file | the file write tool (UTF-8 without BOM) |
+| ask the user a question | a plain message with options, in the user's language (only the 2 questions) |
+| delegate a role | perform the role yourself |
 
-## Роли в основной сессии
+## Roles in the main session
 
-Агенты Claude из BabelDub в Gemini не загружаются: формат агентов Gemini другой (поле `tools` — массив, `model` — модель Gemini), а лишние поля он отвергает. Поэтому:
+The BabelDub Claude agents do not load in Gemini: Gemini's agent format is different (`tools` is an array, `model` is a Gemini model) and it rejects extra fields. Therefore:
 
-1. Прочитай `references/roles/<роль>.md` (frontmatter пропусти).
-2. Выполни шаги роли сам, соблюдая её правила.
-3. Сформируй JSON-сводку роли и продолжай по `SKILL.md` скилла `babeldub-localize`.
+1. Read `references/roles/<role>.md` (skip the frontmatter).
+2. Perform the role's steps yourself, following its rules.
+3. Build the role's JSON summary and continue with `SKILL.md` of the `babeldub-localize` skill.
 
-Перевод — строго по одному пакету за раз, без удержания прошлых пакетов в контексте. После длинных циклов начинай с `babeldub status`.
+Translate strictly one batch at a time, without keeping earlier batches in context. After long loops start with `babeldub status`.
 
-## Хуки
+## Hooks
 
-Хуки BabelDub написаны для Claude Code; в Gemini они не используются. Защиту папки игры и состояние обеспечивает CLI.
+BabelDub hooks are written for Claude Code; Gemini does not use them. The CLI provides game-folder protection and state.
 
-## Пути
+## Paths
 
-`${CLAUDE_PLUGIN_ROOT}` здесь не подставляется. Пути в скиллах считай относительными к папке скилла.
+`${CLAUDE_PLUGIN_ROOT}` is not substituted here. Treat paths in the skills as relative to the skill folder.

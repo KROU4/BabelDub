@@ -1,35 +1,35 @@
-# Свободные аудиофайлы
+# Loose audio files
 
-Уровень в v0.1: **A** — адаптер `loose` пересобирает реплики, которые лежат отдельными файлами (`voice/*.ogg`, `vo/*.wav`, `game/voice/*.ogg` в Ren'Py и т. п.). Как адаптер находит такие файлы — в скилле `babeldub-recon`, `references/audio/loose.md`.
+Level in v0.1: **A** — the `loose` adapter rebuilds lines stored as separate files (`voice/*.ogg`, `vo/*.wav`, `game/voice/*.ogg` in Ren'Py, etc.). How the adapter finds such files — the `babeldub-recon` skill, `references/audio/loose.md`.
 
-## 1. Что делает сборка
+## 1. What the build does
 
-- Каждый файл — одна реплика; голосовой ассет — самая верхняя папка с «голосовым» именем (`voice`, `vo`, `dialogue`, `speech`, `narration` …) со всеми файлами внутри.
-- `babeldub build` пишет **только заменённые** файлы в `build/out/<путь в игре>`, закодированные **как оригинал**: тот же контейнер и кодек, та же частота и число каналов.
-- Кодирование: WAV и FLAC — напрямую; OGG Vorbis, Opus, MP3 — через ffmpeg (без него — средствами libsndfile, где возможно); AAC/M4A — только через ffmpeg. Нет нужного кодера — код 4 и подсказка `babeldub setup --tools` или установить ffmpeg.
-- `babeldub install` заменяет эти файлы поверх оригиналов с бэкапом; остальные файлы игры не трогаются.
+- Each file is one line; the voice asset is the topmost folder with a "voice" name (`voice`, `vo`, `dialogue`, `speech`, `narration` …) with all files inside it.
+- `babeldub build` writes **only the replaced** files to `build/out/<path in the game>`, encoded **like the original**: the same container and codec, the same sample rate and channel count.
+- Encoding: WAV and FLAC — directly; OGG Vorbis, Opus, MP3 — through ffmpeg (without it — with libsndfile where possible); AAC/M4A — only through ffmpeg. No suitable encoder — exit code 4 and the hint `babeldub setup --tools`, or install ffmpeg.
+- `babeldub install` replaces these files over the originals with a backup; other game files are not touched.
 
-## 2. Что сохранить
+## 2. What to preserve
 
-- **Имя и путь файла**: игра ищет звук по ним.
-- **Формат, частота, каналы**: движок может рассчитывать на них (потоковое чтение, микширование).
-- **Громкость относительно оригинала** — её выравнивает `post`.
+- **File name and path**: the game looks up audio by them.
+- **Format, sample rate, channels**: the engine may rely on them (streaming, mixing).
+- **Loudness relative to the original** — `post` matches it.
 
-## 3. Нативные пути без замены оригиналов [по гайдам, в v0.1 не автоматизировано]
+## 3. Native paths without replacing the originals [per guides, not automated in v0.1]
 
-Некоторые движки позволяют положить файлы рядом, не трогая оригиналы:
+Some engines let you put files alongside without touching the originals:
 
-| Движок | Механизм | Справочник |
+| Engine | Mechanism | Reference |
 |---|---|---|
-| Ren'Py | файл `game/tl/<язык>/<путь>` используется вместо `game/<путь>`, когда активен язык | [renpy.md](renpy.md) |
-| Source 1 | loose-файлы в `custom/` или папке игры перекрывают VPK | скилл `babeldub-recon`, `references/engines/source.md` |
-| Bethesda | loose-файлы в `Data/` перекрывают архивы BSA/BA2 (но голос там — `.fuz` с липсинком) | скилл `babeldub-recon`, `references/engines/bethesda.md` |
+| Ren'Py | the file `game/tl/<language>/<path>` is used instead of `game/<path>` when that language is active | [renpy.md](renpy.md) |
+| Source 1 | loose files in `custom/` or the game folder override the VPK | the `babeldub-recon` skill, `references/engines/source.md` |
+| Bethesda | loose files in `Data/` override BSA/BA2 archives (but voice there is `.fuz` with lip sync) | the `babeldub-recon` skill, `references/engines/bethesda.md` |
 
-В v0.1 CLI всегда заменяет оригинальные файлы на их местах (с бэкапом). Переход на «рядом лежащие» файлы — ручной путь, его можно описать пользователю в отчёте.
+In v0.1 the CLI always replaces the original files in place (with a backup). Switching to side-by-side files is a manual path; you can describe it to the user in the report.
 
-## 4. Подводные камни
+## 4. Pitfalls
 
-- **Сопутствующие файлы**: фонемы липсинка внутри WAV (Source), `.lip` рядом (Bethesda) при замене не обновляются — губы разойдутся со звуком [по гайдам].
-- **«Свободные» файлы, которые на деле зашифрованы** (RPG Maker `.rpgmvo`, `.ogg_`) — это не простой звук; адаптер их не возьмёт.
-- **Длительность, записанная в скриптах или таймлайнах**, — реплики `fixed_length`.
-- **Проверка целостности** в Steam вернёт оригиналы → `babeldub reapply`.
+- **Companion files**: lip-sync phonemes inside the WAV (Source) and `.lip` files next to it (Bethesda) are not updated on replacement — the lips will drift from the audio [per guides].
+- **"Loose" files that are actually encrypted** (RPG Maker `.rpgmvo`, `.ogg_`) are not plain audio; the adapter will not pick them up.
+- **Durations recorded in scripts or timelines** — these are `fixed_length` lines.
+- **An integrity check** in Steam restores the originals → `babeldub reapply`.

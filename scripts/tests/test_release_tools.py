@@ -137,7 +137,7 @@ def make_repo(root: Path, version: str = "0.1.0", skills: tuple[str, ...] = ("ba
     write(root / "docs/LEGAL.md", "# Legal\n")
     write(
         root / "CHANGELOG.md",
-        f"# Changelog\n\n## [Не выпущено]\n\n## [{version}] - 2026-10-21\n\n### Added\n\n- First release.\n\n"
+        f"# Changelog\n\n## [Unreleased]\n\n## [{version}] - 2026-10-21\n\n### Added\n\n- First release.\n\n"
         f"[{version}]: https://example.invalid/v{version}\n",
     )
     return root

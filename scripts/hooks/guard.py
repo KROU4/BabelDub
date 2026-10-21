@@ -546,7 +546,7 @@ def parse_args(name: str, args: list[str], dialect: str) -> tuple[list[str], lis
 
 
 def _block(what: str, path: str, game: str) -> str:
-    return f"{what}: {path} (папка игры {game})"
+    return f"{what}: {path} (game folder {game})"
 
 
 def _rejoin(args: list[str], dialect: str) -> str:
@@ -603,7 +603,7 @@ class ShellAnalyzer:
     def _segment(self, seg: Segment, command: str, dialect: str, depth: int) -> str | None:
         hit = self._first_inside(list(seg.redirects))
         if hit:
-            return _block("перенаправление вывода в файл", *hit)
+            return _block("output redirection to a file", *hit)
         words = _strip_wrappers(seg.words)
         if not words or is_babeldub_mutation(words):
             return None
@@ -626,7 +626,7 @@ class ShellAnalyzer:
             upstream = self._first_inside(seg.upstream)
             if upstream or self.m.mentions(" ".join(seg.upstream)):
                 game = upstream[1] if upstream else self.m.first_game
-                return _block(f"{words[0]} по конвейеру", upstream[0] if upstream else "<pipeline>", game)
+                return _block(f"{words[0]} via the pipeline", upstream[0] if upstream else "<pipeline>", game)
         if name in ("sed", "perl"):
             in_place = any(
                 o == "in-place" or (name == "sed" and o.startswith("i")) or (name == "perl" and "i" in o)
@@ -634,11 +634,11 @@ class ShellAnalyzer:
             )
             hit = self._first_inside(positionals + option_values) if in_place else None
             if hit:
-                return _block(f"{name} -i (правка на месте)", *hit)
+                return _block(f"{name} -i (in-place edit)", *hit)
         if name in MUTATE_ANY:
             hit = self._first_inside(positionals + option_values)
             if hit:
-                return _block(f"{words[0]} (запись, удаление или перемещение)", *hit)
+                return _block(f"{words[0]} (write, delete or move)", *hit)
         if name in COPY_DEST:
             reason = self._copy(name, words[0], positionals, options)
             if reason:
@@ -668,7 +668,7 @@ class ShellAnalyzer:
                 return _block("7z", *hit)
         hit = self._first_inside([v for o, v in options if o in OUTPUT_OPTS])
         if hit:
-            return _block(f"{words[0]}: путь вывода", *hit)
+            return _block(f"{words[0]}: output path", *hit)
         if name in INTERPRETERS:
             return self._code(command)
         if dialect == "ps":
@@ -701,16 +701,16 @@ class ShellAnalyzer:
         elif len(positionals) >= 2:
             dests = positionals[-1:]
         elif name == "ln" and len(positionals) == 1 and self.m.cwd_in_game:
-            return _block("ln в текущей папке", self.m.cwd or "", self.m.first_game)
+            return _block("ln in the current folder", self.m.cwd or "", self.m.first_game)
         else:
             dests = []
         hit = self._first_inside(dests)
         if hit:
-            return _block(f"{shown} (назначение)", *hit)
+            return _block(f"{shown} (destination)", *hit)
         if name == "robocopy" and any(o in ("mov", "move") for o, _ in options):
             hit = self._first_inside(positionals[:1])
             if hit:
-                return _block("robocopy /MOV (перенос из папки)", *hit)
+                return _block("robocopy /MOV (moves files out of the folder)", *hit)
         return None
 
     def _tar(self, args: list[str]) -> tuple[str, str] | None:
@@ -759,7 +759,7 @@ class ShellAnalyzer:
         if name in MUTATE_ANY and (
             self.m.mentions(" ".join(seg.upstream)) or self._first_inside(seg.upstream)
         ):
-            return _block(f"xargs {sub[0]} (пути из конвейера)", "<pipeline>", self.m.first_game)
+            return _block(f"xargs {sub[0]} (paths from the pipeline)", "<pipeline>", self.m.first_game)
         inner = Segment(words=sub, piped=seg.piped, upstream=seg.upstream)
         return self._segment(inner, command, dialect, depth + 1)
 
@@ -798,18 +798,18 @@ class ShellAnalyzer:
             match = pattern.search(command)
             if match:
                 return _block(
-                    f"код с записью файлов ({match.group(0)[:40]})", "<inline code>", self.m.first_game
+                    f"code that writes files ({match.group(0)[:40]})", "<inline code>", self.m.first_game
                 )
         for match in _CODE_COPY.finditer(command):
             if self.m.mentions(match.group(2)):
-                return _block("копирование в папку игры", match.group(2).strip()[:80], self.m.first_game)
+                return _block("copy into the game folder", match.group(2).strip()[:80], self.m.first_game)
         return None
 
     def _dotnet(self, command: str) -> str | None:
         """PowerShell calling [IO.File]::Write*/Delete/... while mentioning the game folder."""
         match = _DOTNET_WRITES.search(command) if self.m.mentions(command) else None
         if match:
-            return _block(f"вызов .NET ({match.group(0)[:40]})", "<inline code>", self.m.first_game)
+            return _block(f".NET call ({match.group(0)[:40]})", "<inline code>", self.m.first_game)
         return None
 
 
@@ -841,11 +841,11 @@ def check_event(event: dict[str, Any], game_dirs: list[str], windows: bool | Non
 
 
 BLOCK_MESSAGE = (
-    "BabelDub: запись в папку игры заблокирована — {reason}.\n"
-    "До установки папка игры только для чтения. Менять её можно только командами "
-    "`babeldub install` (с бэкапом), `babeldub uninstall` и `babeldub reapply`; "
-    "рабочие файлы клади в папку проекта (её показывает `babeldub status`).\n"
-    "Если команда лишь читает из папки игры, перепиши её так, чтобы путь игры не стоял на месте назначения."
+    "BabelDub: write into the game folder blocked — {reason}.\n"
+    "Until install, the game folder is read-only. Only "
+    "`babeldub install` (with a backup), `babeldub uninstall` and `babeldub reapply` may change it; "
+    "put working files in the project folder (`babeldub status` shows it).\n"
+    "If the command only reads from the game folder, rewrite it so that the game path is not the destination."
 )
 
 
@@ -880,7 +880,7 @@ STAGES = [
     "install",
 ]
 STAGE_COMMAND = {
-    "init": "babeldub init <папка игры> --lang <код>",
+    "init": "babeldub init <game_dir> --lang <code>",
     "scan": "babeldub scan",
     "extract": "babeldub extract",
     "link": "babeldub link",
@@ -914,7 +914,7 @@ def next_step(progress: dict[str, Any]) -> str:
     install = progress.get("install")
     if isinstance(install, dict) and install.get("state") == "uninstalled":
         # `babeldub uninstall` records the install stage with state=uninstalled
-        return "озвучка снята (`babeldub uninstall`); вернуть — `babeldub install`"
+        return "dub uninstalled (`babeldub uninstall`); to put it back, run `babeldub install`"
     # a stage in `attention` is finished with items left to decide; the pipeline goes on (as `babeldub status`)
     waiting: list[str] = []
     for stage in STAGES:
@@ -924,18 +924,21 @@ def next_step(progress: dict[str, Any]) -> str:
             continue
         cmd, skill = STAGE_COMMAND[stage], STAGE_SKILL[stage]
         if status == "attention":
-            waiting.append(f"стадия {stage} ждёт решений — по скиллу {skill}, затем `{cmd}` повторно")
+            waiting.append(f"stage {stage} is waiting for decisions — follow skill {skill}, then run `{cmd}` again")
             continue
         if status == "running":
-            step = f"стадия {stage} не завершена (идёт или прервана) — проверь `babeldub status`, повтор `{cmd}` безопасен"
+            step = (
+                f"stage {stage} is not finished (running or interrupted) — check `babeldub status`; "
+                f"rerunning `{cmd}` is safe"
+            )
         elif status == "failed":
-            step = f"стадия {stage} завершилась ошибкой — `babeldub status`, исправь причину по скиллу {skill}, затем `{cmd}`"
+            step = f"stage {stage} failed — run `babeldub status`, fix the cause with skill {skill}, then `{cmd}`"
         else:
-            step = f"`{cmd}` (скилл {skill})"
+            step = f"`{cmd}` (skill {skill})"
         return "; ".join([step, *waiting])
     if waiting:
         return "; ".join(waiting)
-    return "озвучка установлена; после обновления игры — `babeldub reapply`, откат — `babeldub uninstall`"
+    return "dub installed; after a game update run `babeldub reapply`, to roll back run `babeldub uninstall`"
 
 
 def session_summary(home: Path) -> list[str]:
@@ -957,14 +960,15 @@ def session_summary(home: Path) -> list[str]:
     game = project.get("game_name") or project.get("slug") or root.name
     lang = project.get("target_lang") or "?"
     return [
-        f"[BabelDub] Активный проект: {game} → {lang} (slug {project.get('slug', root.name)})",
-        f"Папка проекта: {root}",
-        f"Папка игры (только чтение до `babeldub install`): {project.get('game_dir', '?')}",
-        "Стадии: " + " · ".join(marks),
-        f"Голос: {tts.get('engine', 'qwen3tts')}, ref_strategy={tts.get('ref_strategy', 'auto')} — дубляж голосом "
-        "оригинального героя (оригинальная реплика служит голосовым промптом).",
-        f"Следующий шаг: {next_step(progress)}.",
-        "Продолжение — скилл babeldub-localize; сводка — `babeldub status`.",
+        f"[BabelDub] Active project: {game} → {lang} (slug {project.get('slug', root.name)})",
+        f"Project folder: {root}",
+        f"Game folder (read-only until `babeldub install`): {project.get('game_dir', '?')}",
+        "Stages: " + " · ".join(marks),
+        f"Voice: {tts.get('engine', 'qwen3tts')}, ref_strategy={tts.get('ref_strategy', 'auto')} — dubbed in the "
+        "original hero's voice (the original line is the voice prompt).",
+        f"Next step: {next_step(progress)}.",
+        "Continue with the babeldub-localize skill and talk to the user in their language; "
+        "summary: `babeldub status`.",
     ]
 
 

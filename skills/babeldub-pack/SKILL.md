@@ -1,96 +1,96 @@
 ---
 name: babeldub-pack
-description: "Put a finished dub back into the game as native files: rebuild engine containers (FMOD banks, loose audio and others) with the accepted lines in the original characters' voices, verify them before install, install with backup and sha1 checks, roll back and reapply after game updates or Steam integrity checks. Use for build, verify, install, uninstall, reapply and repack questions: собери банк, установи озвучку, откати озвучку, верни оригинал, пересобери после обновления."
+description: "Put a finished dub back into the game as native files: rebuild engine containers (FMOD banks, loose audio and others) with the accepted lines in the original characters' voices, verify them before install, install with backup and sha1 checks, roll back and reapply after game updates or Steam integrity checks. Use for build, verify, install, uninstall, reapply and repack questions, e.g. 'install the dub', 'restore the original voices', 'rebuild after the game update', 'собери банк', 'установи озвучку', 'откати озвучку', 'верни оригинал', 'пересобери после обновления', 'instala el doblaje', 'restaura las voces originales'."
 license: MIT
 compatibility: "Local agent with shell access to the game folder; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); vgmstream-cli and ffmpeg for some formats. No GPU needed. Native rebuild in v0.1: FMOD Studio banks and loose audio files; other engines follow the format references."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: сборка, установка и откат
+# BabelDub: build, install and rollback
 
-Скилл стадий `build`, `verify`, `install` и отката. Задача — превратить принятые реплики, озвученные **голосом оригинальных героев**, в файлы, которые игра примет как родные, и поставить их **обратимо**: с бэкапом оригиналов, проверкой sha1 и откатом одной командой.
+This skill covers the `build`, `verify` and `install` stages and rollback. The task: turn the accepted lines, voiced **in the voices of the original heroes**, into files the game accepts as its own, and install them **reversibly**: with a backup of the originals, sha1 checks and one-command rollback.
 
-Скилл дополняет роль `packer` из скилла `babeldub-localize` (`references/roles/packer.md`).
+This skill complements the `packer` role from the `babeldub-localize` skill (`references/roles/packer.md`). Talk to the user in the user's language.
 
-## Главные правила
+## Core rules
 
-1. **В папку игры пишут только** `babeldub install`, `babeldub uninstall` и `babeldub reapply`. Руками ничего не копировать, не переименовывать и не удалять. В Claude Code это дополнительно стережёт хук-охранник BabelDub.
-2. **Не устанавливать без успешного `verify`** — CLI сам откажет, если текущая сборка не прошла проверку.
-3. **Исполняемые файлы игры не запускать.** Проверка библиотекой звука самой игры (`verify --game-runtime`) — только по явной просьбе пользователя.
-4. **Онлайн-игры и античит** — не модифицировать. `install` и `reapply` откажут сами, если найдут EasyAntiCheat, BattlEye и т. п.; обходить это (`--force`) можно только для заведомо офлайн-одиночной игры по явному решению пользователя.
-5. **Не распространять собранные контейнеры**: в них чужие ассеты (SFX, музыка из того же файла). Делиться можно проектом и инструкцией, а собирает каждый у себя.
+1. **Only** `babeldub install`, `babeldub uninstall` and `babeldub reapply` **write to the game folder.** Never copy, rename or delete anything there by hand. In Claude Code, the BabelDub guard hook enforces this as well.
+2. **Do not install without a successful `verify`** — the CLI refuses on its own if the current build has not passed verification.
+3. **Never run the game's executables.** Verification with the game's own audio library (`verify --game-runtime`) — only at the user's explicit request.
+4. **Online games and anti-cheat** — do not modify. `install` and `reapply` refuse on their own when they find EasyAntiCheat, BattlEye and the like; overriding this (`--force`) is allowed only for a game known to be offline single-player, and only by the user's explicit decision.
+5. **Do not distribute built containers**: they hold third-party assets (SFX, music from the same file). Share the project and the instructions; everyone builds on their own machine.
 
-## Ход работы
+## Workflow
 
-### 1. Сборка
+### 1. Build
 
 ```text
 babeldub build [--codec auto|pcm16|fadpcm]
 ```
 
-- В сборку идут только реплики, у которых последнее решение QA — `accept`, и есть файл `post/audio/<uid>.wav`. Остальные (`keep_original`, `skip`, без решения) звучат в оригинале.
-- Для каждого изменённого контейнера адаптер формата пишет `build/out/<relpath>`, манифест — `build/build_manifest.json` (контейнеры, sha1 исходника и результата, кодек, число заменённых и оставленных реплик, модели и их лицензии).
-- Вывод: `containers[]`, `replaced` и списки на внимание (`missing_wav`, `stale_attempt`, `unknown_lines` …). `stale_attempt` — решение `accept` относится не к последней попытке: нужно новое решение QA.
-- Код 2 «native rebuild is not supported (level B/C)» — формат в v0.1 не собирается. Ничего не собирай руками: опиши путь из справочника формата (ниже) в отчёте.
-- `--codec auto` (по умолчанию) у FMOD сохраняет записываемый кодек оригинала (PCM16 или FADPCM), а Vorbis заменяет на FADPCM. Подробно — [references/formats/fmod.md](references/formats/fmod.md).
+- The build takes only lines whose latest QA decision is `accept` and that have a `post/audio/<uid>.wav` file. The rest (`keep_original`, `skip`, no decision) play in the original.
+- For each changed container, the format adapter writes `build/out/<relpath>`, and the manifest goes to `build/build_manifest.json` (containers, sha1 of the source and the result, codec, number of replaced and kept lines, models and their licenses).
+- Output: `containers[]`, `replaced` and attention lists (`missing_wav`, `stale_attempt`, `unknown_lines` …). `stale_attempt` means the `accept` decision refers to an attempt other than the latest: a new QA decision is needed.
+- Exit code 2 "native rebuild is not supported (level B/C)" — the format cannot be built in v0.1. Do not build anything by hand: describe the path from the format reference (below) in the report.
+- `--codec auto` (the default) for FMOD keeps the original's codec when we can write it (PCM16 or FADPCM) and replaces Vorbis with FADPCM. Details — [references/formats/fmod.md](references/formats/fmod.md).
 
-### 2. Проверка
+### 2. Verification
 
 ```text
 babeldub verify [--game-runtime]
 ```
 
-- Адаптер проверяет каждый собранный контейнер без запуска игры: структуру, число, порядок и имена записей, что заменённые реплики декодируются в нужную длину и совпадают с нашим звуком, что остальное осталось как было.
-- Вывод: `ok`, `problems[]`. `ok = false` или код 3 — не устанавливать: причины в отчёт; одна пересборка (`babeldub build --force`) и повторная проверка допустимы.
-- `--game-runtime` (FMOD) загружает библиотеку FMOD Studio из папки игры в отдельном процессе, без звука и без запуска игры, и сверяет с ней каждую пробную реплику. Это единственное место, где BabelDub касается кода игры, поэтому только по явной просьбе пользователя.
+- The adapter checks every built container without running the game: the structure; the number, order and names of entries; that replaced lines decode to the expected length and match our audio; that everything else stayed as it was.
+- Output: `ok`, `problems[]`. `ok = false` or exit code 3 — do not install: put the reasons in the report; one rebuild (`babeldub build --force`) and a repeated verification are allowed.
+- `--game-runtime` (FMOD) loads the FMOD Studio library from the game folder in a separate process, without sound and without starting the game, and checks every sample line against it. This is the only place where BabelDub touches the game's code, so use it only at the user's explicit request.
 
-### 3. Установка
+### 3. Install
 
 ```text
 babeldub install [--dry-run]
 ```
 
-- Перед установкой CLI проверяет: сборка прошла `verify`; не запущен ни один процесс из папки игры (сама игра, её лаунчер, обработчик сбоев); нет античита; файлы игры — те самые оригиналы, из которых делалась сборка (sha1).
-- Оригиналы копируются в `build/backup/<relpath>` и сверяются по sha1, затем файл игры заменяется атомарно (временный файл в той же папке и переименование). Сбой посреди установки откатывает уже заменённые файлы. Журнал — `build/install.json`.
-- Вывод: `installed[]`, `backup`, `rollback` = `babeldub uninstall`. `--dry-run` показывает план без записи.
-- Ошибки: «the game is running» — закрыть игру и лаунчер; «not the originals this build was made from» — игра обновилась или изменена после сборки: `build` → `verify` → `install` заново.
+- Before installing, the CLI checks: the build passed `verify`; no process from the game folder is running (the game itself, its launcher, its crash handler); there is no anti-cheat; the game files are the very originals the build was made from (sha1).
+- The originals are copied to `build/backup/<relpath>` and checked by sha1, then the game file is replaced atomically (a temporary file in the same folder plus a rename). A failure in the middle of the install rolls back the files already replaced. Log — `build/install.json`.
+- Output: `installed[]`, `backup`, `rollback` = `babeldub uninstall`. `--dry-run` shows the plan without writing anything.
+- Errors: "the game is running" — close the game and the launcher; "not the originals this build was made from" — the game was updated or modified after the build: run `build` → `verify` → `install` again.
 
-### 4. Откат и повторная установка
+### 4. Rollback and reinstall
 
 ```text
-babeldub uninstall          вернуть оригиналы из бэкапа (с проверкой sha1)
-babeldub reapply            поставить озвучку снова после обновления игры или проверки целостности в Steam
+babeldub uninstall          restore the originals from the backup (with sha1 checks)
+babeldub reapply            install the dub again after a game update or a Steam integrity check
 ```
 
-Подробно — что именно делают команды, что такое `left_changed` и `changed[]`, как поступать после обновления игры и при потере бэкапа — [references/install-rollback.md](references/install-rollback.md).
+Details — what exactly the commands do, what `left_changed` and `changed[]` mean, what to do after a game update or when the backup is lost — [references/install-rollback.md](references/install-rollback.md).
 
-## Что сказать в отчёте
+## What to say in the report
 
-- Какие файлы игры заменены, где бэкап (`build/backup`), каким кодеком собрано.
-- Что поведение пересобранных файлов в **запущенной** игре автоматически не проверяется: если звука нет или игра падает, `babeldub uninstall`, затем пересборка с другим кодеком (для FMOD — `--codec pcm16`).
-- Команды отката (`babeldub uninstall`) и возврата озвучки после обновления (`babeldub reapply`).
-- Для катсцен и видео — просьба проверить, что реплики не обрываются.
-- Лицензии моделей из `build/build_manifest.json`; напоминание не распространять собранные контейнеры.
+- Which game files were replaced, where the backup is (`build/backup`), which codec was used.
+- That the behavior of the rebuilt files in the **running** game is not checked automatically: if there is no sound or the game crashes, run `babeldub uninstall`, then rebuild with a different codec (for FMOD — `--codec pcm16`).
+- The rollback command (`babeldub uninstall`) and the command that brings the dub back after an update (`babeldub reapply`).
+- For cutscenes and video — ask the user to check that lines are not cut off.
+- Model licenses from `build/build_manifest.json`; a reminder not to distribute the built containers.
 
-## Форматы
+## Formats
 
-Уровень поддержки контейнера показывает `babeldub scan` (`level`) и `inventory/report.md`; там же ссылки на нужный справочник. Читай справочник **только своего** формата:
+The container's support level is shown by `babeldub scan` (`level`) and `inventory/report.md`, which also link to the right reference. Read **only the reference for your** format:
 
-| Формат | Уровень в v0.1 | Справочник |
+| Format | Level in v0.1 | Reference |
 |---|---|---|
-| FMOD Studio `.bank` / `.fsb` | A: своя пересборка, проверка, установка | [references/formats/fmod.md](references/formats/fmod.md) |
-| свободные аудиофайлы (`voice/*.ogg`, `*.wav` …) | A: перекодирование в формат оригинала | [references/formats/loose.md](references/formats/loose.md) |
-| Unity Localization и Addressables (тексты) | только чтение; запись и CRC — следующая версия | [references/formats/unity-addressables.md](references/formats/unity-addressables.md) |
-| Wwise `.bnk` / `.wem` / `.pck` | B: извлечение есть, сборка требует Wwise Authoring | [references/formats/wwise.md](references/formats/wwise.md) |
-| Unreal Engine 4/5 | C: инструкции | [references/formats/unreal.md](references/formats/unreal.md) |
-| Ren'Py | C: инструкции (нативный путь `game/tl/`) | [references/formats/renpy.md](references/formats/renpy.md) |
-| Godot | C: инструкции | [references/formats/godot.md](references/formats/godot.md) |
-| подмена в рантайме (BepInEx, MelonLoader, UE4SS) | C: запасной путь | [references/formats/runtime-mods.md](references/formats/runtime-mods.md) |
+| FMOD Studio `.bank` / `.fsb` | A: own rebuild, verification, install | [references/formats/fmod.md](references/formats/fmod.md) |
+| loose audio files (`voice/*.ogg`, `*.wav` …) | A: re-encoding into the original's format | [references/formats/loose.md](references/formats/loose.md) |
+| Unity Localization and Addressables (texts) | read-only; writing and CRC — next version | [references/formats/unity-addressables.md](references/formats/unity-addressables.md) |
+| Wwise `.bnk` / `.wem` / `.pck` | B: extraction works, building requires Wwise Authoring | [references/formats/wwise.md](references/formats/wwise.md) |
+| Unreal Engine 4/5 | C: instructions | [references/formats/unreal.md](references/formats/unreal.md) |
+| Ren'Py | C: instructions (native path `game/tl/`) | [references/formats/renpy.md](references/formats/renpy.md) |
+| Godot | C: instructions | [references/formats/godot.md](references/formats/godot.md) |
+| runtime substitution (BepInEx, MelonLoader, UE4SS) | C: fallback path | [references/formats/runtime-mods.md](references/formats/runtime-mods.md) |
 
-Пометки в справочниках: **[проверено]** — первоисточник или эксперимент; **[по гайдам]** — вторичный источник; **[не проверено]** — гипотеза, перед действием её нужно подтвердить.
+Markers in the references: **[verified]** — a primary source or an experiment; **[per guides]** — a secondary source; **[not verified]** — a hypothesis that must be confirmed before acting on it.
 
-## Справочники
+## References
 
-- Бэкап, установка, откат, `reapply`, Steam, антивирус, потеря бэкапа — [references/install-rollback.md](references/install-rollback.md). Читай перед первой установкой и при любом сбое `install`, `uninstall`, `reapply`.
-- Справочник формата из таблицы выше — когда `build` отказал по уровню или нужно объяснить пользователю, что возможно для этого движка.
+- Backup, install, rollback, `reapply`, Steam, antivirus, lost backup — [references/install-rollback.md](references/install-rollback.md). Read it before the first install and on any failure of `install`, `uninstall` or `reapply`.
+- The format reference from the table above — when `build` refused because of the level, or when you need to explain to the user what is possible for this engine.

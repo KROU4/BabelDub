@@ -1,28 +1,30 @@
-# Журнал изменений
+# Changelog
 
-Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/).
-Версия меняется только через `scripts/bump_version.py`; заголовок раздела релиза должен совпадать с тегом без `v`.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
+Change the version only with `scripts/bump_version.py`; the heading of a release section must match the tag without the `v`.
 
-## [Не выпущено]
+## [Unreleased]
 
 ## [0.1.0] - 2026-10-21
 
-Первый публичный выпуск: полный конвейер локализации и дубляжа игры голосами оригинальных героев под управлением ИИ-агента.
+First public release: the full pipeline for localizing and dubbing a game in the voices of its original characters, driven by an AI agent.
 
-### Добавлено
+### Added
 
-- **Дубляж голосом оригинального героя.** Голосовым промптом для каждой реплики служит сама оригинальная реплика с её исходным текстом (`tts.ref_strategy=line`), поэтому переносятся тембр, эмоция и подача именно этой фразы. Для коротких, шумных и нерасшифрованных реплик берётся лучший референс персонажа (`char`), по умолчанию стратегия выбирается автоматически (`auto`).
-- **Скиллы по стандарту Agent Skills:** `babeldub-localize` (оркестратор), `babeldub-doctor`, `babeldub-recon`, `babeldub-cast`, `babeldub-translate`, `babeldub-voice`, `babeldub-qa`, `babeldub-pack`. Одни и те же файлы работают в Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode и при загрузке в claude.ai.
-- **Субагенты Claude Code** для ролей конвейера (разведка, кастинг, глоссарий, перевод, озвучка, QA, сборка). Они генерируются из `skills/babeldub-localize/references/roles/`; на других хостах те же роли выполняются в основной сессии.
-- **Хуки Claude Code:** защита папки зарегистрированной игры от записи в обход `babeldub install` и сводка активного проекта при старте сессии.
-- **CLI `babeldub`** с единым контрактом (один JSON на выходе, коды 0–4): окружение (`doctor`, `setup`, `models`), проект (`init`, `status`, `set`, `query`, `sample`, `games`), разбор игры (`scan`, `extract`, `link`), персонажи (`cast`), перевод (`translate`, `batch`, `glossary`), озвучка (`synth`, `post`), контроль качества (`qa`, `decide`, `report`), сборка и установка (`build`, `verify`, `install`, `uninstall`, `reapply`).
-- **Адаптеры форматов:** FMOD Studio (`.bank`/FSB5), таблицы Unity Localization, Wwise, отдельные аудиофайлы. Уровень поддержки (A/B/C) для конкретной игры показывает `babeldub scan`.
-- **Контроль качества:** обратное распознавание речи (CER к переводу), сходство голоса синтеза с оригиналом персонажа, длительность и пики; автоматические решения `regen`/`reref`/`shorten` по порогам.
-- **Установка с откатом:** бэкап оригиналов с проверкой sha1, атомарная замена, `uninstall` и `reapply` после обновления игры.
-- **Упаковка под хосты:** маркетплейс и плагин Claude Code, `.codex-plugin`, Agent Plugins 1.0 (`plugin.json`), расширение Gemini CLI (`gemini-extension.json`, `GEMINI.md`).
-- **Релизы:** `babeldub-plugin`, `babeldub-skills` (по одному zip на скилл для claude.ai) и `babeldub-kit` («рабочая папка рядом с игрой»), `SHA256SUMS`.
-- **Служебные скрипты:** `bump_version.py`, `validate_skills.py`, `build_release.py`, `install.ps1`, `install.sh`; CI на Ubuntu и Windows.
-- **Документация:** установка по хостам (`docs/HOSTS.md`), ответственное использование (`docs/LEGAL.md`), контракт CLI (`docs/dev/CONTRACT.md`).
+- **Dubbing in the original character's voice.** The voice prompt for each line is the original line itself with its source text (`tts.ref_strategy=line`), so the timbre, emotion and delivery of that exact phrase carry over. Short, noisy and untranscribed lines use the character's best reference (`char`); by default the strategy is chosen automatically (`auto`).
+- **Skills following the Agent Skills standard:** `babeldub-localize` (orchestrator), `babeldub-doctor`, `babeldub-recon`, `babeldub-cast`, `babeldub-translate`, `babeldub-voice`, `babeldub-qa`, `babeldub-pack`. The same files work in Claude Code, Codex, Gemini CLI, Antigravity, Cursor, Copilot, OpenCode and when uploaded to claude.ai.
+- **Claude Code subagents** for the pipeline roles (recon, casting, glossary, translation, voice, QA, packing). They are generated from `skills/babeldub-localize/references/roles/`; on other hosts the same roles run in the main session.
+- **Claude Code hooks:** protection of a registered game folder against writes that bypass `babeldub install`, and a summary of the active project at session start.
+- **The `babeldub` CLI** with one contract (one JSON object on output, exit codes 0–4): environment (`doctor`, `setup`, `models`), project (`init`, `status`, `set`, `query`, `sample`, `games`), game analysis (`scan`, `extract`, `link`), characters (`cast`), translation (`translate`, `batch`, `glossary`), voice (`synth`, `post`), quality control (`qa`, `decide`, `report`), build and install (`build`, `verify`, `install`, `uninstall`, `reapply`).
+- **GPU-first compute:** when an NVIDIA GPU is present, all neural compute (TTS, ASR, speaker embeddings, clustering) runs on it (`compute.device=auto`), and `setup` installs CUDA builds of torch whenever a GPU is visible.
+- **Format adapters:** FMOD Studio (`.bank`/FSB5), Unity Localization tables, Wwise, loose audio files. `babeldub scan` shows the support level (A/B/C) for a particular game.
+- **Quality control:** back-transcription of the dub (CER against the translation), similarity of the synthesized voice to the character's original, duration and peaks; automatic `regen`/`reref`/`shorten` decisions by thresholds.
+- **Install with rollback:** backup of the originals with sha1 checks, atomic replacement, `uninstall`, and `reapply` after a game update.
+- **Data location:** environments, models, tools and projects live in `BABELDUB_HOME`, by default `~/.babeldub` (`C:\Users\<user>\.babeldub` on Windows); `doctor` reports data left in older default locations.
+- **Packaging for hosts:** Claude Code marketplace and plugin, `.codex-plugin`, Agent Plugins 1.0 (`plugin.json`), Gemini CLI extension (`gemini-extension.json`, `GEMINI.md`).
+- **Releases:** `babeldub-plugin`, `babeldub-skills` (one zip per skill for claude.ai) and `babeldub-kit` (a workspace folder next to the game), `SHA256SUMS`.
+- **Helper scripts:** `bump_version.py`, `validate_skills.py`, `build_release.py`, `install.ps1`, `install.sh`; CI on Ubuntu and Windows.
+- **Documentation (English):** install per host (`docs/HOSTS.md`), engine support (`docs/ENGINES.md`), models and hardware tiers (`docs/MODELS.md`), responsible use (`docs/LEGAL.md`), the CLI contract (`docs/dev/CONTRACT.md`); a Russian README (`README.ru.md`).
 
-[Не выпущено]: https://github.com/KROU4/BabelDub/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/KROU4/BabelDub/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/KROU4/BabelDub/releases/tag/v0.1.0

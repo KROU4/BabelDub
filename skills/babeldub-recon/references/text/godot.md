@@ -1,33 +1,33 @@
-# Godot: переводы `.translation`, `.po`, CSV
+# Godot: `.translation`, `.po`, CSV translations
 
-Читай, если игра на Godot (см. `engines/godot.md`).
+Read this if the game is on Godot (see `engines/godot.md`).
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 тексты Godot не читает; только инструкции.
+**C**: CLI v0.1 does not read Godot texts; instructions only.
 
-## Как устроено
+## How it works
 
-- CSV импортируется в `.translation`. **`OptimizedTranslation` хранит хэши вместо ключей**, поэтому GDRE восстанавливает ключи эвристиками и подсказкой `--translation-hint`.
-- `.po`/`.mo` загружаются как Translation.
-- Список переводов — в настройках проекта (`project.binary`).
+- CSV is imported into `.translation`. **`OptimizedTranslation` stores hashes instead of keys**, so GDRE recovers keys with heuristics and the `--translation-hint` hint.
+- `.po`/`.mo` are loaded as Translation.
+- The list of translations is in the project settings (`project.binary`).
 
-## Чем извлечь и собрать
+## Extraction and rebuild tools
 
-- GDRE Tools (gdsdecomp) v2.7.4: `--recover`, `--extract`; запись переводов — `--patch-translations=<CSV>=<res path>`, затем `--pck-patch`.
-- Шифрованный PCK: ключ (`--key`) извлекают утилитой gdke.
+- GDRE Tools (gdsdecomp) v2.7.4: `--recover`, `--extract`; writing translations: `--patch-translations=<CSV>=<res path>`, then `--pck-patch`.
+- Encrypted PCK: the key (`--key`) is extracted with the gdke tool.
 
-## Связь с озвучкой
+## Link to the voice
 
-Ключ перевода часто совпадает с именем аудиофайла или используется в диалоговом плагине игры; проверяй выборкой. Если ключи восстановлены эвристикой, связь может быть неточной.
+The translation key often equals the audio file name or is used by the game's dialogue plugin; check with a sample. If the keys were recovered by heuristics, the link may be inaccurate.
 
-## Подводные камни
+## Pitfalls
 
-- Восстановленные ключи `OptimizedTranslation` неточны.
-- MD5 в PCK, шифрование.
-- Шрифты без кириллицы.
+- Recovered `OptimizedTranslation` keys are inaccurate.
+- MD5 in the PCK, encryption.
+- Fonts without the target alphabet (for example, Cyrillic).
 
-## Ссылки
+## Links
 
 - gdsdecomp — https://github.com/GDRETools/gdsdecomp
 - gdke — https://github.com/char-ptr/gdke

@@ -1,10 +1,10 @@
-# Формат пакетов перевода
+# Translation batch format
 
-Читай перед работой с пакетом и при ошибках `batch submit`. Пакеты лежат в `translate/batches/`: `<bid>.in.jsonl` пишет CLI, `<bid>.out.jsonl` пишет агент. `<bid>` выглядит как `b0001`.
+Read this before working on a batch and when `batch submit` fails. Batches live in `translate/batches/`: the CLI writes `<bid>.in.jsonl`, the agent writes `<bid>.out.jsonl`. A `<bid>` looks like `b0001`.
 
-## 1. `<bid>.in.jsonl` (только читать)
+## 1. `<bid>.in.jsonl` (read only)
 
-Первая строка — заголовок пакета:
+The first line is the batch header:
 
 ```json
 {"_batch": "b0007", "scene": "a1_m01", "scenes": ["a1_m01"], "target_lang": "ru", "source_lang": "en", "mode": "translate", "n": 58,
@@ -12,17 +12,17 @@
  "out": "b0007.out.jsonl", "rules": "Write b0007.out.jsonl: one JSON object per line ..."}
 ```
 
-| Поле | Что значит |
+| Field | Meaning |
 |---|---|
-| `_batch` | идентификатор пакета |
-| `scene`, `scenes` | сцена (если одна) и все сцены пакета |
-| `target_lang`, `source_lang` | целевой язык и язык оригинала |
-| `mode` | `translate` или `adapt` (подробно — `references/adapt-vs-translate.md`) |
-| `glossary` | термины канонического глоссария, найденные в исходниках этого пакета |
-| `style` | style bible (до 8000 символов) |
-| `out`, `rules` | имя файла ответа и краткие правила |
+| `_batch` | batch identifier |
+| `scene`, `scenes` | the scene (if there is one) and all scenes of the batch |
+| `target_lang`, `source_lang` | target language and original language |
+| `mode` | `translate` or `adapt` (details: `references/adapt-vs-translate.md`) |
+| `glossary` | terms of the canonical glossary found in this batch's source texts |
+| `style` | the style bible (up to 8000 characters) |
+| `out`, `rules` | name of the answer file and brief rules |
 
-Далее — по строке на реплику:
+Then one line per voice line:
 
 ```json
 {"id": "fmod:StreamingAssets/Dialogue_en-US.bank#fsb1:0042", "key": "dlg_a1_m01_d03_Zbyszek_01", "speaker": "Zbyszek",
@@ -30,52 +30,52 @@
  "placeholders": [], "context_prev": "...", "context_next": "..."}
 ```
 
-| Поле | Что значит |
+| Field | Meaning |
 |---|---|
-| `id` | идентификатор реплики; в ответе — тот же, байт в байт |
-| `key` | ключ движка (подсказка по сцене и персонажу) |
-| `speaker` | говорящий из кастинга (имя персонажа) |
-| `src` | исходный текст |
-| `tgt_official` | официальный перевод, если есть (основа в режиме `adapt`) |
-| `dur_s`, `budget_syll` | длительность оригинала и бюджет слогов (`references/length-budget.md`) |
-| `fixed_length` | `true` — катсцена, видео, таймлайн: бюджет обязателен |
-| `placeholders` | плейсхолдеры и теги исходника, которые нужно сохранить (`references/placeholders.md`) |
-| `context_prev`, `context_next` | соседние реплики сцены для связности |
-| `task` | только для повторной работы: `adapt`, `shorten` или `retranslate` |
-| `current` | только при `task`: текущий текст реплики, который нужно улучшить или сократить |
+| `id` | line identifier; in the answer, the same one, byte for byte |
+| `key` | engine key (a hint about the scene and the character) |
+| `speaker` | the speaker from casting (character name) |
+| `src` | source text |
+| `tgt_official` | the official translation, if any (the base in `adapt` mode) |
+| `dur_s`, `budget_syll` | duration of the original and the syllable budget (`references/length-budget.md`) |
+| `fixed_length` | `true` for a cutscene, video or timeline: the budget is mandatory |
+| `placeholders` | placeholders and tags of the source that must be preserved (`references/placeholders.md`) |
+| `context_prev`, `context_next` | neighbouring lines of the scene, for coherence |
+| `task` | only for rework: `adapt`, `shorten` or `retranslate` |
+| `current` | only with `task`: the line's current text, to be improved or shortened |
 
-Пакет можно и нужно прочитать целиком. Другие пакеты и файлы проекта не читай.
+You can and should read the batch in full. Do not read other batches or project files.
 
-## 2. `<bid>.out.jsonl` (пишет агент)
+## 2. `<bid>.out.jsonl` (written by the agent)
 
-По объекту на **каждую** реплику пакета, UTF-8 без BOM, без пустых строк:
+One object for **every** line of the batch, UTF-8 without BOM, no blank lines:
 
 ```json
 {"id": "fmod:StreamingAssets/Dialogue_en-US.bank#fsb1:0042", "dub_text": "Так, посмотрим.", "variants": ["Так, глянем."], "notes": ""}
 ```
 
-| Поле | Обязательно | Правила |
+| Field | Required | Rules |
 |---|---|---|
-| `id` | да | из входа; лишних и пропущенных быть не должно |
-| `dub_text` | да | непустая строка; все плейсхолдеры и теги из `placeholders` |
-| `sub_text` | нет | строка; только если субтитр должен отличаться от `dub_text`; те же плейсхолдеры |
-| `variants` | нет | список непустых строк, каждая короче предыдущей; те же плейсхолдеры |
-| `notes` | нет | строка: что изменено при адаптации, сомнения, звучание плейсхолдера |
+| `id` | yes | from the input; no extra and no missing ids |
+| `dub_text` | yes | non-empty string; all placeholders and tags from `placeholders` |
+| `sub_text` | no | string; only if the subtitle must differ from `dub_text`; the same placeholders |
+| `variants` | no | list of non-empty strings, each shorter than the previous one; the same placeholders |
+| `notes` | no | string: what was changed during adaptation, doubts, how a placeholder sounds |
 
-Повтор `id` в файле допустим: побеждает последняя строка. Строки с `_batch` или `_schema` игнорируются.
+A repeated `id` in the file is allowed: the last line wins. Lines with `_batch` or `_schema` are ignored.
 
-## 3. Что проверяет `batch submit`
+## 3. What `batch submit` checks
 
-| Проверка | Результат при нарушении |
+| Check | Result on violation |
 |---|---|
-| файл существует и строки — валидный JSON-объект | код 2, ошибка с номером строки |
-| каждый `id` из входа есть в ответе, лишних `id` нет | код 2: «missing in .out», «id is not in this batch» |
-| `dub_text` непустой; `sub_text` строка; `variants` — список непустых строк | код 2 |
-| плейсхолдеры `dub_text`, `sub_text` и каждого варианта совпадают с `src` (кроме переносов строк) | код 2: «placeholders differ from src: missing '{0}' (1/0)» |
-| слоги `dub_text` в пределах 115 % бюджета; если нет — первый влезающий вариант | код 3 и `over_budget[]`, если не влез ни один |
+| the file exists and every line is a valid JSON object | exit code 2, error with the line number |
+| every `id` from the input is in the answer, and there are no extra `id`s | exit code 2: "missing in .out", "id is not in this batch" |
+| `dub_text` is non-empty; `sub_text` is a string; `variants` is a list of non-empty strings | exit code 2 |
+| placeholders of `dub_text`, `sub_text` and every variant match `src` (except line breaks) | exit code 2: "placeholders differ from src: missing '{0}' (1/0)" |
+| syllables of `dub_text` are within 115% of the budget; if not, the first variant that fits | exit code 3 and `over_budget[]` if none fits |
 
-Полный список ошибок при коде 2 — в файле из поля `errors_file`. После исправления сдавай тот же `<bid>` снова. После успешной сдачи CLI пишет в `translate/translations.jsonl`: `id`, `dub_text`, `sub_text`, `lang`, `by` (`agent`), `rev`, `est_syll`, `budget_syll`, `fit`, `batch`, `variants`, `picked_variant`, `notes`.
+With exit code 2, the full error list is in the file named by the `errors_file` field. After fixing, submit the same `<bid>` again. After a successful submission the CLI writes to `translate/translations.jsonl`: `id`, `dub_text`, `sub_text`, `lang`, `by` (`agent`), `rev`, `est_syll`, `budget_syll`, `fit`, `batch`, `variants`, `picked_variant`, `notes`.
 
-## 4. Работа без CLI (веб-чаты)
+## 4. Working without the CLI (web chats)
 
-В веб-чате без доступа к файлам игры можно перевести выгруженный пакет: пользователь даёт `<bid>.in.jsonl`, ты возвращаешь содержимое `<bid>.out.jsonl` по тем же правилам, пользователь кладёт файл рядом и выполняет `babeldub batch submit <bid>` у себя.
+In a web chat without access to the game files you can translate an exported batch: the user gives you `<bid>.in.jsonl`, you return the contents of `<bid>.out.jsonl` by the same rules, and the user puts the file next to it and runs `babeldub batch submit <bid>` on their machine.

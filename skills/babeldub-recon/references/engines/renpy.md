@@ -1,48 +1,48 @@
 # Ren'Py
 
-Читай, если в папке игры есть `game/`, `renpy/`, `*.rpa`, `*.rpyc`.
+Read this if the game folder has `game/`, `renpy/`, `*.rpa`, `*.rpyc`.
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — отдельного адаптера Ren'Py в v0.1 нет. Если файлы голоса лежат в `game/` отдельными файлами (не в `.rpa`), `babeldub scan` может показать их через адаптер `loose` — ориентируйся на `level` из вывода scan. План: кандидат на уровень A в v0.2, потому что у Ren'Py есть родной механизм перевода голоса.
+**C**: v0.1 has no dedicated Ren'Py adapter. If the voice files sit in `game/` as separate files (not in `.rpa`), `babeldub scan` may show them through the `loose` adapter; go by the `level` in the scan output. Plan: a candidate for level A in v0.2, because Ren'Py has a native voice translation mechanism.
 
-## Как опознать
+## How to identify
 
-`game/`, `renpy/`, архивы `game/*.rpa`, скрипты `*.rpy` и скомпилированные `*.rpyc`.
+`game/`, `renpy/`, archives `game/*.rpa`, scripts `*.rpy` and compiled `*.rpyc`.
 
-## Где голос
+## Where the voice is
 
-- Обычно `game/voice/*.ogg` или внутри `.rpa`.
-- Оператор `voice "file.ogg"` в скриптах; `config.voice_filename_format`; **`config.auto_voice`** — имя файла строится из идентификатора реплики (`{id}` заменяется на dialogue identifier).
+- Usually `game/voice/*.ogg` or inside `.rpa`.
+- The `voice "file.ogg"` statement in scripts; `config.voice_filename_format`; **`config.auto_voice`**: the file name is built from the line identifier (`{id}` is replaced with the dialogue identifier).
 
-## Где текст
+## Where the text is
 
-Скрипты `*.rpy`/`*.rpyc` и переводы `game/tl/<язык>/` — см. `text/renpy.md`.
+Scripts `*.rpy`/`*.rpyc` and translations in `game/tl/<language>/`; see `text/renpy.md`.
 
-## Чем извлечь
+## Extraction tools
 
-| Инструмент | Назначение | Состояние на 2026-10 |
+| Tool | Purpose | Status as of 2026-10 |
 |---|---|---|
-| unrpa | распаковка `.rpa` | 2.3.0 (2019), устаревает |
-| rpatool | распаковка и упаковка `.rpa` | переехал на Codeberg |
-| unrpyc | декомпиляция `.rpyc` | v2.0.4 |
-| Ren'Py SDK | Launcher → Generate Translations и Extract Dialogue (идентификаторы реплик для `auto_voice`) | официальный |
+| unrpa | unpacks `.rpa` | 2.3.0 (2019), getting outdated |
+| rpatool | unpacks and packs `.rpa` | moved to Codeberg |
+| unrpyc | decompiles `.rpyc` | v2.0.4 |
+| Ren'Py SDK | Launcher → Generate Translations and Extract Dialogue (line identifiers for `auto_voice`) | official |
 
-Формат RPA (заголовок с XOR-ключом и индекс zlib-pickle) — детали не проверялись.
+RPA format (a header with an XOR key and a zlib-pickle index): details not checked.
 
-## Нативный путь пересборки (по документации Ren'Py, проверено по первоисточнику)
+## Native rebuild path (from the Ren'Py documentation, verified against the primary source)
 
-- Перевод: `game/tl/<язык>/*.rpy` с блоками `translate <язык> <id>:` и `translate <язык> strings:`.
-- **Перевод файлов:** файл `game/tl/<язык>/<путь>` используется вместо `game/<путь>`, когда этот язык активен. Пример из документации: `game/tl/french/omelette.ogg` вместо `game/omelette.ogg`.
-- Автоголос работает так же, если путь под `tl/<язык>` повторяет оригинальный. Значит, дубляж кладётся рядом, не трогая оригинальные файлы.
+- Translation: `game/tl/<language>/*.rpy` with `translate <language> <id>:` and `translate <language> strings:` blocks.
+- **File translation:** the file `game/tl/<language>/<path>` is used instead of `game/<path>` when that language is active. Example from the documentation: `game/tl/french/omelette.ogg` instead of `game/omelette.ogg`.
+- Auto-voice works the same way if the path under `tl/<language>` mirrors the original. So the dub goes next to the originals without touching them.
 
-## Подводные камни
+## Pitfalls
 
-- Совместимость unrpyc с версией Ren'Py.
-- Модифицированные RPA.
-- Шрифты без кириллицы: стиль шрифта задают в блоке `translate <язык> python:`.
+- unrpyc compatibility with the Ren'Py version.
+- Modified RPA archives.
+- Fonts without the target alphabet (for example, Cyrillic): set the font style in a `translate <language> python:` block.
 
-## Ссылки
+## Links
 
 - Ren'Py Voice — https://www.renpy.org/doc/html/voice.html
 - Ren'Py Translation — https://www.renpy.org/doc/html/translation.html

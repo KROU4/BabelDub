@@ -1,89 +1,90 @@
-# Конвейер BabelDub v0.1: стадии, команды, коды выхода, артефакты
+# BabelDub v0.1 pipeline: stages, commands, exit codes, artifacts
 
-Читай этот файл перед стадией 1 и каждый раз, когда вывод стадии непонятен. Команды и флаги — как в CLI `babeldub` 0.1.0; других не используй. Почти каждый вывод содержит поле `next` — подсказку CLI о следующем шаге. Если `next` расходится с этим файлом, верь `next`: он видит фактическое состояние проекта.
+Read this file before stage 1 and every time a stage output is unclear. Commands and flags are as in the `babeldub` CLI 0.1.0; do not use any others. Almost every output has a `next` field — the CLI's hint for the next step. If `next` disagrees with this file, trust `next`: it sees the actual project state.
 
-## 1. Общие правила вызова
+## 1. General rules for calls
 
-- Формат: `babeldub <команда> [аргументы] [--project <папка|slug>] [--pretty]`.
-- Без `--project` CLI берёт активный проект (последний `init`) или переменную `BABELDUB_PROJECT`.
-- Флаги стадий там, где они осмыслены: `--limit N`, `--ids id1,id2`, `--force`, `--dry-run`.
-- stdout — ровно один компактный JSON (обычно до 2 КБ). Поле `ok` равно `true` при кодах 0 и 3. Длинные данные лежат в файлах проекта, JSON указывает на них.
-- Стадии идемпотентны. `--force` пересчитывает уже сделанное; без причины его не используй. У `install`, `uninstall`, `reapply` флаг `--force` отключает защиту (запущенная игра, античит) — его не используй никогда.
-- Прогресс хранится в `state/progress.json`, журнал — в `state/events.jsonl`. Читай их только через `babeldub status`.
+- Format: `babeldub <command> [arguments] [--project <folder|slug>] [--pretty]`.
+- Without `--project` the CLI uses the active project (the last `init`) or the `BABELDUB_PROJECT` variable.
+- Stage flags where they make sense: `--limit N`, `--ids id1,id2`, `--force`, `--dry-run`.
+- stdout is exactly one compact JSON object (usually under 2 KB). The `ok` field is `true` for exit codes 0 and 3. Long data lives in project files; the JSON points to them.
+- Stages are idempotent. `--force` recomputes finished work; do not use it without a reason. For `install`, `uninstall` and `reapply`, `--force` disables the safeguards (running game, anti-cheat) — never use it there.
+- Progress is kept in `state/progress.json`, the event log in `state/events.jsonl`. Read them only through `babeldub status`.
+- GPU-first: every neural workload (`cast` voice embeddings, `synth`, `qa`) runs on the NVIDIA GPU when one is present (`compute.device` = `auto`, the default). `compute.device` accepts `auto`, `cuda`, `cpu`; `cpu` only on the user's explicit request.
 
-## 2. Коды выхода
+## 2. Exit codes
 
-| Код | Константа | Значение | Общая реакция |
+| Code | Constant | Meaning | General reaction |
 |---|---|---|---|
-| 0 | `EXIT_OK` | стадия завершена, внимания не нужно | следующая стадия |
-| 1 | `EXIT_ERROR` | неожиданная ошибка: поля `error`, `where` | лог стадии в `logs/`, `troubleshooting.md`; одна повторная попытка, если сбой разовый; иначе остановка с отчётом |
-| 2 | `EXIT_USAGE` | неверные аргументы, не пройдена предыдущая стадия, невалидный файл агента | прочитать `hint`; выполнить недостающую стадию или исправить файл агента; аргументы сверить с этим файлом |
-| 3 | `EXIT_ATTENTION` | стадия завершена, но есть элементы на решение | передать элементы роли стадии; после её работы продолжать |
-| 4 | `EXIT_ENV` | не хватает окружения | скилл `babeldub-doctor`: `babeldub doctor` → `babeldub setup` |
+| 0 | `EXIT_OK` | stage complete, no attention needed | next stage |
+| 1 | `EXIT_ERROR` | unexpected error: fields `error`, `where` | stage log in `logs/`, `troubleshooting.md`; retry once if the failure is transient; otherwise stop with a report |
+| 2 | `EXIT_USAGE` | bad arguments, previous stage not done, invalid agent file | read `hint`; run the missing stage or fix the agent file; check the arguments against this file |
+| 3 | `EXIT_ATTENTION` | stage complete, but items need a decision | hand the items to the stage's role; continue after it finishes |
+| 4 | `EXIT_ENV` | environment missing | `babeldub-doctor` skill: `babeldub doctor` → `babeldub setup` |
 
-Стадия в состоянии `attention` считается пройденной: следующие стадии запускаются. Человеку коды не пересказывай: он получает итог в отчёте.
+A stage in the `attention` state counts as passed: the following stages run. Do not retell exit codes to the human: they get the outcome in the report.
 
-## 3. Стадии
+## 3. Stages
 
-Порядок стадий в CLI: `init → scan → extract → link → cast → translate → synth → post → qa → build → verify → install`. Стадия, запущенная раньше предыдущей, вернёт код 2 с подсказкой.
+Stage order in the CLI: `init → scan → extract → link → cast → translate → synth → post → qa → build → verify → install`. A stage started before the previous one returns exit code 2 with a hint.
 
-### 3.0. Окружение (вне проекта)
+### 3.0. Environment (outside a project)
 
-| Команда | Что делает | Ключевые поля |
+| Command | What it does | Key fields |
 |---|---|---|
-| `babeldub doctor` | ОС, Python, утилиты, GPU (имя, VRAM, драйвер), место на диске, venv движков, модели; рекомендует тир | `tier`, `gpu`, `missing[]`, `optional_missing[]`, `todo[]`, `warnings[]`, `install{}`, `next` |
-| `babeldub setup [--engines qwen3tts,qc] [--tools] [--models auto] [--dry-run]` | venv движков, пакеты, веса моделей, внешние утилиты (vgmstream) | `planned[]`, `download_gb`, `blocked[]`, `done[]`, `failed[]` |
-| `babeldub models list` / `babeldub models fetch <name>` | каталог моделей с лицензиями и статусом | `models[]` |
+| `babeldub doctor` | OS, Python, tools, GPU (name, VRAM, driver), disk space, engine venvs, models; recommends a tier | `tier`, `gpu`, `missing[]`, `optional_missing[]`, `todo[]`, `warnings[]`, `install{}`, `next` |
+| `babeldub setup [--engines qwen3tts,qc] [--tools] [--models auto] [--dry-run]` | engine venvs, packages, model weights, external tools (vgmstream) | `planned[]`, `download_gb`, `blocked[]`, `done[]`, `failed[]` |
+| `babeldub models list` / `babeldub models fetch <name>` | model catalog with licenses and status | `models[]` |
 
-`doctor`: код 4 — нет обязательных утилит (`missing[]`: uv, ffmpeg, ffprobe; команды установки — в `install{}`); код 3 — не хватает venv или моделей (`todo[]`) → `setup`. Подробности — в скилле `babeldub-doctor`.
+`doctor`: code 4 — required tools missing (`missing[]`: uv, ffmpeg, ffprobe; install commands in `install{}`); code 3 — venvs or models missing (`todo[]`) → `setup`. Details are in the `babeldub-doctor` skill.
 
-### 3.1. `init`: проект
+### 3.1. `init`: project
 
 ```text
-babeldub init "<папка игры>" --lang <код> [--cast all|main|list] [--chars A,B] [--mode auto] [--slug <slug>]
+babeldub init "<game folder>" --lang <code> [--cast all|main|list] [--chars A,B] [--mode auto] [--slug <slug>]
 ```
 
-- Создаёт `project.json`, регистрирует игру в реестре `games.json` (по нему хук-охранник защищает папку игры) и делает проект активным.
-- Вывод: `project`, `slug`, `game_dir`, `target_lang`, `cast`, `mode`, `engine`, `next`. Код 3 — есть предупреждения (например, движок синтеза не поддерживает язык).
-- `--mode`: `auto` (по умолчанию) | `translate` | `adapt` | `official`.
-- Код 2: папка не найдена, неверный код языка (ISO 639-1: `ru`, `pl`, `pt-BR` …) или `--cast list` без `--chars`.
+- Creates `project.json`, registers the game in the `games.json` registry (the guard hook protects the game folder based on it) and makes the project active.
+- Output: `project`, `slug`, `game_dir`, `target_lang`, `cast`, `mode`, `engine`, `next`. Code 3 — there are warnings (for example, the synthesis engine does not support the language).
+- `--mode`: `auto` (default) | `translate` | `adapt` | `official`.
+- Code 2: folder not found, bad language code (ISO 639-1: `ru`, `pl`, `pt-BR` …) or `--cast list` without `--chars`.
 
-### 3.2. `scan`: инвентаризация
+### 3.2. `scan`: inventory
 
 ```text
 babeldub scan
 ```
 
-- Определяет движок, middleware, текстовые системы и античит по сигнатурам, спрашивает все адаптеры, пишет `inventory/recon.json`, `inventory/assets.jsonl`, `inventory/report.md`.
-- Вывод: `engine{id, version, backend}`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `report`, `next`.
-- `level`: A — автоматически; B — нужен пользовательский инструмент или мод-лоадер; C — только чтение и инструкции.
-- `inventory/report.md`, раздел «Что читать дальше» — справочники для найденного (по ним работает скилл `babeldub-recon`).
-- Код 3: есть предупреждения (неопознанный движок, античит, ошибки адаптеров). Роль scout разбирает их по справочникам `babeldub-recon`. Античит → стоп.
+- Detects the engine, middleware, text systems and anti-cheat by signatures, queries all adapters, writes `inventory/recon.json`, `inventory/assets.jsonl`, `inventory/report.md`.
+- Output: `engine{id, version, backend}`, `middleware[]`, `text_systems[]`, `voice_assets[]`, `text_assets[]`, `counts{}`, `level`, `warnings[]`, `report`, `next`.
+- `level`: A — automatic; B — needs a user-installed tool or a mod loader; C — read-only and instructions.
+- `inventory/report.md`, section "What to read next" — the references for what was found (the `babeldub-recon` skill works from them).
+- Code 3: there are warnings (unrecognized engine, anti-cheat, adapter errors). The scout role reviews them with the `babeldub-recon` references. Anti-cheat → stop.
 
-### 3.3. `extract`: реплики и оригинальный звук
+### 3.3. `extract`: lines and original audio
 
 ```text
 babeldub extract [--kinds dialogue,cutscene] [--limit N]
 ```
 
-- `list_lines()` → `inventory/lines.jsonl` (канон реплик); `extract_audio()` → `audio/orig/<uid>.wav`; `read_texts()` → `inventory/texts.jsonl`.
-- Вывод: `lines`, `by_kind{}`, `minutes`, `texts`, `locales[]`, `next`.
-- `kind`: `dialogue | cutscene | bark | sfx | music | ambience | ui | unknown`. Озвучиваются только `dialogue`, `cutscene`, `bark`.
-- Код 3: есть реплики `unknown` или ошибки декодирования отдельных записей. Scout смотрит их через `babeldub query --where kind=unknown --fields id,entry.key,audio.dur_s --limit 30`.
-- Код 4: нет декодера (обычно `vgmstream-cli`) → `babeldub setup --tools`.
+- `list_lines()` → `inventory/lines.jsonl` (the canonical line list); `extract_audio()` → `audio/orig/<uid>.wav`; `read_texts()` → `inventory/texts.jsonl`.
+- Output: `lines`, `by_kind{}`, `minutes`, `texts`, `locales[]`, `next`.
+- `kind`: `dialogue | cutscene | bark | sfx | music | ambience | ui | unknown`. Only `dialogue`, `cutscene` and `bark` are voiced.
+- Code 3: there are `unknown` lines or decoding errors in individual entries. The scout inspects them with `babeldub query --where kind=unknown --fields id,entry.key,audio.dur_s --limit 30`.
+- Code 4: no decoder (usually `vgmstream-cli`) → `babeldub setup --tools`.
 
-### 3.4. `link`: текст ↔ аудио
+### 3.4. `link`: text ↔ audio
 
 ```text
 babeldub link
 ```
 
-- Связывает реплики с текстами: точный ключ, затем нормализованный ключ, затем имя файла. Заполняет `text` в `lines.jsonl` и `source_lang` в проекте.
-- Вывод: `linked`, `unlinked`, `with_official_target`, `by_match{}`, `src_lang`, `ambiguous`, `no_src_text`, `unlinked_examples[]`, `next`.
-- Реплики без текста нельзя перевести: они остаются с оригинальным голосом и попадают в отчёт. Распознавания речи оригинала для таких строк в v0.1 нет.
-- Код 3: есть несвязанные реплики. Scout проверяет выборку и пишет гипотезу в отчёт; канон вручную не правится.
+- Links lines to texts: exact key, then normalized key, then file name. Fills `text` in `lines.jsonl` and `source_lang` in the project.
+- Output: `linked`, `unlinked`, `with_official_target`, `by_match{}`, `src_lang`, `ambiguous`, `no_src_text`, `unlinked_examples[]`, `next`.
+- Lines without text cannot be translated: they keep the original voice and go into the report. v0.1 has no speech recognition of the original for such lines.
+- Code 3: there are unlinked lines. The scout checks a sample and writes a hypothesis into the report; the canon is never edited by hand.
 
-### 3.5. `cast`: персонажи и референсы
+### 3.5. `cast`: characters and references
 
 ```text
 babeldub cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12]
@@ -91,14 +92,14 @@ babeldub cast apply-labels
 babeldub cast select --chars A,B | --policy main|all
 ```
 
-- Персонажи — из метаданных (`speaker_hint`); реплики без них группируются по голосу (эмбеддинги через воркер `qc`).
-- Референсы персонажа — самые чистые и типичные оригинальные реплики (`cast/refs.jsonl`, `cast/refs/<char_id>/*.wav`); лист кастинга — `cast/casting_sheet.md`.
-- Вывод `cast`: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs`, `sheet`, `next`.
-- Код 3: есть кластеры голосов или `uncertain[]`. Роль caster размечает их в `cast/labels.agent.jsonl` → `babeldub cast apply-labels` (вывод `updated`, `labeled`, `uncertain[]`; код 2 — невалидный файл, исправить).
-- `no_ref[]` — у персонажа нет отдельного референса: его реплики пойдут с промптом-оригиналом (`line`); короткие реплики такого персонажа могут остаться без синтеза.
-- После вопроса 2 пользователю: `babeldub cast select ...` (вывод `policy`, `selected[]`).
+- Characters come from metadata (`speaker_hint`); lines without it are grouped by voice (embeddings through the `qc` worker, on the GPU when present).
+- A character's references are the cleanest and most typical original lines (`cast/refs.jsonl`, `cast/refs/<char_id>/*.wav`); the casting sheet is `cast/casting_sheet.md`.
+- `cast` output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs`, `sheet`, `next`.
+- Code 3: there are voice clusters or `uncertain[]`. The caster role labels them in `cast/labels.agent.jsonl` → `babeldub cast apply-labels` (output `updated`, `labeled`, `uncertain[]`; code 2 — invalid file, fix it).
+- `no_ref[]` — the character has no separate reference: their lines use the original line as the prompt (`line`); short lines of such a character may stay without synthesis.
+- After question 2 to the user: `babeldub cast select ...` (output `policy`, `selected[]`).
 
-### 3.6. `translate`: текст для дубляжа
+### 3.6. `translate`: text for the dub
 
 ```text
 babeldub translate plan
@@ -110,52 +111,52 @@ babeldub batch submit <bid>
 babeldub glossary check
 ```
 
-| Команда | Что делает | Вывод |
+| Command | What it does | Output |
 |---|---|---|
-| `translate plan` | решает режим; при `auto` — `official`, если официальный перевод есть у ≥ 95 % связанных озвучиваемых реплик, иначе `translate` | `mode`, `need_agent`, `translated`, `glossary`, `style_bible`, `next` |
-| `translate use-official` | копирует официальный перевод в `translate/translations.jsonl` (`by=official`) | `copied`, `missing`, `next` |
-| `glossary apply` | проверяет `translate/glossary.agent.jsonl` и сливает его в `translate/glossary.jsonl` | `added`, `updated`, `total` |
-| `batch make` | нарезает пакеты по сценам для реплик, которым нужен агент; `--ids` и `--from-decisions` — пакеты на повторный перевод (решения QA `shorten`, `retranslate`) | `mode`, `batches[]`, `lines`, `open`, `dir`, `next` |
-| `batch next` | первый незакрытый пакет | `batch`, `state`, `in`, `out`, `remaining`, `next` |
-| `batch submit <bid>` | проверяет `.out.jsonl` (все `id`, непустой `dub_text`, плейсхолдеры как в `src`) и сливает в `translations.jsonl`; подбирает влезающий в бюджет вариант | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants`, `open_batches`, `next` |
-| `glossary check` | сверяет термины глоссария в переводах | `violations[]`, `next` |
+| `translate plan` | decides the mode; with `auto` — `official` if an official translation exists for ≥ 95 % of the linked voiced lines, otherwise `translate` | `mode`, `need_agent`, `translated`, `glossary`, `style_bible`, `next` |
+| `translate use-official` | copies the official translation into `translate/translations.jsonl` (`by=official`) | `copied`, `missing`, `next` |
+| `glossary apply` | validates `translate/glossary.agent.jsonl` and merges it into `translate/glossary.jsonl` | `added`, `updated`, `total` |
+| `batch make` | cuts batches by scene for the lines that need an agent; `--ids` and `--from-decisions` make batches for retranslation (QA decisions `shorten`, `retranslate`) | `mode`, `batches[]`, `lines`, `open`, `dir`, `next` |
+| `batch next` | the first open batch | `batch`, `state`, `in`, `out`, `remaining`, `next` |
+| `batch submit <bid>` | validates `.out.jsonl` (every `id`, non-empty `dub_text`, placeholders as in `src`) and merges it into `translations.jsonl`; picks a variant that fits the budget | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants`, `open_batches`, `next` |
+| `glossary check` | checks glossary terms in the translations | `violations[]`, `next` |
 
-Порядок:
+Order:
 
-1. `translate plan`. Режим `official` → `translate use-official`. Если после этого `need_agent` = 0, переходи к голосу.
-2. Роль lexicon: `translate/glossary.agent.jsonl` и `translate/style_bible.md`, затем `babeldub glossary apply`. Это нужно **до** `batch make`: в заголовок пакета попадают только термины из `translate/glossary.jsonl` и текст style bible.
-3. `batch make`, затем цикл: `batch next` → translator → `batch submit <bid>`. `batch next` всегда отдаёт первый незакрытый пакет; для параллельной работы бери разные `bid` из `batches[]` вывода `batch make` (или по именам файлов `translate/batches/<bid>.in.jsonl` без готового `.out.jsonl`).
-4. `batch submit`: код 2 — ошибки в `errors[]` (полный список в `errors_file`). Переводчик исправляет свой `.out.jsonl` и сдаёт снова, до 3 итераций. Код 3 — `over_budget[]`: строки длиннее 115 % бюджета; для `over_fixed[]` (фиксированная длина) нужны более короткие `variants`, остальное подгонит `post`.
-5. Конец цикла: `batch next` возвращает `batch: null`, `done: true`.
-6. `glossary check`: код 3 — `violations[]` (файл `translate/glossary_violations.jsonl`). Исправления: `babeldub batch make --ids <id,...>` → переводчик → `batch submit`.
+1. `translate plan`. Mode `official` → `translate use-official`. If `need_agent` = 0 after that, go to the voice stage.
+2. Lexicon role: `translate/glossary.agent.jsonl` and `translate/style_bible.md`, then `babeldub glossary apply`. This must happen **before** `batch make`: the batch header only receives terms from `translate/glossary.jsonl` and the style bible text.
+3. `batch make`, then loop: `batch next` → translator → `batch submit <bid>`. `batch next` always returns the first open batch; for parallel work take different `bid` values from `batches[]` of the `batch make` output (or from the file names `translate/batches/<bid>.in.jsonl` that have no `.out.jsonl` yet).
+4. `batch submit`: code 2 — errors in `errors[]` (full list in `errors_file`). The translator fixes their `.out.jsonl` and submits again, up to 3 iterations. Code 3 — `over_budget[]`: lines longer than 115 % of the budget; `over_fixed[]` (fixed length) needs shorter `variants`, `post` fits the rest.
+5. End of the loop: `batch next` returns `batch: null`, `done: true`.
+6. `glossary check`: code 3 — `violations[]` (file `translate/glossary_violations.jsonl`). Fixes: `babeldub batch make --ids <id,...>` → translator → `batch submit`.
 
-### 3.7. `synth`: синтез голосом героя
+### 3.7. `synth`: synthesis in the hero's voice
 
 ```text
 babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>]
 ```
 
-- Для каждой выбранной реплики с переводом готовит голосовой промпт по `tts.ref_strategy` (`line` — оригинал этой строки с её исходным текстом; `char` — лучший референс персонажа; `auto` — `line`, если оригинал ≥ `tts.line_ref_min_s` и есть текст, иначе `char`).
-- Модель грузится один раз на прогон; реплики идут группами по персонажам. Результаты — `synth/raw/<uid>/a<attempt>.wav` и `synth/results.jsonl`. Занимает `state/locks/gpu.lock`.
-- Вывод: `done`, `failed`, `rtf`, `remaining`, `next`; пропуски по причинам (не выбран персонаж, нет перевода, исчерпаны попытки).
-- `--attempt-next`: новая попытка для реплик с решением `regen` (новый seed) или `reref` (смена промпта: оригинал → референс персонажа или наоборот).
-- Реплики с изменённым переводом (после `shorten`/`retranslate`) подхватывает обычный `synth`.
-- Код 3: `failed` > 0 — повтори для них; при повторяющейся ошибке смотри `troubleshooting.md`.
-- Код 4: нет venv движка или весов модели → `babeldub-doctor`.
-- Долгие прогоны запускай чанками (`--chars`, `--limit`) и сверяйся с `remaining`.
+- For every selected line with a translation, builds the voice prompt by `tts.ref_strategy` (`line` — the original of this line with its source text; `char` — the character's best reference; `auto` — `line` if the original is ≥ `tts.line_ref_min_s` and has text, otherwise `char`).
+- The model loads once per run, on the GPU when present; lines go in groups by character. Results: `synth/raw/<uid>/a<attempt>.wav` and `synth/results.jsonl`. Holds `state/locks/gpu.lock`.
+- Output: `done`, `failed`, `rtf`, `remaining`, `next`; skipped lines are counted by reason (character not selected, no translation, attempts exhausted).
+- `--attempt-next`: a new attempt for lines with the decision `regen` (new seed) or `reref` (prompt switch: original → character reference or the other way round).
+- Lines with a changed translation (after `shorten`/`retranslate`) are picked up by a plain `synth`.
+- Code 3: `failed` > 0 — rerun for them; if the error repeats, see `troubleshooting.md`.
+- Code 4: engine venv or model weights missing → `babeldub-doctor`.
+- Run long jobs in chunks (`--chars`, `--limit`) and check `remaining`.
 
-### 3.8. `post`: подгонка под оригинал
+### 3.8. `post`: fitting to the original
 
 ```text
 babeldub post
 ```
 
-- Обрезка тишины, подгонка длительности к речи оригинала с сохранением высоты голоса (в пределах `post.max_stretch` = 0,12), восстановление краевой тишины оригинала, громкость под оригинальную реплику (BS.1770 LUFS; RMS для клипов короче 0,4 с), потолок пика `post.true_peak_db` = −1 дБ, частота и каналы как у оригинала.
-- Для `fixed_length: true` (катсцены, таймлайны, видео) реплика должна уложиться в исходную длительность с допуском `post.fixed_length_tolerance` (0,03).
-- Вывод: `done`, `over_length[]`, `next`.
-- Код 3: `over_length[]` — реплики не влезли даже после растяжения. После `qa` они получат `shorten`.
+- Silence trimming; fitting the duration to the original speech while keeping the pitch (within `post.max_stretch` = 0.12); restoring the original's edge silence; loudness matched to the original line (BS.1770 LUFS; RMS for clips shorter than 0.4 s); peak ceiling `post.true_peak_db` = −1 dB; sample rate and channels as in the original.
+- For `fixed_length: true` (cutscenes, timelines, video) the line must fit the original duration within `post.fixed_length_tolerance` (0.03).
+- Output: `done`, `over_length[]`, `next`.
+- Code 3: `over_length[]` — lines that did not fit even after stretching. After `qa` they get `shorten`.
 
-### 3.9. `qa`: проверка качества и сходства голоса
+### 3.9. `qa`: quality and voice similarity
 
 ```text
 babeldub qa
@@ -163,86 +164,88 @@ babeldub decide apply
 babeldub report
 ```
 
-- Для последней попытки каждой реплики: распознавание синтеза → CER к `dub_text`; сходство голоса синтеза с оригинальной репликой героя и с его референсом (`sim`) против базовой линии персонажа (`sim_ref`); отношение длительностей; пики и тишина. Пишет `qa/qa.jsonl`; авто-решения — в `qa/decisions.jsonl`.
-- Пороги: `qa.max_cer` = 0,15; `qa.min_sim_ratio` = 0,75 (`sim` ≥ 0,75 × `sim_ref`); `qa.max_duration_ratio` = 1,35.
-- Авто-решения: прошло → `accept`; разборчивость, голос, пики → `regen`, пока есть попытки, потом `keep_original`; слишком длинно → `shorten` (до 2 раз), потом `keep_original`; нет файла, нет перевода, сбой воркера → без решения (внимание).
-- Вывод `qa`: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `next`.
-- Код 3: `attention[]` не пуст. Роль qa пишет `qa/decisions.agent.jsonl` → `babeldub decide apply` (вывод `applied`, `skipped`, `by_decision`; код 2 — невалидный файл, исправить).
-- Решения: `accept | regen | reref | shorten | retranslate | keep_original | skip`.
-- `report` пишет `qa/report.md` с итогами по персонажам (вывод `file`).
+- For the latest attempt of every line: speech recognition of the dub → CER against `dub_text`; similarity of the dub's voice to the hero's original line and to their reference (`sim`) against the character's baseline (`sim_ref`); duration ratio; peaks and silence. Runs on the GPU when present. Writes `qa/qa.jsonl`; auto-decisions go to `qa/decisions.jsonl`.
+- Thresholds: `qa.max_cer` = 0.15; `qa.min_sim_ratio` = 0.75 (`sim` ≥ 0.75 × `sim_ref`); `qa.max_duration_ratio` = 1.35.
+- Auto-decisions: passed → `accept`; intelligibility, voice, peaks → `regen` while attempts remain, then `keep_original`; too long → `shorten` (up to 2 times), then `keep_original`; missing file, no translation, worker failure → no decision (attention).
+- `qa` output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `next`.
+- Code 3: `attention[]` is not empty. The qa role writes `qa/decisions.agent.jsonl` → `babeldub decide apply` (output `applied`, `skipped`, `by_decision`; code 2 — invalid file, fix it).
+- Decisions: `accept | regen | reref | shorten | retranslate | keep_original | skip`.
+- `report` writes `qa/report.md` with totals per character (output `file`).
 
-### 3.10. Цикл качества
+### 3.10. Quality loop
 
 ```text
-synth → post → qa ─┬─ accept ─────────────────────────────────────────────→ готово к сборке
+synth → post → qa ─┬─ accept ─────────────────────────────────────────────→ ready to build
                    ├─ regen / reref ──→ synth --attempt-next → post → qa
                    ├─ shorten / retranslate ──→ batch make --from-decisions → batch next → translator
                    │                             → batch submit → synth → post → qa
-                   └─ keep_original / skip ─────────────────────────────────→ звучит оригинал
+                   └─ keep_original / skip ─────────────────────────────────→ original plays
 ```
 
-- Подсказка `next` у `qa` говорит, какая ветка нужна сейчас. Цикл закончен, когда `next` советует `babeldub report`.
-- После `tts.max_attempts` (3) попыток на один и тот же текст реплика получает `keep_original`.
-- Если у одного персонажа доля брака в чанке больше 20 %, роль voice останавливает его синтез и разбирается (референсы, стратегия), а не жжёт GPU повторами.
+- The `next` hint of `qa` tells which branch is needed now. The loop is over when `next` suggests `babeldub report`.
+- After `tts.max_attempts` (3) attempts on the same text the line gets `keep_original`.
+- If more than 20 % of one character's lines in a chunk fail, the voice role stops that character's synthesis and investigates (references, strategy) instead of burning GPU time on retries.
 
-### 3.11. `build`: сборка нативных контейнеров
+### 3.11. `build`: native containers
 
 ```text
 babeldub build [--codec auto|pcm16|fadpcm]
 ```
 
-- Для каждого изменённого контейнера адаптер пишет `build/out/<relpath>` и манифест `build/build_manifest.json` (контейнеры, sha1, кодек, модели и их лицензии).
-- Вывод: `containers[]`, `replaced`. Предпросмотр — `--dry-run`.
-- Код 2 с подсказкой про уровень B/C: адаптер не умеет собирать этот формат. Опиши ручной путь из справочника `babeldub-recon` в отчёте; в папку игры ничего не пиши.
-- По умолчанию кодек — `build.codec` проекта (`auto`). Если игра не приняла звук, после отката пересобери с `--codec pcm16`.
+- For every changed container the adapter writes `build/out/<relpath>` and the manifest `build/build_manifest.json` (containers, sha1, codec, models and their licenses).
+- Output: `containers[]`, `replaced`. Preview: `--dry-run`.
+- Code 2 with a hint about level B/C: the adapter cannot build this format. Describe the manual path from the `babeldub-recon` reference in the report; write nothing to the game folder.
+- The default codec is the project's `build.codec` (`auto`). If the game did not accept the audio, roll back and rebuild with `--codec pcm16`.
 
-### 3.12. `verify`: проверка до установки
+### 3.12. `verify`: checks before installing
 
 ```text
 babeldub verify [--game-runtime]
 ```
 
-- Проверка каждого собранного контейнера: структура, число и порядок записей, декодирование.
-- Вывод: `ok`, `problems[]`.
-- Код 3 или `ok` = false: не устанавливать. Причины — в отчёт; при необходимости пересборка.
-- `--game-runtime` загружает библиотеку звука самой игры. Только по явной просьбе пользователя.
+- Checks every built container: structure, number and order of entries, decoding.
+- Output: `ok`, `problems[]`.
+- Code 3 or `ok` = false: do not install. Put the reasons in the report; rebuild if needed.
+- `--game-runtime` loads the game's own sound library. Only on the user's explicit request.
 
 ### 3.13. `install`, `uninstall`, `reapply`
 
-| Команда | Что делает | Вывод |
+| Command | What it does | Output |
 |---|---|---|
-| `babeldub install` | бэкап оригиналов в `build/backup`, атомарная замена, `build/install.json` | `installed[]`, `files`, `backup`, `rollback` |
-| `babeldub uninstall` | возврат оригиналов по бэкапу с проверкой sha1 | `restored[]` |
-| `babeldub reapply` | повторная установка после обновления игры (сверка sha1 исходников) | `reapplied[]`, `changed[]` |
+| `babeldub install` | backs up the originals to `build/backup`, atomic replacement, `build/install.json` | `installed[]`, `files`, `backup`, `rollback` |
+| `babeldub uninstall` | restores the originals from the backup with a sha1 check | `restored[]` |
+| `babeldub reapply` | reinstalls after a game update (checks the sha1 of the source files) | `reapplied[]`, `changed[]` |
 
-- CLI отказывается писать в папку игры, пока игра запущена или найден античит, и если файлы игры — не те оригиналы, из которых шла сборка. Все три команды поддерживают `--dry-run` (план без записи).
-- «the game is running» → попросить закрыть игру и лаунчер (в отчёте), не обходить флагами.
-- «not the originals this build was made from» или `reapply` с непустым `changed[]`: игра обновилась. Пересобери из новых оригиналов: `build` → `verify` → `install`.
+- The CLI refuses to write to the game folder while the game is running or anti-cheat is detected, and if the game files are not the originals the build was made from. All three commands support `--dry-run` (plan without writing).
+- "the game is running" → ask the user (in the report) to close the game and its launcher; do not bypass with flags.
+- "not the originals this build was made from", or `reapply` with a non-empty `changed[]`: the game was updated. Rebuild from the new originals: `build` → `verify` → `install`.
 
-## 4. Служебные команды
+## 4. Utility commands
 
-| Команда | Зачем |
+| Command | Purpose |
 |---|---|
-| `babeldub status` | стадии, счётчики (`counts`), `next_stage`, `next` — первая стадия в состоянии `pending`, `running` или `failed` (стадии в `attention` считаются пройденными); код 3, если есть стадии в `attention` или `failed` (детали по стадиям — в `attention{стадия: …}`). Первый шаг после любого перерыва |
-| `babeldub set <section.key>=<value> ...` | изменить настройки `project.json` (вывод `changed{}`), например `babeldub set qa.max_cer=0.2 compute.device=cuda` |
-| `babeldub query --where <условия> --fields <поля> --limit N` | выборка реплик (вывод `rows[]`, `total`) |
-| `babeldub sample --scene X --n 30 --out file.jsonl` | реплики сцены в файл для агента (вывод `file`, `n`) |
-| `babeldub games` | реестр игр и их проектов (вывод `games[]`, `active`) |
+| `babeldub status` | stages, counters (`counts`), `next_stage`, `next` — the first stage in the `pending`, `running` or `failed` state (stages in `attention` count as passed); code 3 if any stage is in `attention` or `failed` (per-stage details in `attention{stage: …}`). The first step after any break |
+| `babeldub set <section.key>=<value> ...` | change `project.json` settings (output `changed{}`), e.g. `babeldub set qa.max_cer=0.2 compute.device=cuda` |
+| `babeldub query --where <conditions> --fields <fields> --limit N` | select lines (output `rows[]`, `total`) |
+| `babeldub sample --scene X --n 30 --out file.jsonl` | lines of a scene into a file for an agent (output `file`, `n`) |
+| `babeldub games` | registry of games and their projects (output `games[]`, `active`) |
 
-`query` — основной способ смотреть данные. Всегда задавай `--fields` и `--limit` (до 50).
+`query` is the main way to look at data. Always pass `--fields` and `--limit` (up to 50).
 
-- Условия `--where`: `поле=значение`, `поле!=значение`, `поле~подстрока`, через запятую.
-- Поля строки: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; кастинг — `char` (id или имя), `char_name`; перевод — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; вычисляемые — `has_text`, `translated`, `verdict`, `decision`, `voiced`.
-- Пример: `babeldub query --where char=Zbyszek,verdict=fail --fields id,qa.reasons,qa.cer,qa.sim,qa.sim_ref --limit 30`.
+- `--where` conditions: `field=value`, `field!=value`, `field~substring`, comma-separated.
+- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`.
+- Example: `babeldub query --where char=Zbyszek,verdict=fail --fields id,qa.reasons,qa.cer,qa.sim,qa.sim_ref --limit 30`.
 
-## 5. Артефакты проекта
+## 5. Project artifacts
+
+`BABELDUB_HOME` defaults to `~/.babeldub` (`C:\Users\<user>\.babeldub` on Windows); the `BABELDUB_HOME` environment variable overrides it.
 
 ```text
 BABELDUB_HOME/projects/<slug>/
-├─ project.json                         настройки и ответы пользователя
+├─ project.json                         settings and the user's answers
 ├─ state/ progress.json events.jsonl locks/gpu.lock
 ├─ inventory/ recon.json assets.jsonl lines.jsonl texts.jsonl report.md
-├─ audio/orig/<uid>.wav                 декодированные оригиналы
+├─ audio/orig/<uid>.wav                 decoded originals
 ├─ cast/ characters.jsonl assign.jsonl refs.jsonl refs/<char_id>/<uid>.wav casting_sheet.md labels.agent.jsonl
 ├─ translate/ glossary.jsonl glossary.agent.jsonl style_bible.md batches/<bid>.in.jsonl batches/<bid>.out.jsonl translations.jsonl
 ├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav
@@ -252,22 +255,22 @@ BABELDUB_HOME/projects/<slug>/
 └─ logs/
 ```
 
-| Кто пишет | Файлы |
+| Who writes | Files |
 |---|---|
-| только CLI (канон) | `project.json`, `state/*`, `inventory/*`, `cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`, `translate/glossary.jsonl`, `translate/batches/*.in.jsonl`, `translate/translations.jsonl`, `synth/*`, `post/*`, `qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/report.md`, `build/*` |
-| роли (агенты) | `cast/labels.agent.jsonl` (caster), `translate/glossary.agent.jsonl` и `translate/style_bible.md` (lexicon), `translate/batches/<bid>.out.jsonl` (translator), `qa/decisions.agent.jsonl` (qa) |
+| CLI only (canon) | `project.json`, `state/*`, `inventory/*`, `cast/characters.jsonl`, `cast/assign.jsonl`, `cast/refs.jsonl`, `cast/casting_sheet.md`, `translate/glossary.jsonl`, `translate/batches/*.in.jsonl`, `translate/translations.jsonl`, `synth/*`, `post/*`, `qa/qa.jsonl`, `qa/decisions.jsonl`, `qa/report.md`, `build/*` |
+| roles (agents) | `cast/labels.agent.jsonl` (caster), `translate/glossary.agent.jsonl` and `translate/style_bible.md` (lexicon), `translate/batches/<bid>.out.jsonl` (translator), `qa/decisions.agent.jsonl` (qa) |
 
-Все JSONL — UTF-8 без BOM, по объекту на строку. Повтор того же `id` — новая ревизия, побеждает последняя.
+All JSONL files are UTF-8 without BOM, one object per line. A repeated `id` is a new revision; the last one wins.
 
-## 6. Жизненный цикл реплики
+## 6. Line lifecycle
 
 ```text
-inventoried (extract) → linked (link; без текста → звучит оригинал)
-→ cast (персонаж не выбран → звучит оригинал)
+inventoried (extract) → linked (link; no text → original plays)
+→ cast (character not selected → original plays)
 → translated (translations.jsonl)
 → synth (attempt k) → post → qa
    ├─ accept → build → install
-   ├─ regen / reref → synth (attempt k+1, не больше tts.max_attempts на текст)
-   ├─ shorten / retranslate → новый перевод → synth
-   └─ keep_original / skip → в сборку не идёт, звучит оригинал
+   ├─ regen / reref → synth (attempt k+1, at most tts.max_attempts per text)
+   ├─ shorten / retranslate → new translation → synth
+   └─ keep_original / skip → not built, original plays
 ```

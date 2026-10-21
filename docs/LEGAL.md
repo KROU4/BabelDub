@@ -1,62 +1,62 @@
-# Ответственное использование BabelDub
+# Responsible use of BabelDub
 
-BabelDub — инструмент для личной локализации игр, которые вы законно приобрели. Он работает целиком на вашем компьютере и меняет файлы только вашей копии игры. Этот документ объясняет, где проходят границы допустимого. Это не юридическая консультация: законы разных стран отличаются, и за то, как вы используете инструмент, отвечаете вы.
+BabelDub is a tool for personal localization of games you have legally acquired. It runs entirely on your computer and changes only the files of your copy of the game. This document explains where the limits are. It is not legal advice: laws differ between countries, and you are responsible for how you use the tool.
 
-## Коротко
+## In short
 
-- Используйте BabelDub только с **легальной копией** игры и только для **личного использования** или **некоммерческих фан-переводов**.
-- **Не распространяйте файлы игры**: ни исходные, ни пересобранные банки и архивы, ни извлечённое аудио, ни таблицы текстов.
-- **Не распространяйте синтезированные голоса актёров** без их согласия и согласия правообладателя.
-- Делиться можно **инструкциями и патч-скриптами**: описанием, как получить результат на своей копии игры, глоссарием и собственным переводом, если правообладатель не возражает.
-- Соблюдайте **лицензии моделей**: некоторые разрешают только некоммерческое использование.
+- Use BabelDub only with a **legal copy** of the game and only for **personal use** or **non-commercial fan translations**.
+- **Do not distribute game files**: neither the original nor the rebuilt banks and archives, nor extracted audio, nor text tables.
+- **Do not distribute synthesized actor voices** without the consent of the actors and of the rights holder.
+- You may share **instructions and patch scripts**: a description of how to get the result on your own copy of the game, a glossary and your own translation, if the rights holder does not object.
+- Respect **model licenses**: some allow only non-commercial use.
 
-## Лицензионное соглашение игры (EULA)
+## The game's license agreement (EULA)
 
-Многие EULA запрещают модификацию, декомпиляцию или распространение изменённых файлов, а у онлайн-игр — любое вмешательство в клиент. Прежде чем локализовать игру:
+Many EULAs forbid modifying, decompiling or distributing modified files, and online games forbid any tampering with the client. Before localizing a game:
 
-1. Прочитайте EULA и правила моддинга игры. Многие разработчики явно разрешают фан-переводы и моды, некоторые — нет.
-2. Не используйте BabelDub с онлайн-играми, античитами и соревновательными режимами: изменённые файлы могут привести к блокировке аккаунта.
-3. BabelDub не обходит защиту от копирования и DRM и не запускает исполняемые файлы игры. Если игра защищена шифрованием, которое нужно взламывать, инструмент для неё не предназначен.
+1. Read the game's EULA and modding rules. Many developers explicitly allow fan translations and mods; some do not.
+2. Do not use BabelDub with online games, anti-cheat systems or competitive modes: modified files can get your account banned.
+3. BabelDub does not bypass copy protection or DRM and does not run the game's executables. If the game is protected by encryption that would have to be cracked, the tool is not meant for it.
 
-Установка делается с резервной копией: `babeldub uninstall` возвращает оригинальные файлы, сверяя контрольные суммы. Проверка целостности файлов в Steam тоже вернёт оригинал; после неё `babeldub reapply` поставит локализацию снова.
+Installation always makes a backup: `babeldub uninstall` restores the original files and checks their checksums. A Steam file integrity check also restores the originals; after it, `babeldub reapply` installs the localization again.
 
-## Голоса актёров и согласие
+## Actor voices and consent
 
-BabelDub клонирует голоса оригинальных персонажей, а значит — голоса реальных людей, актёров озвучки. Голос человека во многих странах защищён правом на изображение и голос, законами о персональных данных и договорами актёров с издателем.
+BabelDub clones the voices of the original characters, which means the voices of real people: voice actors. In many countries a person's voice is protected by personality and publicity rights, by personal data laws and by the actors' contracts with the publisher.
 
-- **Личное использование.** Переозвучка вашей копии игры для себя — основной сценарий BabelDub. Синтезированные файлы остаются у вас.
-- **Публикация.** Видео, стримы и сборки с синтезированными голосами актёров публикуйте только тогда, когда это разрешают правообладатель игры и сами актёры, а также правила платформы. Помечайте такой контент как созданный ИИ.
-- **Недопустимо:** выдавать синтез за настоящую запись актёра, создавать с помощью клонированного голоса реплики, которых не было в игре, для обмана, дискредитации, рекламы или политических материалов, а также использовать голоса для обучения других моделей.
-- Некоторые лицензии моделей прямо запрещают имитацию голоса узнаваемого человека без согласия или использование выходов для обучения других моделей. Эти условия действуют вместе с законом.
+- **Personal use.** Re-voicing your copy of a game for yourself is BabelDub's main scenario. The synthesized files stay with you.
+- **Publishing.** Publish videos, streams and builds with synthesized actor voices only when the game's rights holder, the actors themselves and the platform rules allow it. Label such content as AI-generated.
+- **Not acceptable:** passing synthesis off as a real recording of the actor; using a cloned voice to create lines that were not in the game for deception, defamation, advertising or political material; using the voices to train other models.
+- Some model licenses explicitly forbid imitating the voice of a recognisable person without consent or using the outputs to train other models. These terms apply in addition to the law.
 
-Если вы актёр или правообладатель и считаете, что BabelDub используют против ваших прав, напишите в [issues](https://github.com/KROU4/BabelDub/issues) или приватно через [Security Advisories](https://github.com/KROU4/BabelDub/security/advisories/new).
+If you are an actor or a rights holder and believe BabelDub is being used against your rights, write in [issues](https://github.com/KROU4/BabelDub/issues) or privately through [Security Advisories](https://github.com/KROU4/BabelDub/security/advisories/new).
 
-## Что можно и что нельзя распространять
+## What you may and may not distribute
 
-| Можно (если правообладатель не запрещает) | Нельзя |
+| You may (unless the rights holder forbids it) | You may not |
 |---|---|
-| Описание, какие команды BabelDub запускать для конкретной игры и версии | Оригинальные файлы игры, извлечённые банки, аудио и тексты |
-| Свой перевод в виде патча или таблицы, которая применяется к копии пользователя | Пересобранные файлы игры (`.bank`, `.pak`, `.assets` и т. п.) |
-| Глоссарий, стиль-гайд, настройки проекта без игровых данных | Синтезированные реплики голосами актёров без их согласия |
-| Отчёты о совместимости с играми и форматами | Готовые «русские озвучки» для скачивания |
+| A description of which BabelDub commands to run for a particular game and version | Original game files, extracted banks, audio and texts |
+| Your translation as a patch or table that is applied to the user's own copy | Rebuilt game files (`.bank`, `.pak`, `.assets` and so on) |
+| A glossary, a style guide, project settings without game data | Synthesized lines in actors' voices without their consent |
+| Compatibility reports for games and formats | Ready-made "dubs" for download |
 
-Проект BabelDub сам придерживается этих правил: в репозитории, релизах и тестах нет файлов игр и голосов актёров, тесты работают на синтетических данных.
+The BabelDub project follows these rules itself: the repository, the releases and the tests contain no game files and no actor voices, and the tests run on synthetic data.
 
-## Лицензии моделей
+## Model licenses
 
-BabelDub не распространяет веса моделей: команда `babeldub setup` скачивает их с Hugging Face и показывает лицензию каждой модели. Модели по умолчанию (Qwen3-TTS, Chatterbox Multilingual, faster-whisper, SpeechBrain ECAPA) выпущены под разрешительными лицензиями (Apache-2.0, MIT). Модели с некоммерческими лицензиями (например, CC-BY-NC) в набор по умолчанию не входят и ставятся только по вашему явному согласию; результат их работы нельзя использовать коммерчески.
+BabelDub does not distribute model weights: `babeldub setup` downloads them from Hugging Face and shows each model's license. The default models (Qwen3-TTS, Chatterbox Multilingual, faster-whisper, SpeechBrain ECAPA) are released under permissive licenses (Apache-2.0, MIT). Models with non-commercial licenses (for example, CC-BY-NC) are not in the default set and are installed only with your explicit consent; their output must not be used commercially.
 
-У отдельных моделей есть дополнительные условия:
+Some models have extra terms:
 
-- Chatterbox (Resemble AI) встраивает в каждый файл неслышимый водяной знак PerTh — не удаляйте его;
-- русское дообучение Qwen3-TTS на ударения обучено частично на текстах без объявленной лицензии — автор просит проверить это перед коммерческим использованием.
+- Chatterbox (Resemble AI) embeds an inaudible PerTh watermark in every file; do not remove it;
+- the Russian stress fine-tune of Qwen3-TTS was trained partly on texts without a declared license; the author asks you to check this before commercial use.
 
-Полный список с лицензиями — в [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) и в выводе `babeldub models list`.
+The full list with licenses is in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md), in [docs/MODELS.md](https://github.com/KROU4/BabelDub/blob/main/docs/MODELS.md) and in the output of `babeldub models list`.
 
-## Внешние инструменты
+## External tools
 
-ffmpeg, vgmstream и Rubber Band — отдельные программы со своими лицензиями (LGPL/GPL, ISC-подобная, GPL). BabelDub их не включает в свой код и не распространяет: он вызывает установленные у вас программы или скачивает официальные сборки в `BABELDUB_HOME`.
+ffmpeg, vgmstream and Rubber Band are separate programs with their own licenses (LGPL/GPL, ISC-style, GPL). BabelDub does not include them in its code and does not distribute them: it calls the programs installed on your machine or downloads the official builds into `BABELDUB_HOME`.
 
-## Отказ от ответственности
+## Disclaimer
 
-BabelDub распространяется по лицензии MIT «как есть», без каких-либо гарантий. Авторы не отвечают за повреждение файлов игры, блокировку аккаунтов, нарушение EULA или прав третьих лиц в результате использования инструмента.
+BabelDub is distributed under the MIT license "as is", without any warranty. The authors are not liable for damaged game files, banned accounts, EULA violations or infringement of third-party rights resulting from the use of the tool.

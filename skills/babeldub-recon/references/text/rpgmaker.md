@@ -1,37 +1,37 @@
-# RPG Maker: тексты `data/*.json` и `*.rvdata2`
+# RPG Maker: `data/*.json` and `*.rvdata2` texts
 
-Читай, если игра на RPG Maker (см. `engines/rpgmaker.md`).
+Read this if the game is on RPG Maker (see `engines/rpgmaker.md`).
 
-## Уровень в BabelDub v0.1
+## Level in BabelDub v0.1
 
-**C** — CLI v0.1 тексты RPG Maker не читает; только инструкции. План — позже, уровень A через rvpacker-txt-rs.
+**C**: CLI v0.1 does not read RPG Maker texts; instructions only. Planned later at level A via rvpacker-txt-rs.
 
-## Где лежит
+## Where the text is
 
-- **MV/MZ:** `data/*.json` — карты (`Map*.json`), общие события (`CommonEvents.json`), отряды (`Troops.json`) и база данных. Реплики — команды событий с кодом **401 «Show Text»** (по гайдам сообщества).
-- **XP/VX/VX Ace:** `Data/*.rvdata2` (Ruby Marshal), обычно внутри архива `Game.rgss3a`/`.rgss2a`/`.rgssad`.
+- **MV/MZ:** `data/*.json`: maps (`Map*.json`), common events (`CommonEvents.json`), troops (`Troops.json`) and the database. Dialogue lines are event commands with code **401 "Show Text"** (per community guides).
+- **XP/VX/VX Ace:** `Data/*.rvdata2` (Ruby Marshal), usually inside the `Game.rgss3a`/`.rgss2a`/`.rgssad` archive.
 
-## Чем извлечь и собрать
+## Extraction and rebuild tools
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |---|---|
-| rvpacker-txt-rs | текст RPG Maker 2000/2003/XP/VX/VX Ace/MV/MZ ↔ `.txt`: `read` и `write`, кодировки |
-| rpgmtranslate | GUI поверх rvpacker |
-| RPGMakerDecrypter | распаковка архивов старых версий, `--recreate-project` |
+| rvpacker-txt-rs | RPG Maker 2000/2003/XP/VX/VX Ace/MV/MZ text ↔ `.txt`: `read` and `write`, encodings |
+| rpgmtranslate | GUI on top of rvpacker |
+| RPGMakerDecrypter | unpacks archives of older versions, `--recreate-project` |
 
-Нативный путь: `rvpacker-txt-rs write`; для старых движков — распакованная `Data/` и удалённый архив (по гайдам сообщества).
+Native path: `rvpacker-txt-rs write`; for older engines, an unpacked `Data/` with the archive removed (per community guides).
 
-## Связь с озвучкой
+## Link to the voice
 
-Встроенной системы голоса нет: звук реплики обычно проигрывается командой SE перед сообщением или плагином. Связь ищут по порядку команд в событии (SE → Show Text).
+There is no built-in voice system: a line's sound is usually played by an SE command before the message, or by a plugin. The link is found from the order of commands in the event (SE → Show Text).
 
-## Подводные камни
+## Pitfalls
 
-- Кодировки текста в старых версиях.
-- Плагины игры меняют вывод текста и звука.
-- Шрифты без кириллицы.
+- Text encodings in older versions.
+- The game's plugins change how text and sound are output.
+- Fonts without Cyrillic.
 
-## Ссылки
+## Links
 
 - rvpacker-txt-rs — https://github.com/RPG-Maker-Translation-Tools/rvpacker-txt-rs
 - rpgmtranslate — https://github.com/RPG-Maker-Translation-Tools/rpgmtranslate

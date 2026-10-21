@@ -1,64 +1,67 @@
 ---
 name: babeldub-voice
-description: "Dub game lines in the original character's own voice: clone timbre, emotion and delivery from the original line with local voice-cloning TTS (Qwen3-TTS by default, Chatterbox for pl/tr), choose the voice prompt (line, char, auto), run the pilot and batch synthesis, fit length and loudness to the original. Use for the synth and post stages and voice questions: озвучь голосом героя, тот же голос на русском, клонирование голоса, нейроозвучка, синтез реплик."
+description: "Dub game lines in the original character's own voice: clone timbre, emotion and delivery from the original line with GPU-first local voice-cloning TTS (Qwen3-TTS by default, Chatterbox for pl/tr), choose the voice prompt (line, char, auto), run the pilot and batch synthesis, fit length and loudness to the original. Use for the synth and post stages and for voice questions. Example requests: 'dub the voices', 'voice it in the hero's voice', 'same voice in another language', 'clone the voices', 'why does the voice sound different', 'озвучь голосом героя', 'тот же голос на русском', 'сделай русскую озвучку', 'клонирование голоса', 'нейроозвучка', 'синтез реплик', 'doblar el juego', 'doblaje con la voz original'."
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); NVIDIA GPU with 8+ GB VRAM recommended, CPU works but is many times slower; engine venvs and weights are installed by babeldub setup."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: голос — дубляж голосом оригинального героя
+# BabelDub: voice — dubbing in the original character's voice
 
-Скилл стадий `synth` и `post`. Его задача — чтобы каждая переведённая реплика прозвучала **голосом своего оригинального героя**: тот же тембр, та же эмоция и подача, тот же темп, только на целевом языке. Это не «синтез речи диктором», а дубляж. Мимику и липсинк не перестраиваем.
+This skill covers the `synth` and `post` stages. Its job is to make every translated line sound like **its own original character**: the same timbre, emotion, delivery and pace, only in the target language. This is dubbing, not "text-to-speech by a narrator". Facial animation and lip sync are not rebuilt.
 
-Скилл дополняет роль `voice` из скилла `babeldub-localize` (`references/roles/voice.md`). Порядок стадий и коды выхода — там же, в `references/pipeline.md`.
+The skill complements the `voice` role of the `babeldub-localize` skill (`references/roles/voice.md`). Stage order and exit codes are in that skill's `references/pipeline.md`.
 
-## Главный принцип
+Talk to the user in the user's language. Keep commands, field names and identifiers as they are.
 
-1. **Голосовой промпт — сама оригинальная реплика.** Движок клонирования получает исходный звук этой строки и её исходный текст (ICL-клонирование: `ref_audio` + `ref_text`). Так переносится не только тембр, но и подача именно этой фразы: крик остаётся криком, шёпот шёпотом, усталость усталостью. Это `tts.ref_strategy=line`.
-2. **Лучший референс персонажа** берётся, когда оригинал не годится в промпт: реплика короче `tts.line_ref_min_s`, нет исходного текста, есть флаги `has_bed` (музыка или шум под голосом) или `nonverbal`. Это `char`.
-3. **По умолчанию `auto`**: `line` для пригодной реплики, иначе `char`, а если референса персонажа нет — всё-таки короткий оригинал, чтобы не терять реплику.
-4. **Перевод должен лечь на интонацию оригинала.** Текст с той же эмоциональной формой (восклицание, вопрос, запинка, обрыв) звучит естественно; текст «спокойнее» оригинала спорит с промптом.
-5. **QA сравнивает голос синтеза с оригиналом героя** (сходство ECAPA с оригинальной репликой и с референсом персонажа относительно его собственной базовой линии). «Уплывший» голос уходит на перегенерацию или смену промпта.
+## Core principle
 
-Подробно — почему промпт-реплика переносит эмоцию, когда нужен `char`, как бороться с акцентом языка оригинала — в [references/ref-strategy.md](references/ref-strategy.md). Прочитай его перед пилотом.
+1. **The voice prompt is the original line itself.** The cloning engine receives the original audio of this line and its original text (ICL cloning: `ref_audio` + `ref_text`). This carries over not only the timbre but the delivery of this exact phrase: a shout stays a shout, a whisper stays a whisper, fatigue stays fatigue. This is `tts.ref_strategy=line`.
+2. **The character's best reference** is used when the original line is unfit as a prompt: the line is shorter than `tts.line_ref_min_s`, has no original text, or has the flags `has_bed` (music or noise under the voice) or `nonverbal`. This is `char`.
+3. **The default is `auto`**: `line` for a usable line, otherwise `char`; if the character has no reference, the short original line is used anyway, so the line is not lost.
+4. **The translation must fit the intonation of the original.** A text with the same emotional shape (exclamation, question, hesitation, cut-off) sounds natural; a text "calmer" than the original fights the prompt.
+5. **QA compares the synthesized voice with the original character** (ECAPA similarity to the original line and to the character reference, relative to the character's own baseline). A line whose voice has drifted is regenerated or gets a different prompt.
 
-## Когда применять
+Details on why a line prompt carries the emotion, when `char` is needed, and how to reduce the accent of the original language: [references/ref-strategy.md](references/ref-strategy.md). Read it before the pilot.
 
-- Стадии `synth` и `post`, пилот перед массовым синтезом, повторы после решений QA.
-- Вопросы «почему голос не похож», «почему акцент», «почему реплика длиннее оригинала», «какой движок взять для языка X».
+## When to use
 
-## Предусловия
+- The `synth` and `post` stages, the pilot before batch synthesis, reruns after QA decisions.
+- Questions like "why doesn't the voice sound like the character", "why is there an accent", "why is the line longer than the original", "which engine to use for language X".
 
-1. `babeldub status`: стадии `cast` и `translate` завершены (`done` или `attention`), есть выбранные персонажи и переводы. Иначе `synth` вернёт код 2 с подсказкой.
-2. Окружение движка установлено. Если `synth` вернул код 4 (нет venv или весов), примени скилл `babeldub-doctor`: `babeldub doctor` → `babeldub setup --engines <движок>`.
-3. Реплики без исходного текста (`no_text`) не переводятся и не озвучиваются: в v0.1 у них остаётся оригинальный голос.
+## Preconditions
 
-## Шаг 1. Движок и модель
+1. `babeldub status`: the `cast` and `translate` stages are finished (`done` or `attention`), and there are selected characters and translations. Otherwise `synth` returns exit code 2 with a hint.
+2. The engine environment is installed. If `synth` returned exit code 4 (no venv or weights), apply the `babeldub-doctor` skill: `babeldub doctor` → `babeldub setup --engines <engine>`.
+3. Lines without original text (`no_text`) are neither translated nor voiced: in v0.1 they keep the original voice.
+4. GPU-first: synthesis runs on the NVIDIA GPU when one is present (project `compute.device=auto`); `babeldub synth --device cuda|cpu` overrides it for one run. If a GPU is present but the worker ended up on the CPU, `synth` says so in `notes`: reinstall the engine with CUDA wheels (`babeldub setup --engines <engine> --force`).
 
-- По умолчанию `tts.engine=qwen3tts` (Qwen3-TTS-12Hz-1.7B-Base, Apache-2.0). Языки: zh, en, ja, ko, de, fr, ru, pt, es, it. Дообучение на русские ударения `qwen3-tts-12hz-1.7b-ru-stress-cf` хуже сохраняет голос героя: оно не ставится по умолчанию и включается только явно (`references/engines.md`).
-- Для `pl`, `tr` и других языков из списка Chatterbox Multilingual V3 (MIT, 23 языка, неслышимый водяной знак PerTh в каждом файле): `babeldub set tts.engine=chatterbox` или разово `babeldub synth --engine chatterbox`.
-- Если движок не говорит на целевом языке, `synth` вернёт код 2 с подсказкой, какой движок взять. Если не подходит ни один движок v0.1 (например, `uk`), честно скажи об этом в отчёте: модели с некоммерческой лицензией (OmniVoice и др.) в v0.1 не входят.
-- Модель внутри движка выбирается по тиру железа (`tts.tier=auto`). Явно: `babeldub set tts.model=<имя из babeldub models list>`. Пример: при нехватке видеопамяти — `Qwen3-TTS-12Hz-0.6B-Base`.
+## Step 1. Engine and model
 
-Полная картина движков, тиров по VRAM, лицензий и того, что не входит в v0.1, — [references/engines.md](references/engines.md).
+- The default is `tts.engine=qwen3tts` (Qwen3-TTS-12Hz-1.7B-Base, Apache-2.0). Languages: zh, en, ja, ko, de, fr, ru, pt, es, it. The Russian-stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` keeps the hero's voice less faithfully: it is not installed by default and is enabled only explicitly (`references/engines.md`).
+- For `pl`, `tr` and the other languages of Chatterbox Multilingual V3 (MIT, 23 languages, an inaudible PerTh watermark in every file): `babeldub set tts.engine=chatterbox`, or for one run `babeldub synth --engine chatterbox`.
+- If the engine does not speak the target language, `synth` returns exit code 2 with a hint about which engine to use. If no v0.1 engine fits (for example, `uk`), say so honestly in the report: models with non-commercial licenses (OmniVoice and others) are not part of v0.1.
+- The engine's model is chosen by hardware tier (`tts.tier=auto`). To pick one explicitly, run `babeldub set tts.model=<name from babeldub models list>`, for example `Qwen3-TTS-12Hz-0.6B-Base` when video memory is short.
 
-## Шаг 2. Стратегия промпта
+The full picture of engines, VRAM tiers, licenses and what is not in v0.1: [references/engines.md](references/engines.md).
 
-Оставь `tts.ref_strategy=auto`, если нет причины менять. Порог длительности `tts.line_ref_min_s` = 1,6 с. Меняй настройку только по метрикам пилота и записывай причину в отчёт:
+## Step 2. Prompt strategy
 
-| Ситуация | Действие |
+Keep `tts.ref_strategy=auto` unless there is a reason to change it. The duration threshold `tts.line_ref_min_s` is 1.6 s. Change settings only based on pilot metrics, and record the reason in the report:
+
+| Situation | Action |
 |---|---|
-| сходство в норме, эмоции на месте | ничего не менять |
-| у персонажа много коротких реплик, `line` даёт «чужой» голос | поднять порог: `babeldub set tts.line_ref_min_s=2.5` |
-| оригиналы персонажа грязные (эхо, рация, музыка без флага `has_bed`) | этот персонаж с `char`: `babeldub set tts.ref_strategy=char` → `babeldub synth --chars <id>` → вернуть `auto` |
-| сильный акцент языка оригинала в целевом языке | см. раздел про акцент в `references/ref-strategy.md` |
+| similarity is fine, emotions are intact | change nothing |
+| the character has many short lines, `line` gives a "wrong" voice | raise the threshold: `babeldub set tts.line_ref_min_s=2.5` |
+| the character's originals are dirty (echo, radio, music without the `has_bed` flag) | use `char` for this character: `babeldub set tts.ref_strategy=char` → `babeldub synth --chars <id>` → set `auto` back |
+| strong accent of the original language in the target language | see the accent section in `references/ref-strategy.md` |
 
-Перегенерацию с другим промптом для отдельных реплик делает решение QA `reref` (см. шаг 6), а не смена глобальной настройки.
+To regenerate individual lines with a different prompt, use the QA decision `reref` (see step 6), not the global setting.
 
-## Шаг 3. Пилот
+## Step 3. Pilot
 
-Пилот — 10–20 реплик каждого главного персонажа, до массового синтеза:
+Before batch synthesis, run a pilot on 10–20 lines of every main character:
 
 ```text
 babeldub synth --chars <id1>,<id2> --limit 30
@@ -67,68 +70,68 @@ babeldub qa
 babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.sim,qa.sim_ref,qa.ratio,qa.reasons --limit 30
 ```
 
-- `synth --dry-run` заранее покажет план: сколько реплик, сколько с промптом `line` и сколько с `char` (`by_ref`), что пропущено и почему (`skipped`).
-- Критерии пилота у персонажа: сходство голоса `sim ≥ qa.min_sim_ratio × sim_ref` (0,75), разборчивость `cer ≤ qa.max_cer` (0,15), длительность `ratio ≤ qa.max_duration_ratio` (1,35; для `fixed_length` — 1 + `post.fixed_length_tolerance`).
-- Ты звук не слышишь. Пилот не блокирует работу, но в отчёте назови пользователю 3–5 файлов `post/audio/<uid>.wav` главных героев для прослушивания и как сравнить их с `audio/orig/<uid>.wav`.
-- Провал пилота у персонажа разбирай по таблице шага 2 и по `references/ref-strategy.md`. Проблема с референсами персонажа целиком (все реплики «не тем голосом», смена пола) — вопрос к роли caster, а не к синтезу.
+- `synth --dry-run` shows the plan in advance: how many lines, how many with a `line` prompt and how many with `char` (`by_ref`), what is skipped and why (`skipped`).
+- Pilot criteria per character: voice similarity `sim ≥ qa.min_sim_ratio × sim_ref` (0.75), intelligibility `cer ≤ qa.max_cer` (0.15), duration `ratio ≤ qa.max_duration_ratio` (1.35; for `fixed_length`, 1 + `post.fixed_length_tolerance`).
+- You cannot hear audio. The pilot does not block the work, but in the report (in the user's language) list 3–5 `post/audio/<uid>.wav` files of the main characters for the user to listen to, and explain how to compare them with `audio/orig/<uid>.wav`.
+- Analyze a character's pilot failure using the step 2 table and `references/ref-strategy.md`. A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role, not for synthesis.
 
-## Шаг 4. Массовый синтез
+## Step 4. Batch synthesis
 
-1. Чанками по персонажам, главные первыми: `babeldub synth --chars <id>`; большие объёмы дроби `--limit 200`. Сверяйся с полем `remaining`.
-2. Время прогона оценивай по `rtf` и `audio_s` из вывода: минуты речи × `rtf`.
-3. `synth` держит `state/locks/gpu.lock`. GPU-стадии (`synth`, `qa`, а также `cast` с эмбеддингами) не запускай параллельно.
-4. `tts.best_of` в v0.1 не используется: слабые реплики перегенерирует цикл QA (`regen` → `synth --attempt-next`).
-5. После `tts.max_attempts` (3) попыток для одного и того же текста CLI больше не синтезирует реплику и выдаёт её в `attention`; дальше решает QA (обычно `keep_original`).
+1. In chunks by character, main characters first: `babeldub synth --chars <id>`; split large volumes with `--limit 200`. Watch the `remaining` field.
+2. Estimate run time from `rtf` and `audio_s` in the output: minutes of speech × `rtf`.
+3. `synth` holds `state/locks/gpu.lock`. Do not run GPU stages (`synth`, `qa`, and `cast` with embeddings) in parallel.
+4. `tts.best_of` is not used in v0.1: the QA loop regenerates weak lines (`regen` → `synth --attempt-next`).
+5. After `tts.max_attempts` (3) attempts for the same text, the CLI stops synthesizing the line and reports it in `attention`; QA decides what happens next (usually `keep_original`).
 
-Реакция на вывод `synth`:
+Reacting to the `synth` output:
 
-| Признак | Что делать |
+| Symptom | What to do |
 |---|---|
-| код 3, `failed` > 0, разные ошибки | повторить `babeldub synth` (неудачные реплики получат новую попытку) |
-| `aborted`: 5 одинаковых ошибок подряд или воркер падает | лог из поля `log`; при `CUDA out of memory` — модель меньше (`tts.model`) или закрыть программы, занимающие видеопамять; см. `troubleshooting.md` скилла `babeldub-localize` |
-| `runaway[]` — генерация упёрлась в предел длины | обычно «зацикливание» модели; такие реплики почти всегда провалят QA и уйдут на `regen` |
-| `skipped.no_ref` | у персонажа нет ни референса, ни пригодного оригинала — вопрос к caster (`babeldub cast`) |
-| `skipped.not_selected` | персонаж не выбран для озвучки — так и задумано, звучит оригинал |
+| exit code 3, `failed` > 0, various errors | rerun `babeldub synth` (failed lines get a new attempt) |
+| `aborted`: 5 identical errors in a row, or the worker crashes | read the log from the `log` field; on `CUDA out of memory`, use a smaller model (`tts.model`) or close programs that use video memory; see `troubleshooting.md` of the `babeldub-localize` skill |
+| `runaway[]`: generation hit the length limit | usually the model got stuck in a loop; such lines almost always fail QA and go to `regen` |
+| `skipped.no_ref` | the character has neither a reference nor a usable original: a question for the caster (`babeldub cast`) |
+| `skipped.not_selected` | the character is not selected for dubbing: this is intended, and the original voice plays |
 
-## Шаг 5. Пост-обработка
+## Step 5. Post-processing
 
-`babeldub post` подгоняет каждую реплику под оригинал: обрезает тишину синтеза, сжимает речь без смены высоты тона в пределах `post.max_stretch` (до 12 %), восстанавливает паузы в начале и конце как у оригинала, выравнивает громкость под оригинальную реплику, ставит потолок true peak `post.true_peak_db` (−1 дБ), приводит частоту и каналы к оригиналу. Замедлять речь `post` не умеет: короткий дубль дополняется паузами.
+`babeldub post` fits every line to the original: it trims silence from the synthesized audio, compresses speech without changing pitch within `post.max_stretch` (up to 12%), restores the leading and trailing pauses of the original, matches loudness to the original line, caps true peak at `post.true_peak_db` (−1 dB), and converts sample rate and channels to the original. `post` cannot slow speech down: a short dubbed line is padded with pauses.
 
-- Код 3 и `over_length[]` — реплики не влезли даже после сжатия. Их судьбу решает QA (обычно `shorten`).
-- Правила длины по типам реплик и каскад подгонки — [references/length-policy.md](references/length-policy.md).
-- Порядок операций, громкость, формат, эффекты — [references/post.md](references/post.md).
+- Exit code 3 and `over_length[]`: lines that did not fit even after compression. QA decides their fate (usually `shorten`).
+- Length rules by line type and the fitting cascade: [references/length-policy.md](references/length-policy.md).
+- Order of operations, loudness, format, effects: [references/post.md](references/post.md).
 
-## Шаг 6. Цикл после QA
+## Step 6. The loop after QA
 
 ```text
-babeldub qa → (роль qa) qa/decisions.agent.jsonl → babeldub decide apply
+babeldub qa → (qa role) qa/decisions.agent.jsonl → babeldub decide apply
 babeldub synth --attempt-next → babeldub post → babeldub qa
 ```
 
-- `regen` — новая попытка с другим seed и тем же промптом.
-- `reref` — новая попытка с другим промптом: `line` → `char`; `char` → другой референс персонажа или оригинал строки.
-- `shorten` и `retranslate` идут через перевод (скилл `babeldub-translate`), затем обычный `synth` подхватит новый текст как новую попытку.
-- Если у персонажа в чанке больше 20 % брака, останови его синтез и разберись с причиной (шаг 2, роль caster), а не гоняй повторы.
+- `regen`: a new attempt with a different seed and the same prompt.
+- `reref`: a new attempt with a different prompt: `line` → `char`; `char` → another character reference or the line's original.
+- `shorten` and `retranslate` go through translation (the `babeldub-translate` skill); then a regular `synth` picks up the new text as a new attempt.
+- If more than 20% of a character's lines in a chunk are defective, stop synthesis for that character and find the cause (step 2, caster role) instead of running retries.
 
-## Коды выхода synth и post
+## synth and post exit codes
 
-| Код | synth | post |
+| Code | synth | post |
 |---|---|---|
-| 0 | всё запланированное синтезировано | все реплики обработаны |
-| 2 | нет реплик или переводов, движок не говорит на целевом языке, неверный `--engine` | нет синтеза (`synth` не запускался) |
-| 3 | есть `failed`, `attention` или `aborted` | есть `over_length[]` или ошибки отдельных файлов |
-| 4 | нет venv движка или весов → `babeldub-doctor` | нет инструмента растяжения (rubberband или ffmpeg) → `babeldub-doctor` |
+| 0 | everything planned was synthesized | all lines processed |
+| 2 | no lines or translations, the engine does not speak the target language, invalid `--engine` | no synthesis (`synth` was not run) |
+| 3 | there are `failed`, `attention` or `aborted` | there are `over_length[]` or errors in individual files |
+| 4 | no engine venv or weights → `babeldub-doctor` | no stretching tool (rubberband or ffmpeg) → `babeldub-doctor` |
 
-## Чего не делать
+## What not to do
 
-- Не синтезировать мимо CLI (свои скрипты, чужие TTS): так теряются идемпотентность, учёт попыток, лицензии моделей в манифесте сборки.
-- Не включать модели с некоммерческой лицензией без показа лицензии и явного «да» пользователя.
-- Не «улучшать» оригинальные реплики перед клонированием (шумодав, эквалайзер): промпт должен звучать как герой в игре.
-- Не править канон (`synth/results.jsonl`, `post/post.jsonl`) и папку игры.
+- Do not synthesize outside the CLI (your own scripts, third-party TTS): that loses idempotency, attempt accounting and the model licenses in the build manifest.
+- Do not enable models with non-commercial licenses without showing the license and getting an explicit "yes" from the user.
+- Do not "improve" the original lines before cloning (denoising, EQ): the prompt must sound like the character in the game.
+- Do not edit the canon (`synth/results.jsonl`, `post/post.jsonl`) or the game folder.
 
-## Справочники
+## References
 
-- Перед пилотом и при любом «голос не похож», «пропала эмоция», «акцент» — [references/ref-strategy.md](references/ref-strategy.md).
-- При выборе движка для языка, нехватке VRAM, вопросах о лицензиях — [references/engines.md](references/engines.md).
-- При `over_length[]`, катсценах и видео (`fixed_length`), решении `shorten` — [references/length-policy.md](references/length-policy.md).
-- При вопросах о громкости, паузах, формате, эффектах рации и эха — [references/post.md](references/post.md).
+- Before the pilot and on any "the voice does not match", "the emotion is gone", "accent": [references/ref-strategy.md](references/ref-strategy.md).
+- When choosing an engine for a language, on low VRAM, on license questions: [references/engines.md](references/engines.md).
+- On `over_length[]`, cutscenes and videos (`fixed_length`), the `shorten` decision: [references/length-policy.md](references/length-policy.md).
+- On questions about loudness, pauses, format, radio and echo effects: [references/post.md](references/post.md).

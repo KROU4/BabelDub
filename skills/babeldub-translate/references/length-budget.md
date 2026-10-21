@@ -1,64 +1,64 @@
-# Бюджет длины: слоги, варианты, сокращение
+# Length budget: syllables, variants, shortening
 
-Читай при `over_budget[]` из `batch submit`, для реплик `fixed_length` и для задач `shorten`.
+Read this on `over_budget[]` from `batch submit`, for `fixed_length` lines and for `shorten` tasks.
 
-## 1. Откуда берётся `budget_syll`
+## 1. Where `budget_syll` comes from
 
-`budget_syll` = длительность файла оригинала (`dur_s`) × темп целевого языка, округлённо. Темп — средний для дублированной речи, в слогах в секунду:
+`budget_syll` = duration of the original file (`dur_s`) × the target language's pace, rounded. The pace is the average for dubbed speech, in syllables per second:
 
-| Язык | Слогов/с | | Язык | Слогов/с |
+| Language | Syllables/s | | Language | Syllables/s |
 |---|---|---|---|---|
-| ru, uk, be | 5,5 | | fr, it | 6,8 |
-| pl, cs, en, nl, sv | 5,8 | | es | 7,2 |
-| de | 5,6 | | pt, tr | 6,6 |
-| zh | 5,0 | | ja | 7,4 |
-| ko | 6,4 | | прочие | 6,0 |
+| ru, uk, be | 5.5 | | fr, it | 6.8 |
+| pl, cs, en, nl, sv | 5.8 | | es | 7.2 |
+| de | 5.6 | | pt, tr | 6.6 |
+| zh | 5.0 | | ja | 7.4 |
+| ko | 6.4 | | other | 6.0 |
 
-Как CLI считает слоги в тексте (эвристика, не фонетика):
+How the CLI counts syllables in a text (a heuristic, not phonetics):
 
-- русский, украинский, польский, чешский и другие языки с «прозрачным» письмом — **по числу гласных букв** (в русском: `аеёиоуыэюя`); латинское слово внутри кириллицы — по английской эвристике;
-- немецкий, испанский, французский, итальянский — по группам гласных;
-- английский — группы гласных с поправкой на немое `e`;
-- китайский, японский, корейский — по иероглифам, слогам хангыля и кане;
-- разметка выбрасывается; цифры превращаются в слова, если в окружении CLI установлен `num2words`, иначе считаются примерно по 1,5 слога на цифру (поэтому числа в `dub_text` пиши словами сразу).
+- Russian, Ukrainian, Polish, Czech and other languages with "transparent" spelling: **by the number of vowel letters** (in Russian: `аеёиоуыэюя`); a Latin-script word inside Cyrillic text uses the English heuristic;
+- German, Spanish, French, Italian: by vowel groups;
+- English: vowel groups with a correction for silent `e`;
+- Chinese, Japanese, Korean: by characters, Hangul syllables and kana;
+- markup is dropped; digits become words if `num2words` is installed in the CLI environment, otherwise they count as roughly 1.5 syllables per digit (so write numbers in `dub_text` as words from the start).
 
-Статус `fit` в `translate/translations.jsonl`: `over` — слогов больше 115 % бюджета; `under` — меньше 50 %; иначе `ok`.
+The `fit` status in `translate/translations.jsonl`: `over` means more than 115% of the budget; `under` means less than 50%; otherwise `ok`.
 
-Бюджет — ориентир, а не закон: реальная длительность зависит от голоса и подачи. Окончательную длину проверяют `post` и QA (`ratio`).
+The budget is a guide, not a law: the real duration depends on the voice and the delivery. The final length is checked by `post` and QA (`ratio`).
 
-## 2. Как держать бюджет
+## 2. How to stay within the budget
 
-1. **Сначала смысл и интонация, потом длина.** Начни с естественного перевода, затем ужимай.
-2. **Ужимай так, как ужимают в дубляже** (для русского — `references/russian.md`, раздел 7): убери избыточные местоимения и связки, возьми более короткий синоним, замени придаточное причастным оборотом или наоборот — что короче, сожми обращение, сохрани ключевое слово и эмоцию.
-3. **Не жертвуй**: смыслом, именами из глоссария, эмоциональной формой (восклицание, вопрос, обрыв), шуткой, если она двигает сцену.
-4. **Варианты.** Если полный перевод не влезает, дай в `variants` до двух более коротких: сначала компактный, затем самый сжатый. `batch submit` возьмёт первый вариант из влезающих (`picked_variant`), а исходный текст агента сохранит в `agent_text`.
-5. **Короче бюджета — нормально**, если так звучит естественно. `under` — подсказка проверить, не потерян ли смысл, а не ошибка. Не раздувай реплику словами-паразитами ради длины.
+1. **Meaning and intonation first, length second.** Start with a natural translation, then tighten it.
+2. **Tighten the way dubbing does** (for Russian: `references/russian.md`, section 7): remove redundant pronouns and connectives, take a shorter synonym, swap a subordinate clause for a participial phrase or vice versa, whichever is shorter, compress the form of address, keep the key word and the emotion.
+3. **Do not sacrifice** meaning, glossary names, the emotional shape (exclamation, question, cut-off), or a joke that moves the scene.
+4. **Variants.** If the full translation does not fit, give up to two shorter ones in `variants`: first a compact one, then the tightest. `batch submit` takes the first variant that fits (`picked_variant`) and keeps the agent's original text in `agent_text`.
+5. **Shorter than the budget is fine** if it sounds natural. `under` is a hint to check that no meaning was lost, not an error. Do not pad a line with filler words to reach the length.
 
 ## 3. `fixed_length: true`
 
-Катсцены, видео и таймлайны: звук обязан уложиться в длительность оригинала (допуск 3 %, `post.fixed_length_tolerance`). Для них:
+Cutscenes, videos and timelines: the audio must fit into the duration of the original (3% tolerance, `post.fixed_length_tolerance`). For these lines:
 
-- бюджет обязателен; ориентир — не выше бюджета, лучше на 1–2 слога меньше;
-- варианты давай всегда, если полный перевод близок к границе;
-- если `batch submit` вернул подсказку «fixed_length lines over budget will be cut in-game», сдай более короткий `dub_text` или варианты.
+- the budget is mandatory; aim at or below the budget, preferably 1–2 syllables under;
+- always provide variants if the full translation is close to the limit;
+- if `batch submit` returned the hint "fixed_length lines over budget will be cut in-game", submit a shorter `dub_text` or variants.
 
-## 4. Сокращение по решению QA (`shorten`)
+## 4. Shortening after a QA decision (`shorten`)
 
-Реплика приходит в новом пакете с `task: "shorten"` и `current` — текущим текстом. В заметке QA обычно есть фактическое отношение длительностей `ratio` (дубль / оригинал).
+The line arrives in a new batch with `task: "shorten"` and `current`, the current text. The QA note usually contains the actual duration ratio `ratio` (dub / original).
 
-Сколько срезать: примерно `budget_syll × (1 − 1/ratio)` слогов. Пример: бюджет 12 слогов, `ratio` 1,25 → убрать около 2–3 слогов.
+How much to cut: roughly `budget_syll × (1 − 1/ratio)` syllables. Example: budget 12 syllables, `ratio` 1.25 → remove about 2–3 syllables.
 
-Правила:
+Rules:
 
-- сокращай `current`, а не переводи заново: термины, «ты/вы», найденные формулировки уже проверены;
-- если сокращение уже было (это второй `shorten`), ищи другую конструкцию фразы, а не очередное слово на выброс; после двух неудачных сокращений CLI оставит оригинальный голос;
-- объясни в `notes`, что убрано («убрал вводное „ну знаешь“, ratio 1,25 → ~1,05»).
+- shorten `current`, do not translate from scratch: the terms, the formal or informal "you" and the wording found earlier have already been checked;
+- if the line has already been shortened (this is the second `shorten`), look for a different sentence structure rather than one more word to drop; after two unsuccessful shortenings the CLI keeps the original voice;
+- explain in `notes` what was removed ("removed the filler 'you know', ratio 1.25 → ~1.05").
 
-## 5. Задача `retranslate`
+## 5. The `retranslate` task
 
-Приходит, когда QA видит плохую разборчивость (`cer`) при нормальном голосе. Причины почти всегда в тексте:
+It arrives when QA sees poor intelligibility (`cer`) with a normal voice. The causes are almost always in the text:
 
-- числа, даты, единицы цифрами или сокращениями — напиши словами;
-- латиница, бренды, аббревиатуры — по `pronounce` глоссария или транслитерацией;
-- длинные составные слова и скопления согласных — синоним;
-- омографы (замок/замок) — перестрой фразу или поставь ударение (для русского — `references/russian.md`, раздел 4).
+- numbers, dates, units written as digits or abbreviations: write them as words;
+- Latin script, brands, acronyms: per the glossary's `pronounce` or by transliteration;
+- long compound words and consonant clusters: use a synonym;
+- homographs (Russian за́мок / замо́к, "castle" / "lock"): rephrase or add a stress mark (for Russian: `references/russian.md`, section 4).

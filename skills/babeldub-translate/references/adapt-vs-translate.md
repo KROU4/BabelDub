@@ -1,61 +1,61 @@
-# Официальный перевод, адаптация или перевод
+# Official translation, adaptation or translation
 
-Читай после `babeldub translate plan`, если не ясно, какой режим нужен, и перед работой в режиме `adapt`.
+Read this after `babeldub translate plan` if it is unclear which mode is needed, and before working in `adapt` mode.
 
-## 1. Три режима
+## 1. Three modes
 
-| Режим | Исходный материал | Кто пишет текст | Плюсы | Минусы |
+| Mode | Source material | Who writes the text | Pros | Cons |
 |---|---|---|---|---|
-| `official` | официальный перевод игры на целевой язык | CLI копирует (`translate use-official`) | субтитры и озвучка совпадают дословно; ноль работы переводчика | официальный текст писался для чтения, а не для голоса: бывает длинным, книжным, с цифрами и сокращениями |
-| `adapt` | официальный перевод как основа | агент правит под голос и длину | терминология и смысл как в игре, но звучит естественно и влезает по длине | субтитры (в v0.1 они не меняются) местами разойдутся с озвучкой |
-| `translate` | исходный текст | агент переводит | полный контроль над звучанием | без официальной терминологии; больше работы и проверок |
+| `official` | the game's official translation into the target language | the CLI copies it (`translate use-official`) | subtitles and voice match word for word; zero translator work | official text was written to be read, not spoken: it can be long, bookish, full of digits and abbreviations |
+| `adapt` | the official translation as the base | the agent edits it for voice and length | terminology and meaning as in the game, but it sounds natural and fits the length | subtitles (unchanged in v0.1) diverge from the voice in places |
+| `translate` | the source text | the agent translates | full control over how it sounds | no official terminology; more work and more checks |
 
-Настройка `translation.mode`:
+The `translation.mode` setting:
 
-- `auto` (по умолчанию) — `official`, если официальный текст есть у ≥ 95 % озвучиваемых реплик с текстом, иначе `translate`. **Режим `adapt` в `auto` не выбирается никогда.**
-- явно: `babeldub set translation.mode=adapt` (или `official`, `translate`), затем `babeldub translate plan`.
+- `auto` (default): `official` if official text exists for ≥ 95% of the voiced lines with text, otherwise `translate`. **`auto` never chooses `adapt`.**
+- explicit: `babeldub set translation.mode=adapt` (or `official`, `translate`), then `babeldub translate plan`.
 
-## 2. Когда что выбирать
+## 2. When to choose which
 
-| Ситуация | Режим |
+| Situation | Mode |
 |---|---|
-| официального перевода нет | `translate` |
-| официальный перевод есть, реплики короткие, разговорные, в цифрах и аббревиатурах чисто | `official` |
-| официальный перевод есть, но заметно длиннее оригинала, книжный, с цифрами и латиницей, есть катсцены `fixed_length` | `adapt` |
-| официальный перевод неполный (меньше 95 %) | `auto` даст `translate`; если официальный текст хорош, лучше `adapt`: реплики без официального текста агент переведёт, остальные адаптирует |
+| there is no official translation | `translate` |
+| an official translation exists; lines are short and conversational, with no digits or abbreviations | `official` |
+| an official translation exists but is noticeably longer than the original, bookish, with digits and Latin script, and there are `fixed_length` cutscenes | `adapt` |
+| the official translation is incomplete (below 95%) | `auto` gives `translate`; if the official text is good, `adapt` is better: the agent translates lines without official text and adapts the rest |
 
-Выбор режима — не вопрос пользователю (правило двух вопросов). Решай по выводу `translate plan` (`official_share`) и выборке: `babeldub query --where translated=false --fields id,text.src,text.tgt_official,audio.dur_s --limit 20` — сравни длину официального текста с бюджетом слогов. Решение и причину — в итоговый отчёт.
+Choosing the mode is not a question for the user (the two-questions rule). Decide from the `translate plan` output (`official_share`) and a sample: `babeldub query --where translated=false --fields id,text.src,text.tgt_official,audio.dur_s --limit 20`; compare the length of the official text with the syllable budget. Put the decision and the reason into the final report.
 
-Пример: в Low-Budget Repairs официальный русский текст есть у всех диалоговых ключей, а медиана отношения длины русских строк к английским — 1,00, поэтому разбор игры рекомендует `adapt`: менять почти нечего, но катсцены требуют подгонки. Это иллюстрация, а не правило для других игр.
+Example: in Low-Budget Repairs official Russian text exists for every dialogue key, and the median ratio of Russian to English line length is 1.00, so the game analysis recommends `adapt`: almost nothing needs changing, but the cutscenes need fitting. This is an illustration, not a rule for other games.
 
-## 3. Правила адаптации (`adapt`)
+## 3. Adaptation rules (`adapt`)
 
-Основа — `tgt_official`. Твоя задача — сделать его **произносимым голосом героя и уложить в длительность**, а не переписать.
+The base is `tgt_official`. Your task is to make it **speakable in the character's voice and fit it into the duration**, not to rewrite it.
 
-1. **Смысл и термины не меняются.** Имена, названия, ключевая информация — как в официальном тексте и глоссарии.
-2. **Править можно только ради голоса:**
-   - длина: сократить до бюджета (`references/length-budget.md`);
-   - произносимость: числа и даты словами, раскрытые сокращения, латиница по глоссарию, «ё»;
-   - интонация: вернуть эмоциональную форму оригинала, если официальный текст её сгладил (оригинал кричит «Stop!», а официально — «Пожалуйста, остановитесь.» → «Стой!»);
-   - живая речь: книжные обороты, которые актёр не скажет («осуществить», «в настоящий момент»).
-3. **Каждое заметное отличие** объясни в `notes`: «сократил ради длины», «вернул восклицание», «число словами». Мелкие правки (ё, числа) можно не объяснять.
-4. **Если официальный текст и так хорош** — верни его в `dub_text` без изменений. Не правь ради правки.
-5. **Если официальный текст ошибочен** (неверный род говорящего, перепутанное «ты/вы», явная ошибка перевода) — исправь и обязательно отметь в `notes`.
+1. **Meaning and terms do not change.** Names, titles, key information stay as in the official text and the glossary.
+2. **Edit only for the sake of the voice:**
+   - length: shorten to the budget (`references/length-budget.md`);
+   - pronounceability: numbers and dates in words, abbreviations expanded, Latin script per the glossary, «ё» in Russian;
+   - intonation: restore the emotional shape of the original if the official text smoothed it out (the original shouts "Stop!", while the official text says «Пожалуйста, остановитесь.» ("Please stop.") → «Стой!» ("Stop!"));
+   - living speech: replace bookish phrases an actor would never say (Russian examples: «осуществить», «в настоящий момент»).
+3. **Explain every noticeable difference** in `notes`: "shortened for length", "restored the exclamation", "number in words". Minor edits («ё», numbers) need no explanation.
+4. **If the official text is already good**, return it unchanged in `dub_text`. Do not edit for the sake of editing.
+5. **If the official text is wrong** (wrong gender of the speaker, mixed-up formal and informal "you", an obvious mistranslation), fix it and always mark it in `notes`.
 
-## 4. Перевод (`translate`)
+## 4. Translation (`translate`)
 
-- Переводи с `src` по правилам скилла: эмоциональная форма, бюджет, плейсхолдеры, глоссарий, грамматика.
-- Если официальный перевод есть у части реплик (`tgt_official` не пуст), он — ориентир для терминологии и стиля.
-- Реплики без исходного текста в пакеты не попадают: их не переводят, они звучат в оригинале.
+- Translate from `src` by the rules of the skill: emotional shape, budget, placeholders, glossary, grammar.
+- If some lines have an official translation (`tgt_official` is not empty), use it as a guide for terminology and style.
+- Lines without source text do not go into batches: they are not translated and sound in the original.
 
-## 5. Официальный текст (`official`)
+## 5. Official text (`official`)
 
-`babeldub translate use-official` копирует официальный текст в `translate/translations.jsonl` (`by: official`) и считает `fit`. Вывод: `copied`, `missing`, `over_budget`. Дальше:
+`babeldub translate use-official` copies the official text into `translate/translations.jsonl` (`by: official`) and computes `fit`. Output: `copied`, `missing`, `over_budget`. Then:
 
-- `missing` > 0 — реплики без официального текста: `batch make` → переводчик;
-- много `over_budget` или катсцены не влезают — повод перейти на `adapt` (`babeldub set translation.mode=adapt`, `translate plan`, `batch make`): в этом режиме в пакеты попадут реплики с текстом от `official`;
-- QA потом сам отправит на `shorten` то, что не влезло после пост-обработки.
+- `missing` > 0: lines without official text → `batch make` → translator;
+- many `over_budget` lines, or cutscenes that do not fit: a reason to switch to `adapt` (`babeldub set translation.mode=adapt`, `translate plan`, `batch make`); in that mode lines with text from `official` go into batches;
+- later QA itself sends to `shorten` whatever still does not fit after post-processing.
 
-## 6. Субтитры
+## 6. Subtitles
 
-В v0.1 субтитры игры не пересобираются: игрок видит официальный (или исходный) текст, а слышит `dub_text`. Поэтому в `adapt` держи `dub_text` близко к официальному тексту по смыслу и порядку информации — тогда расхождение со строкой на экране почти незаметно. `sub_text` сохраняется в проекте для будущей версии, где субтитры будут записываться в игру.
+In v0.1 the game's subtitles are not rebuilt: the player sees the official (or source) text and hears `dub_text`. So in `adapt` keep `dub_text` close to the official text in meaning and in the order of information; then the mismatch with the on-screen line is barely noticeable. `sub_text` is kept in the project for a future version that writes subtitles into the game.

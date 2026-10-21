@@ -1,11 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Уязвимость безопасности
+  - name: Security vulnerability
     url: https://github.com/KROU4/BabelDub/security/advisories/new
-    about: Сообщайте приватно через GitHub Security Advisories, не в открытых issues (см. SECURITY.md).
-  - name: Установка в Claude Code, Codex, Gemini и другие хосты
+    about: Report privately through GitHub Security Advisories, not in public issues (see SECURITY.md).
+  - name: Installing in Claude Code, Codex, Gemini and other hosts
     url: https://github.com/KROU4/BabelDub/blob/main/docs/HOSTS.md
-    about: Команды установки и ограничения каждого хоста.
-  - name: Правила использования
+    about: Install commands and the limits of each host.
+  - name: Supported engines and formats
+    url: https://github.com/KROU4/BabelDub/blob/main/docs/ENGINES.md
+    about: What is automatic (level A), what needs a tool you install (B) and what is instructions only (C).
+  - name: Terms of use
     url: https://github.com/KROU4/BabelDub/blob/main/docs/LEGAL.md
-    about: EULA игр, голоса актёров, лицензии моделей.
+    about: Game EULAs, actor voices, model licenses.

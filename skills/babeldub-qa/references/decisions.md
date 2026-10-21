@@ -1,69 +1,69 @@
-# Решения по браку: дерево, формат, примеры
+# Decisions on defects: tree, format, examples
 
-Читай перед записью `qa/decisions.agent.jsonl`.
+Read this before writing `qa/decisions.agent.jsonl`.
 
-## 1. Формат `qa/decisions.agent.jsonl`
+## 1. Format of `qa/decisions.agent.jsonl`
 
-UTF-8 без BOM, по объекту на строку:
+UTF-8 without BOM, one object per line:
 
 ```json
 {"id": "fmod:StreamingAssets/Dialogue_en-US.bank#fsb1:0042", "decision": "reref", "attempt": 2, "note": "sim 0.41 / sim_ref 0.62, sim_line low: shout with radio effect"}
 ```
 
-| Поле | Обязательно | Значение |
+| Field | Required | Value |
 |---|---|---|
-| `id` | да | существующий `id` реплики |
-| `decision` | да | `accept` \| `regen` \| `reref` \| `shorten` \| `retranslate` \| `keep_original` \| `skip` |
-| `attempt` | нет | целое ≥ 1; по умолчанию — последняя обработанная попытка реплики |
-| `note` | нет | строка: почему так решено (метрики, причина), для `shorten` — фактическое `ratio` и сколько срезать |
+| `id` | yes | an existing line `id` |
+| `decision` | yes | `accept` \| `regen` \| `reref` \| `shorten` \| `retranslate` \| `keep_original` \| `skip` |
+| `attempt` | no | integer ≥ 1; defaults to the line's latest processed attempt |
+| `note` | no | string: why this was decided (metrics, reason); for `shorten` — the actual `ratio` and how much to cut |
 
-Поля `by` и `ts` не пиши: их ставит CLI. `babeldub decide apply` проверяет весь файл; если хоть одна строка невалидна (неизвестный `id`, решение не из списка, `attempt` не целое), не применяется ничего (код 2, список в `errors`). Одинаковые решения повторно не дублируются. Решение агента для попытки имеет приоритет над авто-решением CLI для той же попытки.
+Do not write the `by` and `ts` fields: the CLI sets them. `babeldub decide apply` validates the whole file; if even one line is invalid (unknown `id`, a decision not on the list, a non-integer `attempt`), nothing is applied (exit code 2, list in `errors`). Identical decisions are not duplicated on repeat. An agent decision for an attempt takes priority over the CLI auto-decision for the same attempt.
 
-**Важно:** `accept` относится к последней обработанной попытке. В v0.1 `post` хранит файл только последней попытки, поэтому принять более раннюю нельзя: сборка пометит такую реплику `stale_attempt` и не возьмёт её. Если лучшей была ранняя попытка, а последняя хуже — `regen` (новая попытка) или `keep_original`.
+**Important:** `accept` applies to the latest processed attempt. In v0.1 `post` keeps the file of the latest attempt only, so an earlier attempt cannot be accepted: the build marks such a line `stale_attempt` and does not take it. If an early attempt was the best and the latest is worse, use `regen` (a new attempt) or `keep_original`.
 
-## 2. Дерево решений
+## 2. Decision tree
 
-Проходи сверху вниз, первое подходящее правило решает:
+Go from top to bottom; the first matching rule decides:
 
-1. **Нет речи по смыслу** (реплика — смех, кашель, вздох, музыка; `dub_text` — междометие, а модель выдала мусор) → `keep_original`.
-2. **Реплику не нужно озвучивать** (дубль другой реплики, служебная запись, тестовая строка) → `skip`.
-3. **Служебная причина** (`missing_file`, `qc_error`, `no_dub_text`) → не решай: исправь причину (`post`, повтор `qa`, перевод).
-4. **Попытки исчерпаны** (`attempt` ≥ `tts.max_attempts`) и брак не по длине → `keep_original`, в `note` — что не помогло.
-5. **Голос «уплыл»** (`sim` < `min_sim_ratio × sim_ref`):
-   - `sim_line` низкий, `sim_char` нормальный, промпт был `line` → `reref`;
-   - оба низкие, попытка первая → `regen`;
-   - оба низкие повторно → `reref`;
-   - массово у персонажа (больше 20 % в чанке) → не решать построчно, вернуть персонажа в `failing_chars`.
-6. **Разборчивость** (`cer` > `max_cer`), голос в норме:
-   - сравни `dub_text` и `asr_text`; разница только в имени, числе или междометии → `accept` с `note` или `retranslate` (числа словами, `pronounce`);
-   - пропуски, повторы, чужие слова → `regen`;
-   - второй раз подряд высокий `cer` на том же тексте → `retranslate` с `note`, что упростить.
-7. **Длина** (`ratio` выше предела или `fixed_length` не влез):
-   - `ratio` больше 2 → `regen` (сбой модели);
-   - иначе → `shorten`, в `note` — `ratio` и сколько слогов срезать;
-   - два сокращения уже были → `keep_original`, или `accept` с `note`, если звук в этой игре не привязан к таймингу (только для обычных диалогов, не для `fixed_length`).
-8. **Пики, клиппинг, тишина** → `regen`.
-9. **Всё в порогах** → `accept`.
+1. **No speech in substance** (the line is laughter, a cough, a sigh, music; `dub_text` is an interjection and the model produced garbage) → `keep_original`.
+2. **The line does not need dubbing** (a duplicate of another line, a service entry, a test string) → `skip`.
+3. **Service reason** (`missing_file`, `qc_error`, `no_dub_text`) → do not decide: fix the cause (`post`, rerun `qa`, translation).
+4. **Attempts exhausted** (`attempt` ≥ `tts.max_attempts`) and the defect is not about length → `keep_original`; in `note`, say what did not help.
+5. **The voice "drifted"** (`sim` < `min_sim_ratio × sim_ref`):
+   - `sim_line` low, `sim_char` normal, the prompt was `line` → `reref`;
+   - both low, first attempt → `regen`;
+   - both low again → `reref`;
+   - widespread for a character (more than 20 % in a chunk) → do not decide line by line; return the character in `failing_chars`.
+6. **Intelligibility** (`cer` > `max_cer`), the voice is fine:
+   - compare `dub_text` and `asr_text`; if the difference is only in a name, a number or an interjection → `accept` with a `note`, or `retranslate` (numbers as words, `pronounce`);
+   - skipped words, repetitions, foreign words → `regen`;
+   - high `cer` a second time in a row on the same text → `retranslate`, with a `note` on what to simplify.
+7. **Length** (`ratio` above the limit, or `fixed_length` does not fit):
+   - `ratio` above 2 → `regen` (model failure);
+   - otherwise → `shorten`; in `note`, give the `ratio` and how many syllables to cut;
+   - two shortenings already done → `keep_original`, or `accept` with a `note` if audio in this game is not tied to timing (only for ordinary dialogue, not for `fixed_length`).
+8. **Peaks, clipping, silence** → `regen`.
+9. **Everything within thresholds** → `accept`.
 
-## 3. Примеры
+## 3. Examples
 
-| Метрики | Решение | `note` |
+| Metrics | Decision | `note` |
 |---|---|---|
-| `cer` 0,05, `sim` 0,52, `sim_ref` 0,60 (0,87 × базы), `ratio` 1,1 | `accept` | — |
-| `cer` 0,40; `dub_text` «Збышек, иди сюда»; `asr_text` «збышик иди сюда» | `accept` | «ASR misspells the name; the rest matches» |
-| `cer` 0,60; `asr_text` содержит половину фразы и повтор | `regen` | «skipped words and repetition, attempt 1» |
-| `sim` 0,30, `sim_line` 0,22, `sim_char` 0,38, `sim_ref` 0,58; реплика — крик по рации | `reref` | «line prompt carries the radio effect; use char» |
-| `ratio` 1,22, `fixed_length` true | `shorten` | «ratio 1.22 on a cutscene: cut ~3 syllables of 14» |
-| `ratio` 3,4, `cer` 0,7 | `regen` | «runaway generation» |
-| попытка 3, `sim` всё ещё низкий | `keep_original` | «3 attempts, voice drifts on whisper» |
-| `dub_text` «Ха-ха», модель выдала шум | `keep_original` | «laughter, original kept» |
+| `cer` 0.05, `sim` 0.52, `sim_ref` 0.60 (0.87 × baseline), `ratio` 1.1 | `accept` | — |
+| `cer` 0.40; `dub_text` «Збышек, иди сюда»; `asr_text` «збышик иди сюда» | `accept` | "ASR misspells the name; the rest matches" |
+| `cer` 0.60; `asr_text` contains half the phrase and a repetition | `regen` | "skipped words and repetition, attempt 1" |
+| `sim` 0.30, `sim_line` 0.22, `sim_char` 0.38, `sim_ref` 0.58; the line is a shout over the radio | `reref` | "line prompt carries the radio effect; use char" |
+| `ratio` 1.22, `fixed_length` true | `shorten` | "ratio 1.22 on a cutscene: cut ~3 syllables of 14" |
+| `ratio` 3.4, `cer` 0.7 | `regen` | "runaway generation" |
+| attempt 3, `sim` still low | `keep_original` | "3 attempts, voice drifts on whisper" |
+| `dub_text` «Ха-ха», the model produced noise | `keep_original` | "laughter, original kept" |
 
-## 4. После `decide apply`
+## 4. After `decide apply`
 
-- `regen`, `reref` → `babeldub synth --attempt-next` → `babeldub post` → `babeldub qa` (скилл `babeldub-voice`).
-- `shorten`, `retranslate` → `babeldub batch make --from-decisions` → переводчик → `batch submit` → `babeldub synth` → `post` → `qa` (скилл `babeldub-translate`).
-- `accept`, `keep_original`, `skip` → терминальные; `babeldub report` и сборка (скилл `babeldub-pack`).
+- `regen`, `reref` → `babeldub synth --attempt-next` → `babeldub post` → `babeldub qa` (skill `babeldub-voice`).
+- `shorten`, `retranslate` → `babeldub batch make --from-decisions` → translator → `batch submit` → `babeldub synth` → `post` → `qa` (skill `babeldub-translate`).
+- `accept`, `keep_original`, `skip` → terminal; `babeldub report` and the build (skill `babeldub-pack`).
 
-## 5. Что вынести человеку
+## 5. What to escalate to the human
 
-Не больше 30 реплик за раунд, только когда ни одно решение не подходит без суждения о смысле или вкусе: спорная атрибуция голоса, сюжетно важная реплика, которую не удаётся сократить, мат или чувствительный контент. Такие реплики получают `keep_original` (сборку они не блокируют) и попадают в раздел «Требует решения человека» итогового отчёта.
+No more than 30 lines per round, and only when no decision fits without a judgment of meaning or taste: disputed voice attribution, a plot-critical line that cannot be shortened, profanity or sensitive content. Such lines get `keep_original` (they do not block the build) and go into the "Needs a human decision" section of the final report.

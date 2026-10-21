@@ -1,34 +1,34 @@
-# Godot: `.pck` и импортированные ресурсы
+# Godot: `.pck` and imported resources
 
-Уровень в v0.1: **C** — адаптера Godot в CLI v0.1 нет. Разведка — скилл `babeldub-recon`, `references/engines/godot.md` и `references/text/godot.md`.
+Level in v0.1: **C** — CLI v0.1 has no Godot adapter. Recon — the `babeldub-recon` skill, `references/engines/godot.md` and `references/text/godot.md`.
 
-Пометки: [проверено] — первоисточник (README инструментов); [по гайдам]; [не проверено].
+Markers: [verified] — a primary source (tool READMEs); [per guides]; [not verified].
 
-## 1. Устройство [по гайдам]
+## 1. Structure [per guides]
 
-- Контейнер `.pck` (магия `GDPC`) рядом с исполняемым файлом или внутри него; бывает шифрование AES-256 с ключом внутри исполняемого файла.
-- Звук после экспорта — импортированные ресурсы: `.oggvorbisstr` (`AudioStreamOggVorbis`), `.sample` (WAV), `.mp3str`; исходный путь ведёт к ним через `.import`.
-- Тексты: CSV импортируется в `.translation`; `OptimizedTranslation` хранит хэши вместо ключей; `.po/.mo` грузятся как Translation; список переводов — в настройках проекта (`project.binary`).
+- The `.pck` container (magic `GDPC`) sits next to the executable or inside it; it may be AES-256 encrypted with the key inside the executable.
+- Audio after export consists of imported resources: `.oggvorbisstr` (`AudioStreamOggVorbis`), `.sample` (WAV), `.mp3str`; the source path leads to them through `.import`.
+- Texts: CSV is imported into `.translation`; `OptimizedTranslation` stores hashes instead of keys; `.po/.mo` load as Translation; the list of translations is in the project settings (`project.binary`).
 
-## 2. Инструменты [проверено: README]
+## 2. Tools [verified: README]
 
-- **GDRE Tools (gdsdecomp)**: Godot 2–4; `--recover`, `--extract`, `--pck-create`, **`--pck-patch`**, **`--patch-translations=<CSV>=<путь ресурса>`**, `--translation-hint` (восстановление ключей), `--key` (AES).
-- **GodotPckTool**: извлечение, список, добавление файлов в `.pck`.
-- Ключ шифрования извлекают отдельной утилитой (gdke) [по гайдам] — это делает пользователь.
+- **GDRE Tools (gdsdecomp)**: Godot 2–4; `--recover`, `--extract`, `--pck-create`, **`--pck-patch`**, **`--patch-translations=<CSV>=<resource path>`**, `--translation-hint` (key recovery), `--key` (AES).
+- **GodotPckTool**: extract, list, add files to a `.pck`.
+- The encryption key is extracted with a separate utility (gdke) [per guides] — the user does this.
 
-## 3. Нативная сборка (ручной путь) [не проверено]
+## 3. Native build (manual path) [not verified]
 
-1. **Аудио:** импортировать новые OGG в пустом проекте Godot **той же версии** (`godot --headless --import`, движок открытый), взять получившиеся импортированные ресурсы и заменить их в `.pck` через `gdre --pck-patch`.
-2. **Текст:** `gdre --patch-translations`.
-3. Ставить изменённый `.pck` только с бэкапом оригинала; `babeldub uninstall` такие ручные замены не откатит.
+1. **Audio:** import the new OGG files in an empty Godot project of **the same version** (`godot --headless --import`; the engine is open source), take the resulting imported resources and replace them in the `.pck` with `gdre --pck-patch`.
+2. **Text:** `gdre --patch-translations`.
+3. Install the modified `.pck` only with a backup of the original; `babeldub uninstall` will not roll back such manual replacements.
 
-## 4. Подводные камни [по гайдам]
+## 4. Pitfalls [per guides]
 
-- Формат импортированных ресурсов зависит от версии движка.
-- Контрольные суммы MD5 в `.pck` (у GDRE есть ключи их игнорирования).
-- Шифрование.
-- Сборки на C# (.NET) устроены иначе.
+- The format of imported resources depends on the engine version.
+- MD5 checksums in the `.pck` (GDRE has switches to ignore them).
+- Encryption.
+- C# (.NET) builds are structured differently.
 
-## 5. Что сказать пользователю
+## 5. What to tell the user
 
-Озвучка готова в `post/audio/`, но для Godot v0.1 не собирает `.pck` автоматически: нужен Godot той же версии для импорта звука и GDRE Tools для патча. Если игра читает звук свободными файлами — проверь, не взял ли их адаптер `loose` (`babeldub scan`).
+The dub is ready in `post/audio/`, but for Godot v0.1 does not build the `.pck` automatically: a Godot of the same version is needed to import the audio, and GDRE Tools to patch. If the game reads audio from loose files, check whether the `loose` adapter picked them up (`babeldub scan`).

@@ -1,4 +1,4 @@
-"""inventory/report.md: human-readable recon summary (in Russian, for the user and the agent)."""
+"""inventory/report.md: human-readable recon summary (for the user and the agent)."""
 
 from __future__ import annotations
 
@@ -7,22 +7,22 @@ from typing import Any
 from babeldub.adapters.base import Asset
 
 LEVEL_TEXT = {
-    "A": "A — полностью автоматически: извлечение и нативная сборка без проприетарных программ",
-    "B": "B — полуавтомат: извлечение автоматически, для сборки нужен инструмент, который ставит пользователь",
-    "C": "C — только чтение/инструкции: сборку агент делает по справочнику вручную",
+    "A": "A — fully automatic: extraction and native repacking without proprietary software",
+    "B": "B — semi-automatic: extraction is automatic, repacking needs a tool that the user installs",
+    "C": "C — read-only/instructions: the agent repacks by hand, following the reference",
 }
-ROLE_TEXT = {"voice": "голос", "text": "текст", "audio": "аудио (музыка/эффекты)", "other": "прочее"}
+ROLE_TEXT = {"voice": "voice", "text": "text", "audio": "audio (music/effects)", "other": "other"}
 
 
 def _size(n: int | None) -> str:
     if not n:
         return "—"
     value = float(n)
-    for unit in ("Б", "КБ", "МБ", "ГБ"):
-        if value < 1024 or unit == "ГБ":
-            return f"{value:.0f} {unit}" if unit == "Б" else f"{value:.1f} {unit}"
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
-    return f"{value:.1f} ГБ"
+    return f"{value:.1f} GB"
 
 
 def _esc(text: Any) -> str:
@@ -32,32 +32,33 @@ def _esc(text: Any) -> str:
 def _engine_lines(engine: dict[str, Any]) -> list[str]:
     if engine.get("id") == "unknown":
         return [
-            "Движок по сигнатурам **не определён**. Нужна ручная разведка по справочникам `skills/babeldub-recon/references`."
+            "The engine was **not identified** by signatures. "
+            "Do a manual recon with the references in `skills/babeldub-recon/references`."
         ]
     head = f"**{engine.get('name')}**"
     if engine.get("version"):
         head += f" {engine['version']}"
     if engine.get("backend"):
-        head += f", скриптовый бэкенд **{str(engine['backend']).upper()}**"
+        head += f", scripting backend **{str(engine['backend']).upper()}**"
         if engine.get("metadata_version"):
             head += f" (metadata v{engine['metadata_version']})"
     if engine.get("variant"):
-        head += f", вариант {engine['variant']}"
+        head += f", variant {engine['variant']}"
     out = [head + "."]
     aa = engine.get("addressables")
     if aa:
-        line = f"Addressables {aa.get('version') or '?'}: каталог `{aa.get('catalog')}`, бандлов {aa.get('bundles')}"
+        line = f"Addressables {aa.get('version') or '?'}: catalog `{aa.get('catalog')}`, bundles: {aa.get('bundles')}"
         if aa.get("crc_entries"):
-            line += f", ненулевой CRC у {aa.get('crc_nonzero')} из {aa.get('crc_entries')}"
+            line += f", non-zero CRC in {aa.get('crc_nonzero')} of {aa.get('crc_entries')}"
             if aa.get("crc_nonzero"):
-                line += " (изменённый бандл потребует обнулить `m_Crc` в каталоге)"
+                line += " (a modified bundle requires zeroing `m_Crc` in the catalog)"
         out.append(line + ".")
     if engine.get("iostore") is not None:
-        out.append(f"Паков: {engine.get('paks')}, IoStore: {'да' if engine.get('iostore') else 'нет'}.")
+        out.append(f"Paks: {engine.get('paks')}, IoStore: {'yes' if engine.get('iostore') else 'no'}.")
     if engine.get("pck"):
         out.append(f"PCK: `{engine['pck']}`.")
     if engine.get("evidence"):
-        out.append("Признаки: " + ", ".join(f"`{_esc(e)}`" for e in engine["evidence"][:5]) + ".")
+        out.append("Evidence: " + ", ".join(f"`{_esc(e)}`" for e in engine["evidence"][:5]) + ".")
     return out
 
 
@@ -70,7 +71,7 @@ def _named_list(items: list[dict[str, Any]], empty: str) -> list[str]:
         if item.get("version"):
             line += f" {item['version']}"
         if item.get("bank_version"):
-            line += f" (версия банков {item['bank_version']})"
+            line += f" (bank version {item['bank_version']})"
         if item.get("evidence"):
             line += " — " + ", ".join(f"`{_esc(e)}`" for e in item["evidence"][:3])
         out.append(line)
@@ -79,7 +80,7 @@ def _named_list(items: list[dict[str, Any]], empty: str) -> list[str]:
 
 def _asset_table(assets: list[Asset], limit: int = 40, short: bool = False) -> list[str]:
     """Markdown table of assets; `short` shows only file names (the folder is printed above)."""
-    rows = ["| Ассет | Адаптер | Локаль | Уровень | Размер | Детали |", "|---|---|---|---|---|---|"]
+    rows = ["| Asset | Adapter | Locale | Level | Size | Details |", "|---|---|---|---|---|---|"]
     for asset in assets[:limit]:
         shown = asset.relpath.rsplit("/", 1)[-1] if short else asset.relpath
         info = asset.info or {}
@@ -88,13 +89,13 @@ def _asset_table(assets: list[Asset], limit: int = 40, short: bool = False) -> l
             if info.get(key) not in (None, "", 0):
                 details.append(f"{key}={info[key]}")
         if info.get("typetree") is False:
-            details.append("нет TypeTree")
+            details.append("no TypeTree")
         rows.append(
             f"| `{_esc(shown)}` | {asset.adapter} | {asset.locale or '—'} | {asset.level} | "
             f"{_size(asset.size)} | {_esc(', '.join(details)) or '—'} |"
         )
     if len(assets) > limit:
-        rows.append(f"| … ещё {len(assets) - limit} | | | | | |")
+        rows.append(f"| … {len(assets) - limit} more | | | | | |")
     return rows
 
 
@@ -104,90 +105,92 @@ def render_report(recon: dict[str, Any], assets: list[Asset], project: dict[str,
     text = [a for a in assets if a.role == "text"]
     audio = [a for a in assets if a.role == "audio"]
     lines: list[str] = [
-        f"# Разведка: {game}",
+        f"# Recon: {game}",
         "",
-        f"- Папка игры: `{recon.get('game_dir')}`",
-        f"- Дата: {recon.get('scanned')}",
-        f"- Целевой язык: {project.get('target_lang') or '—'}",
+        f"- Game folder: `{recon.get('game_dir')}`",
+        f"- Date: {recon.get('scanned')}",
+        f"- Target language: {project.get('target_lang') or '—'}",
         "",
-        "## Движок",
+        "## Engine",
         "",
         *_engine_lines(recon.get("engine", {})),
         "",
-        "## Аудио-middleware",
+        "## Audio middleware",
         "",
-        *_named_list(recon.get("middleware", []), "Не найдено (звук движка или отдельные файлы)."),
+        *_named_list(recon.get("middleware", []), "None found (engine audio or loose files)."),
         "",
-        "## Системы текста и локализации",
+        "## Text and localization systems",
         "",
-        *_named_list(recon.get("text_systems", []), "По сигнатурам не найдены."),
+        *_named_list(recon.get("text_systems", []), "None found by signatures."),
         "",
-        "## Голосовые ассеты",
+        "## Voice assets",
         "",
     ]
     if voice:
         lines += _asset_table(voice)
     else:
         lines.append(
-            "Встроенные адаптеры голосовых ассетов **не нашли**. Озвучку придётся искать вручную по справочнику "
-            "движка или использовать рантайм-подход."
+            "The built-in adapters found **no** voice assets. Find the voice-over by hand with the engine "
+            "reference, or use the runtime approach."
         )
-    lines += ["", "## Текстовые ассеты", ""]
+    lines += ["", "## Text assets", ""]
     if text:
         locales = sorted({a.locale for a in text if a.locale})
         folders = sorted({a.relpath.rsplit("/", 1)[0] if "/" in a.relpath else "." for a in text})
-        lines.append(f"Найдено {len(text)}; локали: {', '.join(locales) if locales else '—'}.")
-        lines.append("Папки: " + ", ".join(f"`{_esc(f)}`" for f in folders[:5]) + ".")
+        lines.append(f"Found: {len(text)}; locales: {', '.join(locales) if locales else '—'}.")
+        lines.append("Folders: " + ", ".join(f"`{_esc(f)}`" for f in folders[:5]) + ".")
         lines.append("")
         lines += _asset_table(text, limit=30, short=True)
     else:
         lines.append(
-            "Не найдены. Исходный текст реплик можно получить распознаванием речи (ASR) на стадии link/qa."
+            "None found. The source text of the lines can be recovered with speech recognition (ASR) "
+            "at the link/qa stage."
         )
     if audio:
-        lines += ["", "## Прочее аудио (музыка, эффекты)", "", f"Ассетов: {len(audio)} (в дубляж не идут)."]
+        lines += ["", "## Other audio (music, effects)", "", f"Assets: {len(audio)} (not dubbed)."]
     level = recon.get("level", "C")
-    lines += ["", "## Уровень поддержки", "", f"**{LEVEL_TEXT.get(level, level)}**."]
+    lines += ["", "## Support level", "", f"**{LEVEL_TEXT.get(level, level)}**."]
     adapters = recon.get("adapters", {})
     if adapters:
         lines.append("")
         for name, rep in adapters.items():
             if "error" in rep:
-                lines.append(f"- адаптер `{name}`: ошибка — {_esc(rep['error'])}")
+                lines.append(f"- adapter `{name}`: error — {_esc(rep['error'])}")
             else:
-                lines.append(f"- адаптер `{name}` (уровень {rep.get('level')}): ассетов {rep.get('assets')}")
+                lines.append(f"- adapter `{name}` (level {rep.get('level')}): assets: {rep.get('assets')}")
     anticheat = recon.get("anticheat", [])
     warnings = recon.get("warnings", [])
-    lines += ["", "## Предупреждения", ""]
+    lines += ["", "## Warnings", ""]
     if anticheat:
         lines.append(
-            "**Найден античит.** Менять файлы можно только в одиночных офлайн-играх; в онлайн-играх это грозит баном."
+            "**Anti-cheat found.** Modify files only in single-player offline games; "
+            "in online games this risks a ban."
         )
     if warnings:
         lines += [f"- {_esc(w)}" for w in warnings]
     elif not anticheat:
-        lines.append("Нет.")
+        lines.append("None.")
     refs = recon.get("refs", {})
-    lines += ["", "## Что читать дальше", ""]
+    lines += ["", "## What to read next", ""]
     for ref in refs.get("recon", []):
-        lines.append(f"- разведка: `{ref}`")
+        lines.append(f"- recon: `{ref}`")
     for ref in refs.get("pack", []):
-        lines.append(f"- сборка: `{ref}`")
+        lines.append(f"- repacking: `{ref}`")
     if not refs.get("recon") and not refs.get("pack"):
-        lines.append("- `skills/babeldub-recon/SKILL.md` — общий порядок ручной разведки")
+        lines.append("- `skills/babeldub-recon/SKILL.md` — the general manual recon procedure")
     stats = recon.get("stats", {})
     lines += [
         "",
-        "## Статистика файлов",
+        "## File statistics",
         "",
-        f"Файлов {stats.get('files')}, папок {stats.get('dirs')}, объём {_size(stats.get('bytes'))}"
-        + (" (обход прерван по лимиту)" if stats.get("truncated") else "")
+        f"Files: {stats.get('files')}, folders: {stats.get('dirs')}, size: {_size(stats.get('bytes'))}"
+        + (" (walk stopped at the limit)" if stats.get("truncated") else "")
         + ".",
         "",
-        "| Расширение | Файлов | Объём |",
+        "| Extension | Files | Size |",
         "|---|---|---|",
     ]
     for row in stats.get("top_ext", [])[:15]:
         lines.append(f"| `{row['ext']}` | {row['files']} | {_size(int(row['bytes']))} |")
-    lines += ["", "Следующий шаг: `babeldub extract`, затем `babeldub link`.", ""]
+    lines += ["", "Next step: `babeldub extract`, then `babeldub link`.", ""]
     return "\n".join(lines)

@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "babeldub",
   "version": "0.1.0",
-  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local voice-cloning TTS, repack into native engine formats.",
+  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local GPU voice-cloning TTS, repack into native engine formats with backup and rollback.",
   "author": {
     "name": "KROU4",
     "url": "https://github.com/KROU4"

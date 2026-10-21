@@ -1,47 +1,47 @@
-# Пороги QA: значения, калибровка, когда менять
+# QA thresholds: values, calibration, when to change them
 
-Читай, если брака подозрительно много или подозрительно мало, и после пилота.
+Read this when there are suspiciously many or suspiciously few defects, and after the pilot.
 
-## 1. Значения по умолчанию
+## 1. Default values
 
-| Настройка (`project.json`) | Значение | Что проверяет |
+| Setting (`project.json`) | Value | What it checks |
 |---|---|---|
-| `qa.max_cer` | 0,15 | разборчивость: доля символьных ошибок распознавания |
-| `qa.min_sim_ratio` | 0,75 | сходство голоса: `sim ≥ 0,75 × sim_ref` |
-| `qa.max_duration_ratio` | 1,35 | длина обычных реплик |
-| `post.fixed_length_tolerance` | 0,03 | длина `fixed_length` (катсцены, видео): `ratio ≤ 1,03` |
-| `post.true_peak_db` | −1,0 | потолок пиков; QA допускает ещё 0,5 дБ |
-| `qa.silence_db` | −50 | ниже — реплика считается тишиной |
-| `tts.max_attempts` | 3 | сколько попыток синтеза до `keep_original` |
+| `qa.max_cer` | 0.15 | intelligibility: share of character errors in recognition |
+| `qa.min_sim_ratio` | 0.75 | voice similarity: `sim ≥ 0.75 × sim_ref` |
+| `qa.max_duration_ratio` | 1.35 | length of ordinary lines |
+| `post.fixed_length_tolerance` | 0.03 | length of `fixed_length` lines (cutscenes, video): `ratio ≤ 1.03` |
+| `post.true_peak_db` | −1.0 | peak ceiling; QA allows another 0.5 dB |
+| `qa.silence_db` | −50 | below this the line counts as silence |
+| `tts.max_attempts` | 3 | how many synthesis attempts before `keep_original` |
 
-Это стартовые значения, а не результат калибровки: на голосах конкретной игры их никто не проверял. В исследовании, на котором построен BabelDub, для русского предлагались и более строгие ориентиры (CER до 0,08 — «хорошо», до 0,20 — «перегенерировать»; сходство не ниже базовой линии персонажа минус 0,05), но и они помечены как требующие калибровки.
+These are starting values, not the result of calibration: nobody has checked them on the voices of a particular game. The research BabelDub is built on also proposed stricter targets for Russian (CER up to 0.08 is "good", up to 0.20 is "regenerate"; similarity no lower than the character's baseline minus 0.05), but those are marked as needing calibration too.
 
-## 2. Калибровка на пилоте
+## 2. Calibration on the pilot
 
-После пилота (скилл `babeldub-voice`, шаг 3) посмотри распределение метрик главных персонажей:
+After the pilot (skill `babeldub-voice`, step 3), look at the metric distribution of the main characters:
 
 ```text
 babeldub query --where char=<id> --fields id,qa.cer,qa.sim,qa.sim_ref,qa.ratio,verdict --limit 50
 babeldub report
 ```
 
-- **CER.** Если у реплик, где `asr_text` по смыслу совпадает с `dub_text` (различия в именах и числах), CER систематически выше порога — порог слишком строг для этой игры (много имён и терминов). Подними: `babeldub set qa.max_cer=0.2`.
-- **Сходство.** Если у персонажа почти все реплики проваливают сходство, а `sim_line` и `sim_char` ведут себя одинаково — сначала проверь референс и атрибуцию (кастинг), и только потом порог. Опускать `min_sim_ratio` ниже 0,65 — значит пропускать «чужие» голоса.
-- **Длина.** Если в игре реплики жёстко привязаны к таймингу (синхронные инструменты, следующий диалог стартует по таймеру), ужесточи: `babeldub set qa.max_duration_ratio=1.15`.
+- **CER.** If lines whose `asr_text` matches `dub_text` in meaning (differences in names and numbers) systematically score CER above the threshold, the threshold is too strict for this game (many names and terms). Raise it: `babeldub set qa.max_cer=0.2`.
+- **Similarity.** If almost all of a character's lines fail similarity, and `sim_line` and `sim_char` behave the same, check the reference and the attribution (casting) first, and only then the threshold. Lowering `min_sim_ratio` below 0.65 means letting "foreign" voices through.
+- **Length.** If lines in the game are tightly bound to timing (synchronous instruments, the next dialogue starts on a timer), tighten it: `babeldub set qa.max_duration_ratio=1.15`.
 
-Каждое изменение порога — в итоговый отчёт с причиной.
+Put every threshold change, with its reason, into the final report.
 
-## 3. После смены порога
+## 3. After changing a threshold
 
-- Новый порог действует на следующие проверки. Чтобы перепроверить уже проверенные попытки, нужен `babeldub qa --force` (флаг стадии из общего набора `--force`). Он заново считает метрики и авто-решения; решения агента для той же попытки CLI не перезаписывает.
-- Базовая линия `sim_ref` кэшируется в `qa/baseline.json` и не зависит от порогов.
+- The new threshold applies to subsequent checks. To recheck attempts that were already checked, run `babeldub qa --force` (the stage flag from the common `--force` set). It recomputes the metrics and auto-decisions; the CLI does not overwrite agent decisions for the same attempt.
+- The `sim_ref` baseline is cached in `qa/baseline.json` and does not depend on thresholds.
 
-## 4. Признаки, что дело не в пороге
+## 4. Signs that the threshold is not the problem
 
-| Наблюдение | Скорее всего | Куда идти |
+| Observation | Most likely | Where to go |
 |---|---|---|
-| брак у одного персонажа, у остальных нет | плохой референс, ошибка атрибуции, грязные оригиналы | роли voice и caster, скилл `babeldub-cast` |
-| брак по CER у всех персонажей одинаковый | текст: числа цифрами, латиница, аббревиатуры | `retranslate`, глоссарий (`pronounce`) |
-| брак по длине массовый | перевод длиннее оригинала | бюджет слогов, режим `adapt`, `shorten` |
-| CER высокий только на репликах до 1 с | ASR на коротком звуке ненадёжен | `accept` с `note`, если `asr_text` близок по смыслу |
-| сходство низкое на всех репликах одного движка | движок плохо клонирует этот язык или пару языков | скилл `babeldub-voice`, раздел про акцент |
+| defects for one character, none for the others | a bad reference, an attribution error, dirty originals | the voice and caster roles, skill `babeldub-cast` |
+| CER defects equal across all characters | the text: numbers as digits, Latin script, abbreviations | `retranslate`, glossary (`pronounce`) |
+| widespread length defects | the translation is longer than the original | syllable budget, `adapt` mode, `shorten` |
+| high CER only on lines under 1 s | ASR is unreliable on short audio | `accept` with a `note` if `asr_text` is close in meaning |
+| low similarity on all lines of one engine | the engine clones this language or language pair poorly | skill `babeldub-voice`, the section on accent |

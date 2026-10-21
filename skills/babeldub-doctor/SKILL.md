@@ -1,113 +1,116 @@
 ---
 name: babeldub-doctor
-description: "Check and prepare the machine for BabelDub game localization and dubbing (localize game, dub, revoice): install or update the babeldub CLI with uv, check GPU, VRAM, ffmpeg, vgmstream and disk space, then set up local TTS voice cloning engines, models and tools. Use on first run, when a babeldub command exits with code 4 or is missing: проверь окружение, установи BabelDub, не хватает ffmpeg, переозвучь игру, сделай русскую озвучку."
+description: "Check and prepare the machine for BabelDub, which localizes and re-voices any video game in the original characters' voices. Installs or updates the babeldub CLI with uv, checks the NVIDIA GPU, VRAM, ffmpeg, vgmstream and disk space, then sets up the local GPU voice-cloning TTS engines, models and tools. Use on first run, when the babeldub command is missing or has the wrong version, when a babeldub command exits with code 4, or when the user asks to check the setup. Example triggers: 'set up BabelDub', 'check my environment', 'ffmpeg is missing', 'localize this game', 'dub the voices', 'проверь окружение', 'установи BabelDub', 'переведи игру', 'сделай русскую озвучку', 'doblar el juego'."
 license: MIT
 compatibility: "Local agent with shell access; Windows 10/11 or Linux; Python 3.10+ and uv; network access to PyPI, GitHub and Hugging Face for setup; NVIDIA GPU with 8+ GB VRAM recommended."
 metadata:
   babeldub-cli: "0.1.0"
 ---
 
-# BabelDub: окружение и установка
+# BabelDub: environment and installation
 
-Скилл готовит машину к дубляжу игры голосами оригинальных героев: ставит CLI `babeldub` нужной версии, проверяет железо и утилиты, ставит движки синтеза, модели и инструменты. Вопросов пользователю не задаёт: план установки печатается, модели с разрешительными лицензиями (Apache-2.0, MIT) ставятся без вопроса.
+This skill prepares the machine to dub a game in the voices of its original characters. It installs the `babeldub` CLI at the right version, checks the hardware and utilities, and installs the synthesis engines, models and tools. It asks the user no questions: it prints the install plan, and installs models with permissive licenses (Apache-2.0, MIT) without asking.
 
-Применяй его:
+Talk to the user in the user's language. Keep commands, flags, paths and JSON field names as they are.
 
-- при первом запуске BabelDub;
-- если команды `babeldub` нет или её версия не равна `metadata.babeldub-cli` (`0.1.0`);
-- если команда `babeldub` вернула код 4 (или `doctor` — код 3 с непустым `todo[]`);
-- по просьбе «проверь окружение».
+Apply this skill:
 
-## 1. CLI нужной версии
+- on the first BabelDub run;
+- when the `babeldub` command is missing or its version differs from `metadata.babeldub-cli` (`0.1.0`);
+- when a `babeldub` command returns exit code 4 (or `doctor` returns code 3 with a non-empty `todo[]`);
+- when the user asks to check the environment.
 
-1. Выполни `babeldub --version`. Ожидается `babeldub 0.1.0`. Совпало — переходи к шагу 2.
-2. Иначе запусти `scripts/bootstrap.py` из папки этого скилла (в Claude Code папка скилла — `${CLAUDE_SKILL_DIR}`):
-   - в Claude Code: `python "${CLAUDE_PLUGIN_ROOT}/skills/babeldub-doctor/scripts/bootstrap.py" --plugin-root "${CLAUDE_PLUGIN_ROOT}"`;
-   - на других хостах: `python <папка скилла>/scripts/bootstrap.py` или `uv run --no-project --script <папка скилла>/scripts/bootstrap.py`.
+## 1. CLI at the right version
 
-   Скрипт ставит CLI командой `uv tool install` из папки `runtime/` плагина или репозитория, а если её нет — из git-тега релиза `v0.1.0`. Он печатает один JSON:
+1. Run `babeldub --version`. Expect `babeldub 0.1.0`. If it matches, go to step 2.
+2. Otherwise run `scripts/bootstrap.py` from this skill's folder (in Claude Code the skill folder is `${CLAUDE_SKILL_DIR}`):
+   - in Claude Code: `python "${CLAUDE_PLUGIN_ROOT}/skills/babeldub-doctor/scripts/bootstrap.py" --plugin-root "${CLAUDE_PLUGIN_ROOT}"`;
+   - on other hosts: `python <skill folder>/scripts/bootstrap.py` or `uv run --no-project --script <skill folder>/scripts/bootstrap.py`.
 
-   | Поле | Смысл |
+   The script installs the CLI with `uv tool install` from the `runtime/` folder of the plugin or repository; if there is none, from the release git tag `v0.1.0`. It prints one JSON object:
+
+   | Field | Meaning |
    |---|---|
    | `action` | `none`, `installed`, `reinstalled`, `planned` |
-   | `installed`, `expected` | установленная и ожидаемая версии |
-   | `exe`, `on_path` | путь к `babeldub` и есть ли он в `PATH` |
-   | `source`, `source_kind` | откуда ставили: `plugin`, `repo`, `git`, `explicit`, `env` |
-   | `cli_error` | хвост ошибки, если CLI не запускается |
-   | `hint`, `path_hint` | что сделать при проблеме |
+   | `installed`, `expected` | installed and expected versions |
+   | `exe`, `on_path` | path to `babeldub` and whether it is on `PATH` |
+   | `source`, `source_kind` | where it was installed from: `plugin`, `repo`, `git`, `explicit`, `env` |
+   | `cli_error` | tail of the error if the CLI does not start |
+   | `hint`, `path_hint` | what to do about a problem |
 
-   Флаги: `--check` (только проверить), `--force` (переустановить), `--dry-run` (показать команду), `--source <папка runtime или git+https-требование>`.
+   Flags: `--check` (check only), `--force` (reinstall), `--dry-run` (show the command), `--source <runtime folder or git+https requirement>`.
 
-3. Коды `bootstrap.py`:
-   - 0 — готово;
-   - 4 без uv — поставь uv официальной командой из `hint` (Windows PowerShell: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` или `winget install astral-sh.uv`; Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`), открой новый терминал и повтори;
-   - 4 при ошибке установки — смотри `detail` и `hint` (сеть, нет git для git-источника, неверный `--source`);
-   - 1 — пакет установлен, но `babeldub --version` падает: покажи `cli_error` в отчёте, дальше не идти.
-4. `on_path` = false: вызывай CLI по полному пути из `exe` до конца сессии или выполни `uv tool update-shell` и открой новый терминал.
+3. `bootstrap.py` exit codes:
+   - 0: done;
+   - 4 without uv: install uv with the official command from `hint` (Windows PowerShell: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` or `winget install astral-sh.uv`; Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`), open a new terminal and retry;
+   - 4 on an install error: read `detail` and `hint` (network, no git for a git source, wrong `--source`);
+   - 1: the package is installed but `babeldub --version` fails. Show `cli_error` in the report and stop.
+4. If `on_path` is false: call the CLI by the full path from `exe` for the rest of the session, or run `uv tool update-shell` and open a new terminal.
 
-## 2. Диагностика
+## 2. Diagnostics
 
 ```text
 babeldub doctor
 ```
 
-Проверяет ОС, Python, утилиты, GPU (имя, VRAM, драйвер через `nvidia-smi`), свободное место, venv движков и скачанные модели; рекомендует тир. Полный отчёт — в файле из поля `report`.
+Checks the OS, Python, utilities, the GPU (name, VRAM, driver via `nvidia-smi`), free disk space, engine venvs and downloaded models; recommends a tier. The full report is in the file named by the `report` field.
 
-| Поле вывода | Смысл | Что делать |
+| Output field | Meaning | What to do |
 |---|---|---|
-| `missing[]` (код 4) | нет обязательной утилиты: `uv`, `ffmpeg`, `ffprobe` | команды установки — в `install{}` (Windows: `winget install Gyan.FFmpeg`; Linux: `sudo apt install ffmpeg`); затем новый терминал и снова `doctor` |
-| `todo[]` (код 3) | нет venv движка (`env:<имя>`) или модели (`model:<имя>`) | шаг 3 |
-| `optional_missing[]` | нет необязательной утилиты: `vgmstream-cli`, `rubberband`, `uvx`, `git` | `vgmstream-cli` нужен для извлечения большинства форматов: `babeldub setup --tools`. `rubberband` (GPL) ставит пользователь по желанию; без него CLI растягивает звук через `ffmpeg atempo` |
-| `gpu`, `tier` | видеокарта и рекомендованный тир | без NVIDIA GPU синтез идёт на CPU и займёт часы: продолжай, но предупреди пользователя |
-| `warnings[]` | мало места, мало VRAM, сломанный venv | следуй тексту предупреждения (например, `babeldub setup --engines <имя> --force` для сломанного venv) |
+| `missing[]` (code 4) | a required utility is missing: `uv`, `ffmpeg`, `ffprobe` | install commands are in `install{}` (Windows: `winget install Gyan.FFmpeg`; Linux: `sudo apt install ffmpeg`); then open a new terminal and run `doctor` again |
+| `todo[]` (code 3) | an engine venv (`env:<name>`) or a model (`model:<name>`) is missing | step 3 |
+| `optional_missing[]` | an optional utility is missing: `vgmstream-cli`, `rubberband`, `uvx`, `git` | `vgmstream-cli` is needed to extract most formats: `babeldub setup --tools`. `rubberband` (GPL) is installed by the user if they want it; without it the CLI stretches audio with `ffmpeg atempo` |
+| `gpu`, `tier` | the graphics card and the recommended tier | with an NVIDIA GPU the CLI runs all neural compute on it automatically (`compute.device=auto`). Without an NVIDIA GPU synthesis runs on the CPU and takes hours: continue, but warn the user |
+| `warnings[]` | low disk space, low VRAM, a broken venv, data in an older default location | follow the warning text (for example, `babeldub setup --engines <name> --force` for a broken venv) |
 
-Что ставится по умолчанию (каталог CLI v0.1; актуальный список — `babeldub models list`):
+What is installed by default (CLI v0.1 catalog; the current list is `babeldub models list`):
 
-| Назначение | Модели | Лицензия |
+| Purpose | Models | License |
 |---|---|---|
-| синтез, тиры 8/12/24 ГБ | `Qwen3-TTS-12Hz-1.7B-Base` (для всех языков движка); `qwen3-tts-12hz-1.7b-ru-stress-cf` (точнее ударения, но хуже голос героя) — не ставится по умолчанию, только `babeldub models fetch` по решению пользователя | Apache-2.0 (у ru-stress-cf часть обучающих текстов без заявленной лицензии — предупреждение каталога) |
-| синтез, тир CPU (и при VRAM меньше 8 ГБ) | `Qwen3-TTS-12Hz-0.6B-Base` | Apache-2.0 |
-| синтез для языков вне Qwen3-TTS (например pl, tr) | `chatterbox-multilingual` (в каждом файле неслышимый водяной знак PerTh) | MIT |
-| QA и кастинг (venv `qc`) | `faster-whisper-large-v3-turbo` (распознавание речи), `spkrec-ecapa-voxceleb` (сходство голоса) | MIT, Apache-2.0 |
+| synthesis, tiers 8/12/24 GB | `Qwen3-TTS-12Hz-1.7B-Base` (for all languages of the engine); `qwen3-tts-12hz-1.7b-ru-stress-cf` (more accurate Russian stress, but a worse match to the character's voice) is not installed by default, only via `babeldub models fetch` when the user decides so | Apache-2.0 (part of the ru-stress-cf training texts has no stated license: a catalog warning) |
+| synthesis, CPU tier (and VRAM below 8 GB) | `Qwen3-TTS-12Hz-0.6B-Base` | Apache-2.0 |
+| synthesis for languages outside Qwen3-TTS (for example pl, tr) | `chatterbox-multilingual` (every file carries the inaudible PerTh watermark) | MIT |
+| QA and casting (venv `qc`) | `faster-whisper-large-v3-turbo` (speech recognition), `spkrec-ecapa-voxceleb` (speaker similarity) | MIT, Apache-2.0 |
 
-Qwen3-TTS поддерживает zh, en, ja, ko, de, fr, ru, pt, es, it.
+Qwen3-TTS supports zh, en, ja, ko, de, fr, ru, pt, es, it.
 
-## 3. Движки, модели, утилиты
+## 3. Engines, models, utilities
 
-1. Покажи план: `babeldub setup --dry-run`. Вывод: `planned[]` (что ставится, размер, лицензия), `download_gb`, `blocked[]`, `plan` (файл с подробностями).
-2. Лицензии: `babeldub models list` (вывод `models[]` с лицензиями и статусом).
-   - По умолчанию ставятся только модели с разрешительными лицензиями (Apache-2.0, MIT).
-   - Некоммерческие (NC) модели CLI блокирует (`blocked[]`) до явного согласия: их ставят только после того, как пользователь сам попросил такую модель и подтвердил лицензию; тогда — `babeldub setup --accept-license <модель>`. Без такой просьбы NC-модели не трогай.
-   - Предупреждения каталога (`warning` у модели, например про происхождение обучающих данных) перенеси в отчёт.
-3. Установи: `babeldub setup` (движки, модели и утилиты для рекомендованного тира и языка проекта) или явно `babeldub setup --engines qwen3tts,qc --tools --models auto`. Отдельная модель: `babeldub models fetch <name>`.
-4. Вывод: `done[]`, `skipped[]`, `failed[]`, `blocked[]`.
-   - Код 1 (`failed[]`): прочитай лог упавшего шага (путь в выводе или в файле плана), устрани причину, повтори `setup` один раз. Сетевые сбои обычно проходят со второго раза.
-   - Код 3 (`blocked[]`): причина — в файле плана (`reason`): нет uv или git, некоммерческая лицензия, нет `uvx`/`huggingface_hub`.
-   - Код 4 «not enough disk space»: освободи место или перенеси `BABELDUB_HOME` (раздел 4).
-5. Снова `babeldub doctor`: код 0, `missing[]` и `todo[]` пусты.
+1. Show the plan: `babeldub setup --dry-run`. Output: `planned[]` (what gets installed, size, license), `download_gb`, `blocked[]`, `plan` (a file with details).
+2. Licenses: `babeldub models list` (outputs `models[]` with licenses and status).
+   - By default only models with permissive licenses (Apache-2.0, MIT) are installed.
+   - The CLI blocks non-commercial (NC) models (`blocked[]`) until explicit consent. Install one only after the user asked for that model themselves and confirmed its license; then run `babeldub setup --accept-license <model>`. Without such a request, leave NC models alone.
+   - Copy catalog warnings (a model's `warning`, for example about the origin of its training data) into the report.
+3. Install: `babeldub setup` (engines, models and utilities for the recommended tier and the project language), or explicitly `babeldub setup --engines qwen3tts,qc --tools --models auto`. A single model: `babeldub models fetch <name>`.
+4. Output: `done[]`, `skipped[]`, `failed[]`, `blocked[]`.
+   - Code 1 (`failed[]`): read the log of the failed step (its path is in the output or in the plan file), fix the cause, rerun `setup` once. Network failures usually pass on the second try.
+   - Code 3 (`blocked[]`): the reason is in the plan file (`reason`): no uv or git, a non-commercial license, no `uvx`/`huggingface_hub`.
+   - Code 4 "not enough disk space": free up space or move `BABELDUB_HOME` (section 4).
+5. Run `babeldub doctor` again: code 0, `missing[]` and `todo[]` are empty.
 
-Установка долгая: venv с torch и веса моделей — это гигабайты (CLI предупреждает, если свободно меньше ~20 ГБ). Перед запуском одной строкой скажи пользователю, что ставится и сколько примерно займёт (`download_gb` из плана); на хостах с фоновыми командами запускай `setup` в фоне.
+Installation is long: venvs with torch and model weights take gigabytes (the CLI warns when less than ~20 GB is free). Before starting, tell the user in one line what is being installed and roughly how much it is (`download_gb` from the plan). On hosts with background commands, run `setup` in the background.
 
-## 4. Где лежат данные
+## 4. Where the data lives
 
-- `BABELDUB_HOME`: Windows `%LOCALAPPDATA%\BabelDub`, Linux `~/.local/share/babeldub`; переопределяется переменной окружения `BABELDUB_HOME`.
-- Внутри: `envs/<движок>` (venv движков), `models/<name>` (веса), `hf-cache/`, `tools/` (vgmstream и др.), `projects/<slug>` (проекты), `games.json` (реестр папок игр).
-- Мало места на системном диске — задай `BABELDUB_HOME` на другой диск **до** `setup` и `init` и используй короткий путь (Windows `MAX_PATH`).
-- Ничего не кладётся в папку игры и в папку плагина: плагин заменяется при обновлении.
+- `BABELDUB_HOME`: `~/.babeldub` on every OS (Windows: `C:\Users\<user>\.babeldub`); override it with the `BABELDUB_HOME` environment variable. The default is deliberately not `%LOCALAPPDATA%`: packaged hosts such as the Claude desktop app virtualise that folder, so other terminals and agent hosts would not see the downloaded models.
+- Inside: `envs/<engine>` (engine venvs), `models/<name>` (weights), `hf-cache/`, `tools/` (vgmstream and others), `projects/<slug>` (projects), `games.json` (registry of game folders).
+- If `doctor` warns that it found BabelDub data in an older default location, follow the warning: move its `envs/`, `models/`, `tools/` and `projects/` into the current `BABELDUB_HOME`, or set `BABELDUB_HOME` to the old folder.
+- Low on space on the system drive: set `BABELDUB_HOME` to another drive **before** `setup` and `init`, and use a short path (Windows `MAX_PATH`).
+- Nothing goes into the game folder or the plugin folder: the plugin is replaced on update.
 
-## 5. Результат
+## 5. Result
 
-Верни оркестратору (или пользователю, если скилл вызван напрямую) короткую сводку:
+Return a short summary to the orchestrator (or to the user, if the skill was called directly):
 
 ```json
 {"cli": "0.1.0", "exe": "...", "tier": "8gb", "gpu": "NVIDIA GeForce RTX 3060 Ti 8 GB", "installed": ["qwen3tts", "qc", "vgmstream-cli"], "missing": [], "todo": [], "warnings": []}
 ```
 
-Значения в примере условные: бери их из вывода `bootstrap.py`, `babeldub doctor` и `babeldub setup`.
+The values in the example are illustrative: take them from the output of `bootstrap.py`, `babeldub doctor` and `babeldub setup`.
 
-## Правила
+## Rules
 
-1. Не запускать исполняемые файлы игр и ничего не писать в папки игр.
-2. Не ставить некоммерческие модели без явной просьбы и согласия пользователя.
-3. GPL-утилиты (Rubber Band) не скачивать в BabelDub: их ставит пользователь, если хочет.
-4. Не менять системные настройки и драйверы. `BABELDUB_HOME` переносить только если пользователь сам об этом попросил или места на диске по умолчанию явно не хватает; перенос и новый путь указать в отчёте.
+1. Do not run game executables and do not write anything into game folders.
+2. Do not install non-commercial models without the user's explicit request and consent.
+3. Do not download GPL utilities (Rubber Band) into BabelDub: the user installs them if they want.
+4. Do not change system settings or drivers. Move `BABELDUB_HOME` only if the user asked for it or the default location clearly lacks disk space; state the move and the new path in the report.

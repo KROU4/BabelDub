@@ -102,8 +102,8 @@ def test_casting_sheet_is_russian_table() -> None:
         uncertain=[],
         warnings=["something"],
     )
-    assert sheet.startswith("# Лист кастинга — Demo")
-    assert "| Персонаж |" in sheet and "Минут речи" in sheet and "Референс" in sheet
+    assert sheet.startswith("# Casting sheet — Demo")
+    assert "| Character |" in sheet and "Speech, min" in sheet and "Reference" in sheet
     assert "cast/refs/c0/x.wav" in sheet
     assert "Hello \\| there" in sheet
     assert "labels.agent.jsonl" in sheet
