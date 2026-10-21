@@ -193,6 +193,26 @@ def test_interrupted_qa_keeps_finished_lines(dub, fake_qc, run, monkeypatch) -> 
     assert code == EXIT_OK and out["checked"] == 2 and out["accept"] == 2
 
 
+def test_followers_are_not_checked(dub, fake_qc, run) -> None:
+    lead = dub.line("hero", 4.0)
+    alt = dub.line("hero", 3.8, flags=("alt_take",))
+    for lid, key in ((lead, "dlg_Intro_i05"), (alt, "dlg_Intro_i05_v1")):
+        line = next(x for x in dub.lines if x["id"] == lid)
+        line.update(asset_id="fmod:Data/Dialogue.bank", entry={"key": key})
+        line["text"]["key"] = "dlg_Intro_i05"
+        dub.translate(lid, "Привет.")
+        dub.dub(lid, voice="hero", asr="привет")  # the alt take was post-processed by an older run
+    dub.save()
+    root = str(dub.project.root)
+    code, out = run(["qa", "--project", root])
+    assert code == EXIT_OK and out["checked"] == 1 and out["follows"] == 1 and out["pending"] == 0, out
+    assert set(latest_by(read_jsonl(dub.project.path(layout.QA)))) == {lead}
+    code, out = run(["qa", "--ids", alt, "--project", root])
+    assert code == EXIT_USAGE and out["follows"] == {alt: lead}
+    code, out = run(["report", "--project", root])
+    assert code == EXIT_OK and out["lines"] == 1
+
+
 def test_qa_requires_post(project, run) -> None:
     code, out = run(["qa", "--project", str(project.root)])
     assert code == EXIT_USAGE and "post" in out["error"]

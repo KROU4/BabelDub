@@ -173,6 +173,23 @@ def test_build_fadpcm_and_verify(game: Path, tmp_path: Path) -> None:
     assert "fsb0_unchanged" in res["checks"]
 
 
+def test_one_dub_for_takes_of_different_formats(game: Path, tmp_path: Path) -> None:
+    """A follower (alt take) gets its leader's wav: converted to the take's own rate and channels."""
+    ad = get_adapter("fmod")
+    asset = _asset(game)
+    wav = _replacements(tmp_path)[f"fmod:{DLG}#fsb1:0000"]  # stereo 22.05 kHz
+    reps = {f"fmod:{DLG}#fsb1:0000": wav, f"fmod:{DLG}#fsb1:0001": wav}  # mono 48k and stereo 48k takes
+    out = tmp_path / "build" / DLG
+    summary = ad.build(game, asset, reps, out, {"codec": "pcm16"})
+    assert summary["replaced"] == 2
+    built = open_container(out)
+    fsb = F.parse_fsb5(built.read(built.fsbs[1].offset, built.fsbs[1].size))
+    assert [(s.rate, s.channels) for s in fsb.subsounds[:2]] == [(48000, 1), (48000, 2)]
+    res = ad.verify(game, asset, out, {"replacements": {k: str(v) for k, v in reps.items()}, "vgmstream": False})
+    assert res["ok"], res["problems"]
+    assert "fsb1_replaced_audio" in res["checks"]
+
+
 def test_parallel_fadpcm_build_is_identical(
     game: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

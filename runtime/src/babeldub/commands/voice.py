@@ -5,6 +5,10 @@ synth  For every selected line the voice prompt is, by default, the original lin
        of that exact phrase and speaks the translation with it. Short, noisy or untranscribed lines
        use the character's best clean reference (char). One worker process per run (the model loads
        once), lines grouped by character, results appended to synth/results.jsonl as they finish.
+       ICL needs the exact transcript of the prompt: a line transcript with an implausible syllable
+       rate goes to the char reference or timbre-only mode. Generation is capped per line from the
+       text estimate and the original; a runaway take is discarded and retried (see _SynthRun).
+       Alt takes/duplicates (core/takes.py followers) are skipped: the build reuses their leader.
 post   Trims silence, fits the duration to the original's speech (pitch-preserving stretch within
        post.max_stretch), restores the original's edge silences, matches loudness (BS.1770 LUFS,
        RMS for clips < 0.4 s) under a true-peak ceiling and converts to the original sr/channels.
@@ -34,6 +38,7 @@ from babeldub.audio.dsp import (
     match_loudness,
     pad_silence,
     resample,
+    speech_seconds,
     to_channels,
     to_mono,
     trim_silence,
@@ -50,6 +55,8 @@ from babeldub.core.jsonl import append_jsonl, latest_by, now_iso, read_jsonl, wr
 from babeldub.core.output import EXIT_ATTENTION, EXIT_ENV, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
 from babeldub.core.paths import env_python, models_dir
 from babeldub.core.project import Project
+from babeldub.core.takes import follower_map
+from babeldub.text.syllables import SYLLABLE_RATE, count_syllables
 from babeldub.workers.client import GpuLock, WorkerClient, WorkerError
 
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
@@ -57,8 +64,13 @@ ENGINES = ("qwen3tts", "chatterbox", "dummy")
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
 EDGE_PAD_S = 0.03  # silence kept around speech when trimming synthesized audio
 DEFAULT_LEVEL_LUFS = -20.0  # loudness target when the original audio is missing
-CODEC_HZ = 12.5  # Qwen3-TTS tokenizer frame rate, used to cap generation length
+CODEC_HZ = 12.5  # Qwen3-TTS 12Hz tokenizer: 12.5 generated tokens per second of audio
 DEFAULT_BATCH = 4  # lines per generate call when the worker supports synth_batch (tts.batch_size)
+DEFAULT_SPEECH_RATE = 5.0  # syllables/s for the length estimate when a language has no measured rate
+CAP_MIN_S = 6.0  # generation cap never below this many seconds of audio
+ICL_RATE_RANGE = (1.2, 8.5)  # syl/s of a line transcript over its original speech that fit an ICL prompt
+TOKEN_CAP_ENGINES = ("qwen3tts", "dummy")  # engines that take params.max_new_tokens
+TRANSCRIPT_ENGINES = ("qwen3tts", "dummy")  # engines whose voice prompt uses ref_text (ICL vs timbre only)
 SYNTH_SCHEMA = "babeldub.synth_results/1"
 POST_SCHEMA = "babeldub.post/1"
 
@@ -284,6 +296,43 @@ class Job:
     out: Path = field(default_factory=Path)
     x_vector_only: bool = False
     ref_trimmed: bool = False
+    est_s: float = 0.0  # spoken length estimated from the dub text
+    alt_ref: Ref | None = None  # character reference to fall back to when a line prompt runs away
+    ref_reason: str | None = None  # why the CLI changed the prompt picked by the strategy
+    src_rate: float | None = None  # syllables/s of the line transcript over its original speech
+
+    @property
+    def ref_mode(self) -> str:
+        """line | line-xvec | char | char-xvec (-xvec: timbre only, the transcript is not used)."""
+        return f"{self.ref.mode}-xvec" if self.x_vector_only else self.ref.mode
+
+
+def estimate_seconds(text: str, lang: str) -> float:
+    """Spoken length of a dub text: syllables over the language's dubbing speech rate."""
+    return count_syllables(text, lang) / SYLLABLE_RATE.get(_primary(lang), DEFAULT_SPEECH_RATE)
+
+
+def token_cap(est_s: float, target_s: float) -> int:
+    """max_new_tokens of one line: room for twice the longer of the estimate and the original."""
+    cap_s = max(CAP_MIN_S, 2.0 * max(est_s, target_s) + 2.5)
+    return math.ceil(CODEC_HZ * cap_s - 1e-9)
+
+
+def is_runaway(reply: dict[str, Any], est_s: float, target_s: float) -> bool:
+    """Generation ran to the token cap or far past any plausible length (a loop, not speech)."""
+    dur = float(reply.get("dur_s") or 0.0)
+    return bool(reply.get("hit_token_limit")) or dur > 2.2 * max(est_s, target_s) + 2.0
+
+
+def transcript_rate(ref: Ref) -> float:
+    """Syllables/s of a line transcript over the speech span of its audio (inf for silence)."""
+    syllables = count_syllables(ref.text, ref.lang)
+    try:
+        data, sr = read_audio(ref.wav)
+        speech = speech_seconds(data, sr)
+    except (RuntimeError, OSError, ValueError):
+        speech = ref.dur_s
+    return syllables / speech if speech > 0 else math.inf
 
 
 def _char_refs(refs: list[dict[str, Any]], project: Project) -> dict[str, list[dict[str, Any]]]:
@@ -296,6 +345,26 @@ def _char_refs(refs: list[dict[str, Any]], project: Project) -> dict[str, list[d
     for rows in by_char.values():
         rows.sort(key=lambda r: (not r.get("chosen"), -float(r.get("score") or 0.0)))
     return by_char
+
+
+def _char_ref(
+    project: Project,
+    char_refs: list[dict[str, Any]],
+    src_lang: str,
+    avoid_ref: str | None,
+    prepare: Callable[[str, str, str], str],
+) -> Ref | None:
+    """The character's chosen reference (another one first when `avoid_ref` is given)."""
+    pool = [r for r in char_refs if r.get("chosen")] or char_refs
+    ordered = [r for r in pool if str(r.get("ref_id")) != avoid_ref] + [r for r in pool if str(r.get("ref_id")) == avoid_ref]
+    for row in ordered:
+        wav = _abs(project, row.get("wav"))
+        if wav is None or not wav.exists():
+            continue
+        lang = str(row.get("lang") or src_lang)
+        ref_text = prepare(str(row.get("text") or ""), lang, "keep") if row.get("text") else ""
+        return Ref("char", str(row.get("ref_id")), wav, ref_text, lang, float(row.get("dur_s") or 0.0))
+    return None
 
 
 def _choose_ref(
@@ -324,16 +393,7 @@ def _choose_ref(
         return Ref("line", f"line:{_line_uid(line)}", orig, src, src_lang, dur)
 
     def char_ref() -> Ref | None:
-        pool = [r for r in char_refs if r.get("chosen")] or char_refs
-        ordered = [r for r in pool if str(r.get("ref_id")) != avoid_ref] + [r for r in pool if str(r.get("ref_id")) == avoid_ref]
-        for row in ordered:
-            wav = _abs(project, row.get("wav"))
-            if wav is None or not wav.exists():
-                continue
-            lang = str(row.get("lang") or src_lang)
-            ref_text = prepare(str(row.get("text") or ""), lang, "keep") if row.get("text") else ""
-            return Ref("char", str(row.get("ref_id")), wav, ref_text, lang, float(row.get("dur_s") or 0.0))
-        return None
+        return _char_ref(project, char_refs, src_lang, avoid_ref, prepare)
 
     if prefer == "line" and line_ok:
         return line_ref()
@@ -367,6 +427,13 @@ def _cut_reference(src: Path, cache_dir: Path, max_s: float = REF_MAX_S) -> Path
     return out
 
 
+def _fit_ref(ref: Ref, cache_dir: Path) -> tuple[Ref, bool]:
+    """A reference longer than REF_MAX_S is cut (True: the cut audio no longer matches its text)."""
+    if ref.dur_s > REF_MAX_S or (ref.dur_s == 0 and probe(ref.wav)["dur_s"] > REF_MAX_S):
+        return Ref(ref.mode, ref.ref_id, _cut_reference(ref.wav, cache_dir), ref.text, ref.lang, REF_MAX_S), True
+    return ref, False
+
+
 # ---- synth --------------------------------------------------------------------------------
 def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice) -> tuple[list[Job], Counter[str], list[str]]:
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
@@ -394,6 +461,7 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
     prepare = _text_preparer()
     want_chars = {c.lower() for c in _csv(args.chars)}
     want_ids = set(_csv(args.ids))
+    follows = follower_map(lines_all.values())
 
     skipped: Counter[str] = Counter()
     attention: list[str] = []
@@ -403,6 +471,9 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
             continue
         uid = _line_uid(line)
         if want_ids and line_id not in want_ids and uid not in want_ids:
+            continue
+        if line_id in follows:  # alt take / duplicate: the build reuses its leader's dub
+            skipped["follows"] += 1
             continue
         hint = str(line.get("speaker_hint") or "unknown")
         char_id = str((assign.get(line_id) or {}).get("char_id") or "") if cast_done else hint
@@ -449,7 +520,7 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
             if reason == "reref":  # switch the voice prompt: line -> char, char -> another char ref or the line
                 prev_mode = str(latest_ok.get("ref_mode") or "")
                 avoid = str(latest_ok.get("ref_id") or "")
-                if prev_mode == "line":
+                if prev_mode.startswith("line"):
                     prefer = "char"
                 elif len(refs_by_char.get(char_id, [])) < 2:
                     prefer = "line"
@@ -464,8 +535,6 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
         target_s = float(audio.get("dur_s") or ref.dur_s or 3.0)
         job = Job(line, line_id, uid, char_id, text, last_attempt + 1, ref, reason, target_s,
                   (char_id, str(line.get("scene") or ""), int(line.get("order") or 0), line_id))
-        ref_size = ref.wav.stat().st_size
-        job.key = _sha(engine.name, engine.model_name, _primary(target), text, ref.ref_id, project.rel(ref.wav), ref_size, ref.text)
         if not args.force and not (pending and args.attempt_next) and latest_ok is not None:
             # done = this text was already spoken by this engine/model; the voice prompt of that
             # attempt stands (it may come from a QA reref), new prompts need --force or a decision
@@ -487,6 +556,13 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
             skipped["max_attempts"] += 1
             attention.append(line_id)
             continue
+        if ref.mode == "line":
+            char_ref = _char_ref(project, refs_by_char.get(char_id, []), ref.lang, avoid, prepare)
+            _check_icl(job, None if prefer == "line" else char_ref)
+            if job.ref.mode == "line":
+                job.alt_ref = char_ref
+        job.est_s = estimate_seconds(text, target)
+        job.key = _job_key(project, engine, job)
         job.seed = _seed(line_id, job.attempt)
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
@@ -494,10 +570,35 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
     return jobs, skipped, attention
 
 
+def _check_icl(job: Job, char_ref: Ref | None) -> None:
+    """A line transcript whose syllable rate over the original speech is implausible probably does
+    not match the audio (alt take, ad-lib, wrong link): an ICL prompt with it tends to run away.
+    Use the character reference instead, or the line in timbre-only mode."""
+    rate = transcript_rate(job.ref)
+    job.src_rate = _num(rate, 2)
+    lo, hi = ICL_RATE_RANGE
+    if lo <= rate <= hi:
+        return
+    shown = f"{rate:.1f}" if math.isfinite(rate) else "inf"
+    reason = f"transcript rate {shown} syl/s outside [{lo}, {hi}]"
+    if char_ref is not None:
+        job.ref = char_ref
+        job.ref_reason = f"{reason}: character reference"
+    else:
+        job.x_vector_only = True
+        job.ref_reason = f"{reason}: timbre only"
+
+
+def _job_key(project: Project, engine: EngineChoice, job: Job) -> str:
+    ref = job.ref
+    return _sha(engine.name, engine.model_name, _primary(project.target_lang), job.text, ref.ref_id,
+                project.rel(ref.wav), ref.wav.stat().st_size, ref.text)
+
+
 def _engine_params(project: Project, engine: EngineChoice, job: Job) -> dict[str, Any]:
     params: dict[str, Any] = dict(project.setting("tts", "params", {}) or {})
-    if engine.name == "qwen3tts":
-        params.setdefault("max_new_tokens", int(CODEC_HZ * max(8.0, 3.0 * job.target_s + 4.0)))
+    if engine.name in TOKEN_CAP_ENGINES:
+        params.setdefault("max_new_tokens", token_cap(job.est_s, job.target_s))
     if job.x_vector_only:
         params["x_vector_only"] = True
     return params
@@ -512,7 +613,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
     planned = len(jobs)
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
-    by_ref = Counter(j.ref.mode for j in jobs)
+    by_ref = Counter(j.ref_mode for j in jobs)
     notes: list[str] = []
     if int(project.setting("tts", "best_of", 1) or 1) > 1:
         notes.append("tts.best_of>1 is not used by synth v0.1: QA regenerates weak lines via decisions + --attempt-next")
@@ -535,8 +636,8 @@ def cmd_synth(args: argparse.Namespace) -> int:
 
     cache_dir = project.path("synth", "refcache")
     for job in jobs:
-        if job.ref.dur_s > REF_MAX_S or (job.ref.dur_s == 0 and probe(job.ref.wav)["dur_s"] > REF_MAX_S):
-            job.ref = Ref(job.ref.mode, job.ref.ref_id, _cut_reference(job.ref.wav, cache_dir), job.ref.text, job.ref.lang, REF_MAX_S)
+        job.ref, trimmed = _fit_ref(job.ref, cache_dir)
+        if trimmed:
             job.ref_trimmed = True
             job.x_vector_only = True  # cut audio no longer matches its transcript
 
@@ -550,7 +651,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
         device = "cpu"
     device_note: str | None = None
     lock = GpuLock(project.path(layout.GPU_LOCK), owner=f"synth:{engine.name}", wait_s=args.wait_lock)
-    run = _SynthRun(project, engine, results_path)
+    run = _SynthRun(project, engine, results_path, cache_dir)
     batch_size = 1
     project.mark_stage("synth", "running", planned=planned, engine=engine.name)
     started = time.perf_counter()
@@ -574,8 +675,8 @@ def cmd_synth(args: argparse.Namespace) -> int:
             if (reply.get("info") or {}).get("batch"):
                 wanted = args.batch or project.setting("tts", "batch_size") or DEFAULT_BATCH
                 batch_size = max(1, int(wanted))
-            if batch_size > 1:  # similar lengths in one batch: less padding, the batch ends sooner
-                jobs.sort(key=lambda j: (j.char_id, len(j.text)))
+            if batch_size > 1:  # similar estimated lengths in one batch: less padding, a lower shared cap
+                jobs.sort(key=lambda j: (j.char_id, j.est_s, j.id))
             run.execute(client, jobs, batch_size)
     finally:
         if use_lock:
@@ -604,6 +705,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
         payload["attention"] = clip(attention)
     if t.runaway:
         payload["runaway"] = clip(t.runaway)
+        payload["runaway_recovered"] = t.recovered
     if t.aborted:
         payload["aborted"] = t.aborted
     if device_note:
@@ -623,18 +725,25 @@ class _Tally:
     vram_peak: float = 0.0
     rtfs: list[float] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    runaway: list[str] = field(default_factory=list)
+    runaway: list[str] = field(default_factory=list)  # lines whose first output ran away
+    recovered: int = 0  # ... and got a usable take from a retry
     streak: list[str] = field(default_factory=list)
     aborted: str | None = None
 
 
 class _SynthRun:
-    """Sends jobs to the worker (batched when the engine supports it) and appends results.jsonl rows."""
+    """Sends jobs to the worker (batched when the engine supports it) and appends results.jsonl rows.
 
-    def __init__(self, project: Project, engine: EngineChoice, results_path: Path):
+    Runaway policy: an output that hit the token cap or is far longer than any plausible reading
+    is discarded; the line is retried alone in timbre-only mode on the same reference, then with
+    the character reference in ICL mode; if every try runs away the row is an error "runaway".
+    """
+
+    def __init__(self, project: Project, engine: EngineChoice, results_path: Path, cache_dir: Path):
         self.project = project
         self.engine = engine
         self.results_path = results_path
+        self.cache_dir = cache_dir
         self.tally = _Tally()
 
     def request_for(self, job: Job) -> dict[str, Any]:
@@ -646,7 +755,9 @@ class _SynthRun:
             "params": _engine_params(self.project, self.engine, job),
         }
 
-    def record(self, job: Job, reply: dict[str, Any], seed: int, batch: int) -> None:
+    def record(
+        self, job: Job, reply: dict[str, Any], seed: int, batch: int, discarded: list[dict[str, Any]] | None = None
+    ) -> None:
         t = self.tally
         t.processed += 1
         ok = bool(reply.get("ok")) and job.out.exists()
@@ -654,18 +765,30 @@ class _SynthRun:
         row: dict[str, Any] = {
             "id": job.id, "attempt": job.attempt, "engine": self.engine.name, "model": self.engine.model_name,
             "wav": project.rel(job.out) if ok else None, "sr": reply.get("sr"), "dur_s": reply.get("dur_s"),
-            "seed": seed, "ref_id": job.ref.ref_id, "ref_mode": job.ref.mode,
+            "seed": seed, "ref_id": job.ref.ref_id, "ref_mode": job.ref_mode,
             "ref_wav": project.rel(job.ref.wav), "ref_trimmed": job.ref_trimmed, "text": job.text,
             "lang": project.target_lang, "char_id": job.char_id, "reason": job.reason, "key": job.key,
             "status": "ok" if ok else "error", "rtf": reply.get("rtf"), "ts": now_iso(),
+            "est_s": round(job.est_s, 2),
         }
+        cap = _engine_params(project, self.engine, job).get("max_new_tokens")
+        if cap is not None:
+            row["max_new_tokens"] = cap
+        if job.ref_reason:
+            row["ref_reason"] = job.ref_reason
+        if job.src_rate is not None:
+            row["src_rate"] = job.src_rate
         if batch > 1:
             row["batch"] = batch
+        if discarded:
+            row["retry_reason"] = "runaway"
+            row["discarded"] = discarded
         if not ok:
             row["error"] = str(reply.get("error") or "worker reported success but wrote no file")
+            if discarded and job.out.exists():
+                job.out.unlink()  # the last runaway take is not kept
         if reply.get("hit_token_limit"):
             row["hit_token_limit"] = True
-            t.runaway.append(job.id)
         if reply.get("vram_peak_gb") is not None:
             row["vram_peak_gb"] = reply["vram_peak_gb"]
             t.vram_peak = max(t.vram_peak, float(reply["vram_peak_gb"]))
@@ -683,12 +806,52 @@ class _SynthRun:
             if len(t.streak) >= 5 and len(set(t.streak[-5:])) == 1:
                 t.aborted = f"5 consecutive failures: {t.streak[-1]}"
 
-    def single(self, client: WorkerClient, job: Job) -> None:
+    def call(self, client: WorkerClient, job: Job) -> dict[str, Any]:
         try:
-            reply = client.request(self.request_for(job), timeout=max(240.0, 40.0 * job.target_s))
+            return client.request(self.request_for(job), timeout=max(240.0, 40.0 * job.target_s))
         except WorkerError as err:
-            reply = {"ok": False, "error": str(err)}
-        self.record(job, reply, job.seed, 1)
+            return {"ok": False, "error": str(err)}
+
+    def finish(self, client: WorkerClient, job: Job, reply: dict[str, Any], seed: int, batch: int) -> None:
+        """Record a reply; a runaway is discarded and the line retried alone first."""
+        if not (reply.get("ok") and is_runaway(reply, job.est_s, job.target_s)):
+            self.record(job, reply, seed, batch)
+            return
+        self.tally.runaway.append(job.id)
+        reply, discarded = self.recover(client, job, reply)
+        if reply.get("ok"):
+            self.tally.recovered += 1
+        self.record(job, reply, job.seed, 1, discarded)
+
+    def _discarded(self, job: Job, reply: dict[str, Any]) -> dict[str, Any]:
+        return {"ref_mode": job.ref_mode, "ref_id": job.ref.ref_id, "dur_s": reply.get("dur_s"),
+                "hit_token_limit": bool(reply.get("hit_token_limit"))}
+
+    def recover(self, client: WorkerClient, job: Job, reply: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Runaway ladder: same reference timbre-only, then the character reference (ICL)."""
+        discarded = [self._discarded(job, reply)]
+        steps: list[str] = []
+        if not job.x_vector_only and self.engine.name in TRANSCRIPT_ENGINES:
+            steps.append("xvec")
+        if job.alt_ref is not None and job.ref.mode == "line":
+            steps.append("char")
+        for step in steps:
+            if step == "xvec":
+                job.x_vector_only = True
+            else:
+                assert job.alt_ref is not None
+                job.ref, job.ref_trimmed = _fit_ref(job.alt_ref, self.cache_dir)
+                job.x_vector_only = job.ref_trimmed
+                job.alt_ref = None
+                job.key = _job_key(self.project, self.engine, job)
+            reply = self.call(client, job)
+            if not reply.get("ok") or not is_runaway(reply, job.est_s, job.target_s):
+                return reply, discarded
+            discarded.append(self._discarded(job, reply))
+        return {"ok": False, "error": "runaway"}, discarded
+
+    def single(self, client: WorkerClient, job: Job) -> None:
+        self.finish(client, job, self.call(client, job), job.seed, 1)
         if not client.alive and client.restarts >= client.max_restarts:
             self.tally.aborted = "worker keeps crashing"
 
@@ -703,7 +866,8 @@ class _SynthRun:
         if not reply.get("ok") or not isinstance(results, list) or len(results) != len(chunk):
             return False
         for job, item in zip(chunk, results, strict=True):
-            self.record(job, item if isinstance(item, dict) else {"ok": False, "error": "bad batch item"}, chunk[0].seed, len(chunk))
+            item = item if isinstance(item, dict) else {"ok": False, "error": "bad batch item"}
+            self.finish(client, job, item, chunk[0].seed, len(chunk))
         return True
 
     def execute(self, client: WorkerClient, jobs: list[Job], batch_size: int) -> None:
@@ -827,6 +991,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     if not results:
         raise BabelDubError("no synthesized lines yet", code=EXIT_USAGE, hint="run `babeldub synth` first")
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    follows = follower_map(lines.values())
     latest: dict[str, dict[str, Any]] = {}
     for row in results:
         if row.get("status") != "ok" or "id" not in row:
@@ -847,7 +1012,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         "max_duration_ratio": float(project.setting("qa", "max_duration_ratio", 1.35)),
     }
     work: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    up_to_date = missing_line = 0
+    up_to_date = missing_line = followers = 0
     for line_id in sorted(latest):
         res = latest[line_id]
         line = lines.get(line_id)
@@ -855,6 +1020,9 @@ def cmd_post(args: argparse.Namespace) -> int:
             missing_line += 1
             continue
         if want and line_id not in want and _line_uid(line) not in want:
+            continue
+        if line_id in follows:  # takes synthesized before they became followers are not processed
+            followers += 1
             continue
         prev = existing.get(line_id)
         prev_wav = _abs(project, (prev or {}).get("wav"))
@@ -901,6 +1069,8 @@ def cmd_post(args: argparse.Namespace) -> int:
     }
     if missing_line:
         payload["orphans"] = missing_line
+    if followers:
+        payload["follows"] = followers
     if errors:
         payload["errors"] = clip(errors, 5)
     payload["next"] = "babeldub post" if remaining else "babeldub qa"

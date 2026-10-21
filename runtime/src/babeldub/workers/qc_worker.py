@@ -26,6 +26,7 @@ from typing import Any
 SV_SR = 16000
 MIN_SV_SAMPLES = SV_SR // 2  # pad very short clips to 0.5 s for a stable embedding
 EMB_CACHE_MAX = 4096
+VAD_PARAMETERS = {"min_silence_duration_ms": 500, "speech_pad_ms": 200}
 
 _STATE: dict[str, Any] = {
     "device": None,
@@ -250,11 +251,15 @@ def op_asr(req: dict[str, Any]) -> dict[str, Any]:
     audio = _read_16k(req["wav"])[0].numpy()  # decoded here: faster-whisper's PyAV path is version-fragile
     if audio.size == 0:
         raise ValueError(f"empty audio: {req['wav']}")
+    # VAD drops silent or noisy tails, on which Whisper hallucinates text ("to be continued...");
+    # a 0.5 s pause already ends a speech chunk (the library default of 2 s keeps short tails)
+    vad = bool(opts.get("vad_filter", True))
     segments, info = model.transcribe(
         audio,
         language=lang,
         beam_size=int(opts.get("beam_size", 5)),
-        vad_filter=bool(opts.get("vad_filter", False)),
+        vad_filter=vad,
+        vad_parameters=dict(opts.get("vad_parameters") or VAD_PARAMETERS) if vad else None,
         condition_on_previous_text=False,
         without_timestamps=True,
     )

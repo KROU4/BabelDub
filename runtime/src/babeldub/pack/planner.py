@@ -3,6 +3,8 @@
 Input: qa/decisions.jsonl (last decision per line wins), inventory/lines.jsonl and
 inventory/assets.jsonl, post/audio/<uid>.wav. A line goes into the build only when its last
 decision is `accept` and its processed audio exists; anything else is reported, never guessed.
+Alt takes and duplicates (core/takes.py followers) get their leader's accepted audio; their own
+decisions are ignored, and they keep the original when the leader is not accepted.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from babeldub.core.ids import uid as make_uid
 from babeldub.core.jsonl import latest_by, read_jsonl
 from babeldub.core.paths import data_dir
 from babeldub.core.project import Project
+from babeldub.core.takes import follower_map
 
 ACCEPT = "accept"
 
@@ -31,6 +34,7 @@ class ContainerPlan:
     asset: Asset
     replacements: dict[str, Path] = field(default_factory=dict)  # line id -> processed wav
     attempts: dict[str, int | None] = field(default_factory=dict)
+    via: dict[str, str] = field(default_factory=dict)  # follower line id -> leader whose audio it reuses
 
     @property
     def asset_id(self) -> str:
@@ -47,6 +51,7 @@ class BuildPlan:
     stale_attempt: list[str] = field(default_factory=list)
     unmatched_only: list[str] = field(default_factory=list)
     filtered_out: int = 0
+    followers: int = 0  # alt takes/duplicates replaced with their leader's audio
 
     @property
     def lines(self) -> int:
@@ -102,9 +107,15 @@ def plan_build(project: Project, only: set[str] | None = None) -> BuildPlan:
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
     posts = latest_by(read_jsonl(project.path(layout.POST)))
     assets = load_assets(project)
+    follows = follower_map(lines.values())
+    by_leader: dict[str, list[str]] = {}
+    for follower, leader in sorted(follows.items()):
+        by_leader.setdefault(leader, []).append(follower)
     by_asset: dict[str, ContainerPlan] = {}
     matched_only: set[str] = set()
     for line_id in sorted(accepted):
+        if line_id in follows:  # dubbed through its leader below
+            continue
         decision = accepted[line_id]
         line = lines.get(line_id)
         if line is None:
@@ -134,6 +145,13 @@ def plan_build(project: Project, only: set[str] | None = None) -> BuildPlan:
         cont = by_asset.setdefault(asset.asset_id, ContainerPlan(asset=asset))
         cont.replacements[line_id] = wav
         cont.attempts[line_id] = want if want is not None else have
+        for follower in by_leader.get(line_id, []):
+            if (lines.get(follower) or {}).get("asset_id") != asset.asset_id:
+                continue
+            cont.replacements[follower] = wav
+            cont.attempts[follower] = cont.attempts[line_id]
+            cont.via[follower] = line_id
+            plan.followers += 1
     if only is not None:
         plan.unmatched_only = sorted(o for o in only if o not in matched_only)
     plan.containers = sorted(by_asset.values(), key=lambda c: c.asset_id)

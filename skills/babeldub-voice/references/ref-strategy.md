@@ -28,11 +28,21 @@ Otherwise the character reference is used. If the character has no reference at 
 
 The CLI trims a prompt longer than 15 s at its quietest point. The trimmed audio no longer matches its text, so such a prompt goes without a transcript (cloning from the voice embedding only, `x_vector_only` mode). That works worse, so for long lines prefer `char`.
 
+### 2.1 ICL needs an exact transcript
+
+ICL cloning reads `ref_text` as the literal content of `ref_audio`. If the transcript does not match the audio, the model loses its alignment and can loop: on Low-Budget Repairs one alternative take in ICL mode produced 55.9 s of a repeated syllable for a 3.8 s line, while the same take in timbre-only mode gave a perfect read (Whisper CER 0.0). The CLI protects against this in three ways:
+
+1. **Alt takes and duplicates are not voiced.** `link` flags extra recordings of one subtitle key as `alt_take`/`duplicate`. Their audio often differs from the subtitle (an ad-lib, a cut, a different reading). Only the leader of the group (the take named exactly like the text key, else an unflagged take, else `_BEST`, else the first) goes through `synth`, `post` and `qa`; `build` gives every follower the leader's accepted dub. `synth` reports them as `skipped.follows`, `babeldub query --where follows!=null` lists them.
+2. **ICL pre-check.** Before a `line` prompt is used, the CLI divides the syllables of the transcript by the speech seconds of the original. Outside 1.2–8.5 syllables per second the transcript cannot belong to that audio, so the line uses the character reference (`char`), or, if the character has none, the line in timbre-only mode (`line-xvec`). The decision is in `ref_reason` and `src_rate` of `synth/results.jsonl`.
+3. **Runaway guard.** Every line gets its own generation cap from the longer of the estimated dub length and the original. A take that hits the cap or is far longer than plausible is discarded and the line is retried alone: timbre-only on the same prompt (`line-xvec`), then the character reference in ICL mode (`char`). The kept row says `retry_reason: "runaway"` and lists the `discarded` takes; if all tries loop, the row fails with `error: "runaway"` and the next `synth` tries a new seed.
+
+Timbre-only mode keeps the voice but loses some of the delivery of the exact phrase, so it is a fallback, not a default.
+
 ## 3. Why the original line as a prompt carries the emotion
 
 1. **The context matches.** The prompt line is the same phrase in the same scene: the same emotional temperature, distance to the microphone, fatigue, smile in the voice. The model continues exactly that state.
 2. **The pace matches.** The speaking rate and pauses of the prompt carry over into the synthesis. So a `line` dub naturally fits the duration of the original, while a neutral reference often gives a "narrator" pace.
-3. **The transcript aligns the prompt.** `ref_text` tells the model which sounds in the prompt are speech and which are delivery. A wrong transcript (the line was rewritten, the subtitle text does not match the voice-over) confuses the model: artefacts, cut-offs and repetitions appear. That is why `line` requires the original text, and lines whose text diverges from the audio are better voiced with `char`.
+3. **The transcript aligns the prompt.** `ref_text` tells the model which sounds in the prompt are speech and which are delivery. A wrong transcript (the line was rewritten, the subtitle text does not match the voice-over, an alternative take) confuses the model: artefacts, cut-offs, repetitions and endless loops appear. That is why `line` requires the original text, and lines whose text diverges from the audio are voiced with `char` or timbre-only (section 2.1).
 4. **The translation must match the emotional shape.** The prompt sets the intonation; if the translation is calmer than the original (Russian example: «Стой!» ("Stop!") → «Пожалуйста, остановитесь» ("Please stop")), the model pulls the phrase in two directions. That is why the translation rules (skill `babeldub-translate`) require keeping exclamations, questions, hesitations and cut-offs.
 
 Other dubbing pipelines do the same (SVR_TTS, YouDub, VideoLingo): the reference is the original line itself.
@@ -54,7 +64,7 @@ Other dubbing pipelines do the same (SVR_TTS, YouDub, VideoLingo): the reference
 
 The QA decision `reref` changes the prompt for a specific line on the next `babeldub synth --attempt-next`:
 
-- the attempt used `line` → the next one uses `char`;
+- the attempt used `line` or `line-xvec` → the next one uses `char`;
 - it used `char` → another character reference (if there is more than one), otherwise the line's original.
 
 There is no need to touch the global `tts.ref_strategy` setting.

@@ -15,7 +15,8 @@ Read this the first time you review defects. The metrics are computed by the `qc
   - numbers: if a digit stayed in `dub_text` and the model spoke it as words, ASR returns words or digits at its own discretion — CER grows without a real defect;
   - ASR spells names and invented game words as it hears them («Збышек» → «збышик»);
   - placeholders stay in `dub_text` (the CLI strips them only before synthesis), but they are not in the speech;
-  - ASR recognizes interjections and emotional exclamations poorly.
+  - ASR recognizes interjections and emotional exclamations poorly;
+  - Whisper invents text on silence or noise ("Продолжение следует...", "Subtitles by..."). The worker runs it with a voice-activity filter and without conditioning on previous text, which removes most such tails; if `asr_text` still ends with a phrase that is not in `dub_text` while the rest matches, it is an ASR artefact, not a dub defect.
 - **How to read it:** compare `dub_text` and `asr_text` by eye. If the difference is in a name or a number and the rest matches, it is not a pronunciation defect: `accept` with a `note`, or `retranslate` (numbers as words). If ASR returned completely different text or only half of it, it is a real defect: `regen`.
 
 For Russian, the BabelDub research recommends GigaAM-v3 as more accurate recognition; v0.1 does not have it — it is a candidate for the next version.

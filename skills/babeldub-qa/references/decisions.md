@@ -26,7 +26,7 @@ Do not write the `by` and `ts` fields: the CLI sets them. `babeldub decide apply
 Go from top to bottom; the first matching rule decides:
 
 1. **No speech in substance** (the line is laughter, a cough, a sigh, music; `dub_text` is an interjection and the model produced garbage) → `keep_original`.
-2. **The line does not need dubbing** (a duplicate of another line, a service entry, a test string) → `skip`.
+2. **The line does not need dubbing** (a duplicate of another line that `link` did not flag, a service entry, a test string) → `skip`. Lines flagged `alt_take`/`duplicate` never reach QA: they follow their leader, and the build gives them the leader's accepted dub (`babeldub query --where follows!=null`); decide the leader only.
 3. **Service reason** (`missing_file`, `qc_error`, `no_dub_text`) → do not decide: fix the cause (`post`, rerun `qa`, translation).
 4. **Attempts exhausted** (`attempt` ≥ `tts.max_attempts`) and the defect is not about length → `keep_original`; in `note`, say what did not help.
 5. **The voice "drifted"** (`sim` < `min_sim_ratio × sim_ref`):
@@ -55,6 +55,7 @@ Go from top to bottom; the first matching rule decides:
 | `sim` 0.30, `sim_line` 0.22, `sim_char` 0.38, `sim_ref` 0.58; the line is a shout over the radio | `reref` | "line prompt carries the radio effect; use char" |
 | `ratio` 1.22, `fixed_length` true | `shorten` | "ratio 1.22 on a cutscene: cut ~3 syllables of 14" |
 | `ratio` 3.4, `cer` 0.7 | `regen` | "runaway generation" |
+| `synth` keeps failing with `error: "runaway"` (every prompt looped), attempts exhausted, the line never reached `post` | `keep_original` (or `retranslate` with a simpler text) | "loops in every prompt mode" |
 | attempt 3, `sim` still low | `keep_original` | "3 attempts, voice drifts on whisper" |
 | `dub_text` «Ха-ха», the model produced noise | `keep_original` | "laughter, original kept" |
 

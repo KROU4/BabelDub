@@ -261,3 +261,148 @@ def test_post_stretches_and_flags_over_length(project: Project, capsys: pytest.C
             assert row["ratio"] < row["ratio_raw"]
     data, sr = read_audio(project.path(fixed["wav"]))
     assert dsp.true_peak_db(data, sr) <= -0.95
+
+
+# ---- runaway guard, ICL pre-check, followers ------------------------------------------------
+def line_id_of(suffix: str) -> str:
+    return f"fmod:Audio/Dialogue_en.bank#fsb0:{suffix}"
+
+
+def edit_lines(project: Project, fn: Any) -> None:
+    rows = read_jsonl(project.path(layout.LINES))
+    for row in rows:
+        fn(row)
+    write_jsonl(project.path(layout.LINES), rows, schema="babeldub.lines/1")
+
+
+def set_src(project: Project, suffix: str, src: str) -> None:
+    def fn(row: dict[str, Any]) -> None:
+        if row["id"] == line_id_of(suffix):
+            row["text"]["src"] = src
+
+    edit_lines(project, fn)
+
+
+def set_dub(project: Project, suffix: str, dub: str) -> None:
+    append_jsonl(project.path(layout.TRANSLATIONS), [{"id": line_id_of(suffix), "dub_text": dub, "lang": "ru", "by": "human", "rev": 2}])
+
+
+def test_length_estimate_token_cap_and_runaway_rules() -> None:
+    assert voice.CODEC_HZ == 12.5  # Qwen3-TTS 12Hz: a 201-token cap gave exactly 16.08 s
+    assert voice.estimate_seconds("Так, посмотрим.", "ru") == pytest.approx(4 / 5.5)
+    assert voice.estimate_seconds("hello world", "xx") == pytest.approx(3 / 5.0)  # unknown language: 5 syl/s
+    assert voice.token_cap(1.0, 1.0) == 75  # never below 6 s
+    assert voice.token_cap(2.0, 3.0) == 107  # 2 * 3 + 2.5 = 8.5 s -> ceil(106.25)
+    assert voice.token_cap(10.0, 3.0) == 282  # a long translation raises the cap above the original
+    assert voice.is_runaway({"dur_s": 5.4}, 1.0, 1.5)  # > 2.2 * 1.5 + 2.0
+    assert not voice.is_runaway({"dur_s": 5.2}, 1.0, 1.5)
+    assert voice.is_runaway({"dur_s": 1.0, "hit_token_limit": True}, 1.0, 1.5)
+
+
+def test_runaway_is_discarded_and_retried_timbre_only(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    # the transcript of the voice prompt makes the (dummy) model loop in ICL mode
+    set_src(project, "0001", "Okay RUNAWAY, let's see what's wrong with this old thing.")
+    lid = line_id_of("0001")
+    code, out = run(capsys, project.root, "synth", "--ids", lid)
+    assert code == EXIT_OK, out
+    assert out["done"] == 1 and out["runaway"] == [lid] and out["runaway_recovered"] == 1
+    rows = [r for r in results(project) if r["id"] == lid]
+    assert len(rows) == 1  # the discarded take is not an attempt
+    row = rows[0]
+    assert row["status"] == "ok" and row["ref_mode"] == "line-xvec" and row["retry_reason"] == "runaway"
+    assert row["max_new_tokens"] == voice.token_cap(row["est_s"], 2.92)
+    (gone,) = row["discarded"]
+    assert gone["ref_mode"] == "line" and gone["hit_token_limit"] is True
+    assert gone["dur_s"] == pytest.approx(row["max_new_tokens"] / 12.5, abs=0.01)
+    assert row["dur_s"] < 8.0 and probe(project.path(row["wav"]))["dur_s"] == pytest.approx(row["dur_s"], abs=1e-3)
+
+
+def test_runaway_falls_back_to_character_reference(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    set_src(project, "0001", "Okay RUNAWAY, let's see what's wrong with this old thing.")
+    project.data["tts"]["params"] = {"dummy_runaway_xvec": True}  # timbre-only mode loops as well
+    project.save()
+    lid = line_id_of("0001")
+    code, out = run(capsys, project.root, "synth", "--ids", lid)
+    assert code == EXIT_OK and out["done"] == 1, out
+    row = latest_by(results(project))[lid]
+    assert row["status"] == "ok" and row["ref_mode"] == "char" and row["ref_id"] == "Zbyszek:1"
+    assert [d["ref_mode"] for d in row["discarded"]] == ["line", "line-xvec"]
+
+
+def test_runaway_everywhere_is_an_error_and_retried_next_run(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    set_dub(project, "0001", "Так, RUNAWAY посмотрим.")  # the text itself loops in every mode
+    lid = line_id_of("0001")
+    code, out = run(capsys, project.root, "synth", "--ids", lid)
+    assert code == EXIT_ATTENTION and out["failed"] == 1 and out["runaway_recovered"] == 0, out
+    row = latest_by(results(project))[lid]
+    assert row["status"] == "error" and row["error"] == "runaway" and row["wav"] is None
+    assert [d["ref_mode"] for d in row["discarded"]] == ["line", "line-xvec", "char"]
+    assert not project.path(layout.SYNTH_DIR, make_uid(lid), "a1.wav").exists()  # runaway audio is not kept
+    code, out = run(capsys, project.root, "synth", "--ids", lid, "--dry-run")
+    assert out["would_run"] == 1  # a new attempt (new seed) on the next run, up to tts.max_attempts
+
+
+def test_batch_runaway_is_retried_alone(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    set_src(project, "0001", "Okay RUNAWAY, let's see what's wrong with this old thing.")
+    code, out = run(capsys, project.root, "synth", "--batch", "3")
+    assert code == EXIT_OK and out["done"] == 3 and out["batch"] == 3, out
+    rows = results(project)
+    # one batch sorted by character, then by estimated length: Maciek's bark, Zbyszek short, long
+    assert [r["id"].rsplit(":", 1)[1] for r in rows] == ["0003", "0002", "0001"]
+    assert [r.get("batch") for r in rows] == [3, 3, None]
+    assert rows[2]["retry_reason"] == "runaway" and rows[2]["ref_mode"] == "line-xvec"
+    assert rows[1]["est_s"] < rows[2]["est_s"]
+
+
+def test_icl_precheck_uses_char_ref_or_timbre_only(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    # 2.6 s of speech cannot hold this transcript: it does not belong to the audio
+    long_src = " ".join(["Everything is absolutely unbelievable, extraordinary and incomprehensible."] * 4)
+    set_src(project, "0001", long_src)
+    lid = line_id_of("0001")
+    code, out = run(capsys, project.root, "synth", "--ids", lid, "--dry-run")
+    assert out["by_ref"] == {"char": 1}
+    assert run(capsys, project.root, "synth", "--ids", lid)[0] == EXIT_OK
+    row = latest_by(results(project))[lid]
+    assert row["ref_mode"] == "char" and row["src_rate"] > 8.5
+    assert row["ref_reason"].startswith("transcript rate") and row["ref_reason"].endswith("character reference")
+    # without a character reference the line prompt is used for its timbre only
+    write_jsonl(project.path(layout.REFS), [r for r in read_jsonl(project.path(layout.REFS)) if r["char_id"] != "Zbyszek"])
+    assert run(capsys, project.root, "synth", "--ids", lid, "--force")[0] == EXIT_OK
+    row = latest_by(results(project))[lid]
+    assert row["ref_mode"] == "line-xvec" and row["ref_reason"].endswith("timbre only")
+    # a plausible transcript keeps the ICL line prompt
+    set_src(project, "0001", "Okay, let's see what's wrong with this old thing.")
+    assert run(capsys, project.root, "synth", "--ids", lid, "--force")[0] == EXIT_OK
+    row = latest_by(results(project))[lid]
+    assert row["ref_mode"] == "line" and "ref_reason" not in row and 1.2 <= row["src_rate"] <= 8.5
+
+
+def test_followers_are_not_synthesized_or_post_processed(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    leader, alt = line_id_of("0001"), line_id_of("0006")
+
+    def add_alt(rows: list[dict[str, Any]]) -> None:
+        main = next(r for r in rows if r["id"] == leader)
+        main["text"]["key"] = main["entry"]["key"]
+        row = json.loads(json.dumps(main))
+        row.update(id=alt, uid=make_uid(alt), order=9, entry={**main["entry"], "key": "dlg_0001_v1", "index": 9})
+        rows.append(row)
+
+    rows = read_jsonl(project.path(layout.LINES))
+    add_alt(rows)
+    write_jsonl(project.path(layout.LINES), rows, schema="babeldub.lines/1")
+    append_jsonl(project.path(layout.TRANSLATIONS), [{"id": alt, "dub_text": "Так, посмотрим.", "lang": "ru", "by": "agent", "rev": 1}])
+    project.data["tts"]["params"] = {"syllables_per_s": 40.0}  # everything fits: post needs no stretch tool
+    project.save()
+    # without the alt_take flag the two recordings are separate lines (e.g. a run before `link` flagged it)
+    assert run(capsys, project.root, "synth")[1]["done"] == 4
+
+    def flag(row: dict[str, Any]) -> None:
+        if row["id"] == alt:
+            row["flags"] = ["alt_take"]
+
+    edit_lines(project, flag)
+    code, out = run(capsys, project.root, "synth", "--force", "--dry-run")
+    assert out["would_run"] == 3 and out["skipped"]["follows"] == 1
+    code, out = run(capsys, project.root, "post")
+    assert code == EXIT_OK and out["done"] == 3 and out["follows"] == 1, out
+    assert alt not in latest_by(read_jsonl(project.path(layout.POST)))

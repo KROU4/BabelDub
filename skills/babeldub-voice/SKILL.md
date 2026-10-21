@@ -20,8 +20,9 @@ Talk to the user in the user's language. Keep commands, field names and identifi
 1. **The voice prompt is the original line itself.** The cloning engine receives the original audio of this line and its original text (ICL cloning: `ref_audio` + `ref_text`). This carries over not only the timbre but the delivery of this exact phrase: a shout stays a shout, a whisper stays a whisper, fatigue stays fatigue. This is `tts.ref_strategy=line`.
 2. **The character's best reference** is used when the original line is unfit as a prompt: the line is shorter than `tts.line_ref_min_s`, has no original text, or has the flags `has_bed` (music or noise under the voice) or `nonverbal`. This is `char`.
 3. **The default is `auto`**: `line` for a usable line, otherwise `char`; if the character has no reference, the short original line is used anyway, so the line is not lost.
-4. **The translation must fit the intonation of the original.** A text with the same emotional shape (exclamation, question, hesitation, cut-off) sounds natural; a text "calmer" than the original fights the prompt.
-5. **QA compares the synthesized voice with the original character** (ECAPA similarity to the original line and to the character reference, relative to the character's own baseline). A line whose voice has drifted is regenerated or gets a different prompt.
+4. **ICL needs the exact transcript of the prompt.** When a line's source text cannot belong to its audio (implausible syllables per second), the CLI uses the character reference, or the line for its timbre only (`line-xvec`). Alternative takes and duplicates of a line (`alt_take`, `duplicate`) are not voiced at all: they follow their leader, and the build gives them the leader's accepted dub.
+5. **The translation must fit the intonation of the original.** A text with the same emotional shape (exclamation, question, hesitation, cut-off) sounds natural; a text "calmer" than the original fights the prompt.
+6. **QA compares the synthesized voice with the original character** (ECAPA similarity to the original line and to the character reference, relative to the character's own baseline). A line whose voice has drifted is regenerated or gets a different prompt.
 
 Details on why a line prompt carries the emotion, when `char` is needed, and how to reduce the accent of the original language: [references/ref-strategy.md](references/ref-strategy.md). Read it before the pilot.
 
@@ -70,7 +71,7 @@ babeldub qa
 babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.sim,qa.sim_ref,qa.ratio,qa.reasons --limit 30
 ```
 
-- `synth --dry-run` shows the plan in advance: how many lines, how many with a `line` prompt and how many with `char` (`by_ref`), what is skipped and why (`skipped`).
+- `synth --dry-run` shows the plan in advance: how many lines, how many with each prompt (`by_ref`: `line`, `line-xvec`, `char`), what is skipped and why (`skipped`; `follows` are alt takes that reuse their leader's dub).
 - Pilot criteria per character: voice similarity `sim ≥ qa.min_sim_ratio × sim_ref` (0.75), intelligibility `cer ≤ qa.max_cer` (0.15), duration `ratio ≤ qa.max_duration_ratio` (1.35; for `fixed_length`, 1 + `post.fixed_length_tolerance`).
 - You cannot hear audio. The pilot does not block the work, but in the report (in the user's language) list 3–5 `post/audio/<uid>.wav` files of the main characters for the user to listen to, and explain how to compare them with `audio/orig/<uid>.wav`.
 - Analyze a character's pilot failure using the step 2 table and `references/ref-strategy.md`. A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role, not for synthesis.
@@ -89,7 +90,8 @@ Reacting to the `synth` output:
 |---|---|
 | exit code 3, `failed` > 0, various errors | rerun `babeldub synth` (failed lines get a new attempt) |
 | `aborted`: 5 identical errors in a row, or the worker crashes | read the log from the `log` field; on `CUDA out of memory`, use a smaller model (`tts.model`) or close programs that use video memory; see `troubleshooting.md` of the `babeldub-localize` skill |
-| `runaway[]`: generation hit the length limit | usually the model got stuck in a loop; such lines almost always fail QA and go to `regen` |
+| `runaway[]`: a take looped (hit the per-line token cap or ran far past any plausible length) | the CLI already discarded it and retried the line alone: timbre only on the same prompt, then the character reference; `runaway_recovered` counts the saves. A line that loops every time is a `failed` row with `error: "runaway"`: rerun `synth` (new seed); after `tts.max_attempts` decide `keep_original` or `retranslate` (simpler text) |
+| `skipped.follows` | alt takes/duplicates of another line: intended, the build gives them the leader's dub |
 | `skipped.no_ref` | the character has neither a reference nor a usable original: a question for the caster (`babeldub cast`) |
 | `skipped.not_selected` | the character is not selected for dubbing: this is intended, and the original voice plays |
 

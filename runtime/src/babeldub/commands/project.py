@@ -20,6 +20,7 @@ from babeldub.core.jsonl import latest_by, read_json, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, emit
 from babeldub.core.paths import projects_dir
 from babeldub.core.project import DEFAULT_SETTINGS, Project
+from babeldub.core.takes import follower_map
 from babeldub.envsetup.catalog import engine_for_language, load_catalog
 
 Common = Callable[[argparse.ArgumentParser], None]
@@ -117,6 +118,7 @@ def merged_rows(project: Project, lines: list[dict[str, Any]] | None = None) -> 
     translations = latest_translations(project)
     qa = load_latest(project, layout.QA)
     decisions = load_latest(project, layout.DECISIONS)
+    follows = follower_map(lines)
     rows = []
     for line in lines:
         row = dict(line)
@@ -126,6 +128,7 @@ def merged_rows(project: Project, lines: list[dict[str, Any]] | None = None) -> 
         row["translation"] = translations.get(line["id"])
         row["qa"] = qa.get(line["id"])
         row["decision"] = decisions.get(line["id"])
+        row["follows"] = follows.get(line["id"])  # leader id of an alt take / duplicate
         rows.append(row)
     return rows
 
@@ -279,9 +282,12 @@ def project_counts(project: Project) -> dict[str, Any]:
     manifest = read_json(project.path(layout.BUILD_MANIFEST), default=None) or {}
     install = read_json(project.path(layout.INSTALL_LOG), default=None) or {}
     containers = manifest.get("containers") or []
+    follows = follower_map(lines)
     return {
         "lines": len(lines),
         "voiced": len(voiced),
+        # alt takes/duplicates: never synthesized, the build reuses their leader's dub
+        "follows": sum(1 for i in voiced_ids if i in follows),
         "linked": sum(1 for ln in lines if src_text(ln)),
         "characters": len(chars),
         "selected": sum(1 for c in chars.values() if c.get("selected")),

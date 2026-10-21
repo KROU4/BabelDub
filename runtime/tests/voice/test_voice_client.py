@@ -55,6 +55,23 @@ def test_same_seed_is_deterministic(tmp_path: Path) -> None:
     assert (tmp_path / "x.wav").read_bytes() == (tmp_path / "y.wav").read_bytes()
 
 
+def test_dummy_simulates_runaway_up_to_the_token_cap(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        client.load({"model": "dummy"})
+        loop = client.request({**synth_req(tmp_path, "loop", max_new_tokens=100), "text": "Ю, ю, RUNAWAY."})
+        assert loop["ok"] and loop["hit_token_limit"] is True and loop["dur_s"] == pytest.approx(8.0, abs=1e-3)
+        # a marker in the transcript loops only in ICL mode; timbre-only requests send no transcript
+        icl = client.request({**synth_req(tmp_path, "icl", max_new_tokens=100), "ref_text": "RUNAWAY here"})
+        assert icl["hit_token_limit"] is True and icl["mode"] == "icl"
+        xvec = client.request({**synth_req(tmp_path, "xvec", max_new_tokens=100, x_vector_only=True), "ref_text": "RUNAWAY"})
+        assert "hit_token_limit" not in xvec and xvec["mode"] == "xvec" and xvec["dur_s"] < 4.0
+        stuck = client.request(synth_req(tmp_path, "stuck", max_new_tokens=100, dummy_runaway_xvec=True))
+        assert stuck["hit_token_limit"] is True
+        # normal speech longer than the cap is cut there, like a real engine
+        cut = client.request(synth_req(tmp_path, "cut", max_new_tokens=20, syllables_per_s=1.0))
+        assert cut["hit_token_limit"] is True and cut["dur_s"] == pytest.approx(1.6, abs=1e-3)
+
+
 def test_crash_restarts_and_replays_load(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         client.load({"model": "dummy"})

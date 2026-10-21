@@ -344,9 +344,11 @@ def _build_container(
         "inputs_sha1": inputs,
         "built": now_iso(),
         "files": files,
-        # what went in, so `verify` can compare the rebuilt audio with the exact replacement files
+        # what went in, so `verify` can compare the rebuilt audio with the exact replacement files;
+        # `via`: an alt take/duplicate that got its leader's audio
         "replacements": {
-            lid: {"wav": ctx.project.rel(path), "sha1": wavs[lid]} for lid, path in sorted(cp.replacements.items())
+            lid: {"wav": ctx.project.rel(path), "sha1": wavs[lid], **({"via": cp.via[lid]} if lid in cp.via else {})}
+            for lid, path in sorted(cp.replacements.items())
         },
     }
     return entry, "built"
@@ -552,6 +554,8 @@ def run_build(
         "build_id": manifest["build_id"],
         "manifest": layout.BUILD_MANIFEST,
     }
+    if plan.followers:
+        payload["followers"] = plan.followers
     if failed:
         payload["failed"] = clip(failed, 5)
     if attention:

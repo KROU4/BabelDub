@@ -8,6 +8,14 @@ as a WAV, speaking the same JSONL protocol as the real workers (contract §6).
 Standalone script: runs under any Python with numpy + soundfile; never imports babeldub.
 Test hooks in `params`: dummy_fail = "error" (answer ok=false) | "exit" (crash the process) |
 "batch" (fail a whole synth_batch); dummy_sleep = seconds to stall before answering.
+
+Runaway simulation (a TTS model stuck in a loop until its token cap), for the CLI's runaway guard:
+  * the word RUNAWAY in `text` -> every request for that line runs away;
+  * RUNAWAY in `ref_text` -> only ICL requests run away (timbre-only requests send no transcript),
+    like a voice prompt whose transcript does not match its audio;
+  * params.dummy_runaway_xvec = true -> timbre-only (x_vector_only) requests run away too.
+A runaway answer is audio exactly as long as the cap (params.max_new_tokens at 12.5 tokens/s,
+60 s without a cap) with "hit_token_limit": true. Like a real engine, normal output is cut at the cap.
 """
 
 from __future__ import annotations
@@ -38,6 +46,9 @@ def _protocol_stream() -> TextIO:
 PROTO = _protocol_stream()
 
 SR = 24000
+CODEC_HZ = 12.5  # tokens per second of audio, as in Qwen3-TTS 12Hz
+RUNAWAY_MARKER = "RUNAWAY"
+NO_CAP_RUNAWAY_S = 60.0
 VOWELS = set("aeiouyáéíóúàèìòùâêîôûäëïöüåæøąęůаеёиоуыэюяіїєαεηιουωάέήίόύώ")
 
 
@@ -72,10 +83,14 @@ def estimate_f0(path: str | None) -> float:
     return float(np.median(estimates)) if estimates else 140.0
 
 
-def render(text: str, f0: float, seed: int, rate: float) -> np.ndarray:
+def render(text: str, f0: float, seed: int, rate: float, speech_s: float | None = None) -> np.ndarray:
+    """Buzz of the text's syllables at `rate`, or of exactly `speech_s` seconds (a loop of syllables)."""
     rng = np.random.default_rng(seed)
     syllables = max(1, count_syllables(text))
-    speech_s = syllables / rate * float(rng.uniform(0.92, 1.08))
+    if speech_s is None:
+        speech_s = syllables / rate * float(rng.uniform(0.92, 1.08))
+    else:
+        syllables = max(1, int(speech_s * rate))
     n = int(speech_s * SR)
     t = np.arange(n) / SR
     contour = f0 * (1.0 + 0.04 * np.sin(2 * np.pi * 0.8 * t)) * (1.0 - 0.08 * t / max(speech_s, 1e-3))
@@ -119,15 +134,35 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("text") or "").strip()
     if not text:
         return {"ok": False, "op": "synth", "id": req.get("id"), "error": "empty text"}
+    ref_text = str(req.get("ref_text") or "").strip()
+    xvec = bool(params.get("x_vector_only")) or not ref_text
+    if xvec:
+        runaway = RUNAWAY_MARKER in text or bool(params.get("dummy_runaway_xvec"))
+    else:
+        runaway = RUNAWAY_MARKER in text or RUNAWAY_MARKER in ref_text
+    cap = int(params["max_new_tokens"]) if params.get("max_new_tokens") else None
+    cap_s = cap / CODEC_HZ if cap else None
     started = time.perf_counter()
-    audio = render(text, estimate_f0(req.get("ref_wav")), int(req.get("seed") or 0),
-                   float(params.get("syllables_per_s", 5.0)))
+    f0, seed, rate = estimate_f0(req.get("ref_wav")), int(req.get("seed") or 0), float(params.get("syllables_per_s", 5.0))
+    if runaway:
+        total_s = cap_s or NO_CAP_RUNAWAY_S
+        audio = render(text, f0, seed, rate, speech_s=max(0.1, total_s - 0.24))[: int(total_s * SR)]
+    else:
+        audio = render(text, f0, seed, rate)
+    hit = cap_s is not None and len(audio) >= 0.97 * cap_s * SR
+    if cap_s is not None:
+        audio = audio[: int(cap_s * SR)]
     out = req["out"]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     sf.write(out, audio, SR, subtype="PCM_16")
     dur = len(audio) / SR
-    return {"ok": True, "op": "synth", "id": req.get("id"), "wav": out, "sr": SR,
-            "dur_s": round(dur, 4), "rtf": round((time.perf_counter() - started) / dur, 4)}
+    reply: dict[str, Any] = {
+        "ok": True, "op": "synth", "id": req.get("id"), "wav": out, "sr": SR, "dur_s": round(dur, 4),
+        "rtf": round((time.perf_counter() - started) / dur, 4), "mode": "xvec" if xvec else "icl",
+    }
+    if hit:
+        reply["hit_token_limit"] = True
+    return reply
 
 
 def main() -> int:

@@ -24,6 +24,7 @@ from babeldub.core import layout
 from babeldub.core.jsonl import append_jsonl, latest_by, now_iso, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
 from babeldub.core.project import Project
+from babeldub.core.takes import follower_map, project_followers
 from babeldub.qa.baseline import (
     BASELINE,
     clean_original,
@@ -99,6 +100,11 @@ def _attempt(row: dict[str, Any] | None) -> int:
         return 1
 
 
+def _without_followers(post: dict[str, dict[str, Any]], follows: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Alt takes/duplicates are not checked: the build gives them their leader's accepted audio."""
+    return {lid: row for lid, row in post.items() if lid not in follows}
+
+
 def _is_current(qa_row: dict[str, Any] | None, post_row: dict[str, Any]) -> bool:
     return bool(qa_row) and _attempt(qa_row) == _attempt(post_row) and qa_row.get("wav") == post_row.get("wav")
 
@@ -146,12 +152,20 @@ def cmd_qa(args: argparse.Namespace) -> int:
     project.require_stage("post")
     root = project.root
     th = Thresholds.from_project(project.data)
-    post_latest = latest_by(read_jsonl(project.path(layout.POST)))
+    lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    follows = follower_map(lines.values())
+    post_all = latest_by(read_jsonl(project.path(layout.POST)))
+    post_latest = _without_followers(post_all, follows)
     if not post_latest:
         raise BabelDubError("post/post.jsonl has no lines", code=EXIT_USAGE, hint="run `babeldub post` first")
     ids = list(post_latest)
     if args.ids:
         want = [t.strip() for t in args.ids.split(",") if t.strip()]
+        followers = [t for t in want if t in follows]
+        if followers:
+            raise BabelDubError("these lines follow another take and are not checked", code=EXIT_USAGE,
+                                follows={t: follows[t] for t in clip(followers)},
+                                hint="check their leaders; the build gives followers the leader's accepted audio")
         unknown = [t for t in want if t not in post_latest]
         if unknown:
             raise BabelDubError("ids are not in post/post.jsonl", code=EXIT_USAGE, unknown=clip(unknown))
@@ -164,13 +178,12 @@ def cmd_qa(args: argparse.Namespace) -> int:
     dec_latest = latest_by(decisions_all)
     if not to_check:
         state = _state(post_latest, qa_latest, dec_latest)
-        return emit(
-            {"checked": 0, "attention": clip(state["attention"]), "pending": state["pending"],
-             "decisions": state["decisions"], "next": _next(state)},
-            EXIT_ATTENTION if state["attention"] else EXIT_OK,
-        )
+        payload: dict[str, Any] = {"checked": 0, "attention": clip(state["attention"]), "pending": state["pending"],
+                                   "decisions": state["decisions"], "next": _next(state)}
+        if len(post_all) > len(post_latest):
+            payload["follows"] = len(post_all) - len(post_latest)
+        return emit(payload, EXIT_ATTENTION if state["attention"] else EXIT_OK)
 
-    lines = latest_by(read_jsonl(project.path(layout.LINES)))
     translations = latest_by(read_jsonl(project.path(layout.TRANSLATIONS)))
     assign = {r["id"]: r["char_id"] for r in read_jsonl(project.path(layout.ASSIGN))}
     refs = [r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")]
@@ -325,6 +338,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
     project.mark_stage("qa", "attention" if attention else "done", **summary)
     cer_values = [r["cer"] for r in new_qa if r["cer"] is not None]
     sim_values = [r["sim"] for r in new_qa if r["sim"] is not None]
+    if len(post_all) > len(post_latest):
+        summary["follows"] = len(post_all) - len(post_latest)
     return emit(
         {
             **summary,
@@ -403,7 +418,7 @@ def _cell(text: Any, limit: int = 70) -> str:
 
 def cmd_report(args: argparse.Namespace) -> int:
     project = Project.load(args.project)
-    post_latest = latest_by(read_jsonl(project.path(layout.POST)))
+    post_latest = _without_followers(latest_by(read_jsonl(project.path(layout.POST))), project_followers(project))
     qa_latest = latest_by(read_jsonl(project.path(layout.QA)))
     dec_latest = latest_by(read_jsonl(project.path(layout.DECISIONS)))
     if not qa_latest:

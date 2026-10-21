@@ -9,7 +9,7 @@ import pytest
 
 from babeldub.core import layout
 from babeldub.core.ids import uid
-from babeldub.core.jsonl import write_jsonl
+from babeldub.core.jsonl import read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE
 
 from .conftest import (
@@ -168,6 +168,43 @@ def test_build_with_extra_shared_file(
     patched = json.loads((env.root / files[CATALOG_REL]["out"]).read_text(encoding="utf-8"))
     assert patched["crc"][BANK_REL] == 0
     assert bank["out"] == f"{layout.BUILD_DIR}/{BANK_REL}"
+
+
+def _make_alt_take(env: Env) -> tuple[str, str]:
+    """bank_lines[1] becomes an alt take of bank_lines[0] (same text key, flagged by link)."""
+    leader, alt = env.bank_lines[0], env.bank_lines[1]
+    rows = read_jsonl(env.root / layout.LINES)
+    for row in rows:
+        if row["id"] in (leader, alt):
+            row["entry"] = {"key": "dlg_Intro_i05" if row["id"] == leader else "dlg_Intro_i05_v1"}
+            row["text"] = {"key": "dlg_Intro_i05", "src": "Hello."}
+            row["flags"] = ["alt_take"] if row["id"] == alt else []
+    write_jsonl(env.root / layout.LINES, rows, schema="babeldub.lines/1")
+    return leader, alt
+
+
+def test_build_gives_followers_the_leader_audio(env: Env) -> None:
+    leader, alt = _make_alt_take(env)
+    env.redub(alt, 999.0)  # an old dub of the alt take itself must not be used
+    code, out = env.run("build")
+    assert code == EXIT_OK and out["followers"] == 1, out
+    bank = next(c for c in env.manifest()["containers"] if c["adapter"] == "fakebank")
+    reps = bank["replacements"]
+    assert reps[alt] == {**reps[leader], "via": leader} and "via" not in reps[leader]
+    data = json.loads((env.root / bank["out"]).read_text(encoding="utf-8"))
+    assert data["entries"][1]["data"] == data["entries"][0]["data"] == f"dub:{reps[leader]['sha1']}"
+    code, out = env.run("verify")
+    assert code == EXIT_OK, out
+    seen = FakeBankAdapter.verify_options[-1]
+    assert alt in seen["replaced_ids"] and seen["replacements"][alt] == seen["replacements"][leader]
+    # the leader is no longer accepted: the alt take keeps the original despite its own accept
+    env.decide([leader], decision="regen")
+    code, out = env.run("build")
+    assert "followers" not in out
+    bank = next(c for c in env.manifest()["containers"] if c["adapter"] == "fakebank")
+    assert set(bank["replacements"]) == {env.bank_lines[2]}
+    data = json.loads((env.root / bank["out"]).read_text(encoding="utf-8"))
+    assert [e["data"] for e in data["entries"][:2]] == ["orig0", "orig1"]
 
 
 def test_build_rejects_unsafe_relpath(env: Env) -> None:
