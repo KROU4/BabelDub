@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from babeldub.core.paths import IS_WINDOWS, babeldub_home
+from babeldub.core.paths import IS_WINDOWS, babeldub_home, legacy_homes
 from babeldub.core.tools import find_tool
 from babeldub.envsetup.catalog import ENV_MARKER, EngineSpec
 
@@ -177,21 +177,27 @@ def system_info() -> dict[str, Any]:
 
 
 def home_warnings(home: Path | None = None) -> list[str]:
-    """Windows: the Claude desktop app (MSIX) may virtualise %LOCALAPPDATA%, hiding data from other shells."""
+    """Point at data left in pre-release default locations (%LOCALAPPDATA%, XDG data dir).
+
+    Those locations were dropped because packaged hosts (the Claude desktop app is MSIX)
+    virtualise %LOCALAPPDATA%: data written there from an agent session is invisible to
+    other terminals. Data found there is reported so the user can move it.
+    """
     home = home or babeldub_home()
     warnings: list[str] = []
-    if not IS_WINDOWS or os.environ.get("BABELDUB_HOME"):
-        return warnings
+    candidates = list(legacy_homes())
     local = os.environ.get("LOCALAPPDATA")
-    if not local:
-        return warnings
-    packages = Path(local) / "Packages"
-    if packages.is_dir():
-        for pkg in packages.glob("Claude_*"):
-            if (pkg / "LocalCache" / "Local" / home.name).exists():
-                warnings.append(
-                    f"{home} may be virtualised by the Claude desktop app (copy under {pkg / 'LocalCache'}); "
-                    "set BABELDUB_HOME to a folder outside AppData so other terminals see the same data"
-                )
-                break
+    if IS_WINDOWS and local and (Path(local) / "Packages").is_dir():
+        for pkg in (Path(local) / "Packages").glob("Claude_*"):
+            candidates.append(pkg / "LocalCache" / "Local" / "BabelDub")
+    for legacy in candidates:
+        try:
+            if legacy.resolve() == home.resolve() or not (legacy / "envs").is_dir():
+                continue
+        except OSError:
+            continue
+        warnings.append(
+            f"found BabelDub data from an older default location: {legacy}; move its envs/, models/, "
+            f"tools/ and projects/ into {home} (or set BABELDUB_HOME={legacy}) to reuse it"
+        )
     return warnings

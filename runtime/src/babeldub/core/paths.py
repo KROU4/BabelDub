@@ -15,14 +15,26 @@ IS_WINDOWS = sys.platform == "win32"
 
 
 def babeldub_home() -> Path:
+    """~/.babeldub unless BABELDUB_HOME is set.
+
+    Not %LOCALAPPDATA%: packaged (MSIX) hosts such as the Claude desktop app silently
+    redirect writes there into a private per-app folder, so models downloaded from an
+    agent session would be invisible to the user's other terminals and agent hosts.
+    """
     env = os.environ.get("BABELDUB_HOME")
     if env:
         return Path(env).expanduser()
-    if IS_WINDOWS:
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "BabelDub"
+    return Path.home() / ".babeldub"
+
+
+def legacy_homes() -> list[Path]:
+    """Default locations used before v0.1.0 final; doctor offers to migrate them."""
+    homes = []
+    if IS_WINDOWS and os.environ.get("LOCALAPPDATA"):
+        homes.append(Path(os.environ["LOCALAPPDATA"]) / "BabelDub")
     xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(xdg) / "babeldub"
+    homes.append(Path(xdg) / "babeldub")
+    return homes
 
 
 def envs_dir() -> Path:

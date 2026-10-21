@@ -53,11 +53,7 @@ def babeldub_home() -> Path:
     env = os.environ.get("BABELDUB_HOME")
     if env:
         return Path(env).expanduser()
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "BabelDub"
-    xdg = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(xdg) / "babeldub"
+    return Path.home() / ".babeldub"
 
 
 def _read_json(path: Path) -> Any:
