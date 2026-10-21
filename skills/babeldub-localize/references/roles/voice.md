@@ -29,7 +29,7 @@ Synthesis and QA run on the NVIDIA GPU when one is present (`compute.device=auto
 ## Steps
 
 1. **Pilot.** Synthesize a small set of the main characters' lines: `babeldub synth --chars <main> --limit 10` → `babeldub post` → `babeldub qa`. Look at the metrics per character:
-   - voice similarity: `qa.sim` not below `qa.min_sim_ratio` (0.75) × `qa.sim_ref` (the character's baseline from their original lines);
+   - voice similarity: `qa.sim` not below `qa.sim_threshold` (`qa.min_sim_ratio_xlang` 0.45 × `qa.sim_ref`, the character's baseline from their original lines, for a dub in another language; 0.75 × for a same-language dub; never below 0.25), and `qa.margin` not below −0.05 (the dub sounds like its own character, not `qa.closest_char`);
    - intelligibility: `qa.cer` not above `qa.max_cer` (0.15);
    - duration: `qa.ratio` not above `qa.max_duration_ratio` (1.35); for `fixed_length`, not longer than the original beyond the tolerance.
 2. **If the pilot fails for a character:**

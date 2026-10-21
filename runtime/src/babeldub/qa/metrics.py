@@ -1,4 +1,5 @@
-"""QA metrics: text normalization, character error rate, audio level checks, voice similarity.
+"""QA metrics: text normalization, character error rate, audio level checks, voice similarity
+and the speaker identity margin.
 
 CER is computed on normalized text (lower case, no punctuation or markup, ё -> е, digits kept
 as they are), with spaces counted as characters. The Levenshtein distance is a row-vectorized
@@ -128,6 +129,31 @@ def unit(vec: Sequence[float] | np.ndarray) -> np.ndarray:
 
 def cosine(a: Sequence[float] | np.ndarray, b: Sequence[float] | np.ndarray) -> float:
     return float(np.dot(unit(a), unit(b)))
+
+
+def identity_margin(
+    vec: Sequence[float] | np.ndarray,
+    own: str,
+    centroids: dict[str, np.ndarray],
+    same_voice: float,
+) -> tuple[float | None, str | None]:
+    """(margin, closest character) of a dub among the characters' voice centroids.
+
+    margin = cosine to the own centroid - the best cosine to another character. A character
+    whose centroid is at least `same_voice` similar to the own one (a merged voice cluster, one
+    actor in two roles) is the same voice, not another character. Needs two centroids.
+    """
+    if len(centroids) < 2:
+        return None, None
+    sims = {cid: cosine(vec, c) for cid, c in centroids.items()}
+    closest = max(sims, key=lambda cid: sims[cid])
+    own_c = centroids.get(own)
+    if own_c is None:
+        return None, closest
+    others = [s for cid, s in sims.items() if cid != own and cosine(own_c, centroids[cid]) < same_voice]
+    if not others:
+        return None, closest
+    return sims[own] - max(others), closest
 
 
 def mean_pairwise_cosine(embs: Sequence[np.ndarray]) -> float | None:

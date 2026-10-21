@@ -45,7 +45,7 @@ Gender matters three times: for the grammar of the translation, for the QA check
 
 ## 3. What a label cannot do
 
-- **Split a cluster** into two characters or **merge** two characters into one: only the CLI divides the canon. If a cluster is mixed (different names in forms of address, different verb gender), describe it in `notes` and return it in `human_pending` of your answer.
+- **Split a cluster** into two characters or **merge** two characters into one: only the CLI divides the canon. `babeldub cast` itself merges a cluster into a named character whose voice it matches (`cast.merge_threshold`, `references/merging.md`); a cluster it left apart can still get that character's `name` through a label. If a cluster is mixed (different names in forms of address, different verb gender), describe it in `notes` and return it in `human_pending` of your answer.
 - **Reassign a line** to another character.
 - **Choose a reference**: that is done by `babeldub cast` (skill `babeldub-cast`, `references/ref-selection.md`).
 - **Choose whom to dub**: `babeldub cast select` after the question to the user.

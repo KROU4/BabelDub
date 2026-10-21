@@ -12,7 +12,7 @@ Read this before question 2 to the user (characters) and when configuring `cast.
 | `secondary` | the next characters with a speech share of at least 2% | prominent NPCs, merchants, quest givers |
 | `minor` | everyone else | bit parts, passers-by, "barks" |
 
-The `unknown` group (lines without a speaker that could not be compared by voice) takes no part in ranking: it is a mix of voices.
+The `unknown` group (lines without a speaker that could not be compared by voice) takes no part in ranking: it is a mix of voices. Voice clusters merged into a named character (`references/merging.md`) count as that character's speech, so tiers are computed after the merge: a hero whose cutscenes have no speaker hint still ranks by all of his lines.
 
 Example: in Low-Budget Repairs, according to the game analysis, 996 lines are tied to 34 characters; Zbyszek has 49.7 min of speech, Maciek 16.0 min, everyone else up to 3 min. With `main_share` = 0.7, two or three characters become main, and they account for most of the dub. This is only an illustration: another game will have its own distribution.
 

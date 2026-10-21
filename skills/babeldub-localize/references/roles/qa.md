@@ -16,11 +16,14 @@ You decide the fate of the lines that failed the automatic thresholds. The main 
 | Reason | Meaning | CLI's automatic decision |
 |---|---|---|
 | `cer` | the recognized dub differs from `dub_text` by more than `qa.max_cer` (0.15) | `regen` while attempts remain, then `keep_original` |
-| `sim` | the voice "drifted" from the hero: `sim` < `qa.min_sim_ratio` (0.75) × `sim_ref` (the character's baseline) | `regen`, then `keep_original` |
+| `sim` | the voice "drifted" from the hero: `sim` < `sim_threshold` = max(ratio × `sim_ref` (the character's baseline), `qa.min_sim_abs` 0.25); ratio `qa.min_sim_ratio_xlang` (0.45) for a dub in another language than the original audio, `qa.min_sim_ratio` (0.75) for a same-language dub | `regen`, then `keep_original` |
+| `identity` | the dub sounds more like another character (`qa.closest_char`) than its own: `qa.margin` < `qa.min_identity_margin` (−0.05) | `regen`, then `keep_original` |
 | `peak` | peak above the ceiling, or clipping | `regen`, then `keep_original` |
 | `empty`, `silent` | empty file or silence | `regen`, then `keep_original` |
 | `duration` | longer than `qa.max_duration_ratio` (1.35) or, for `fixed_length`, longer than the original beyond the tolerance | `shorten` (up to 2 times), then `keep_original` |
 | `missing_file`, `no_dub_text`, `qc_error` | no file after `post`, no translation, worker failure | no decision — needs attention |
+
+Lines flagged `nonverbal` (screams, laughs) never fail on `sim`, `identity` or `cer` (`qa.sim_skipped`, `qa.cer_skipped`).
 
 `qa` output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `next`. Code 3 — `attention[]` is not empty. The `next` field suggests the next step.
 
@@ -29,10 +32,10 @@ You decide the fate of the lines that failed the automatic thresholds. The main 
 Metrics through `babeldub query` (QA fields have the `qa.` prefix):
 
 ```text
-babeldub query --where verdict=fail --fields id,char_name,kind,fixed_length,decision,qa.attempt,qa.reasons,qa.cer,qa.sim,qa.sim_ref,qa.sim_line,qa.sim_char,qa.ratio,qa.asr_text,translation.dub_text --limit 50
+babeldub query --where verdict=fail --fields id,char_name,kind,fixed_length,decision,qa.attempt,qa.reasons,qa.cer,qa.sim,qa.sim_threshold,qa.sim_line,qa.sim_char,qa.margin,qa.closest_char,qa.ratio,qa.asr_text,translation.dub_text --limit 50
 ```
 
-`qa.sim_line` and `qa.sim_char` are the similarity to the original line itself and to the character reference. The thresholds are set in the `qa` section of `project.json`; the values in the table are the defaults.
+`qa.sim_line` and `qa.sim_char` are the similarity to the original line itself and to the character reference; `qa.sim_threshold` is the bar this line had to reach. Many `identity` failures of one character with the same `qa.closest_char` are a reference or attribution problem: return the character in `failing_chars`. The thresholds are set in the `qa` section of `project.json`; the values in the table are the defaults.
 
 ## Decisions
 

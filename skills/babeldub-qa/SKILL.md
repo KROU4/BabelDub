@@ -28,13 +28,14 @@ babeldub report             qa/report.md: per-character totals and the attention
 | Metric | How | Default threshold |
 |---|---|---|
 | `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo) against `dub_text`, both texts normalized | `qa.max_cer` = 0.15 |
-| `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ qa.min_sim_ratio × sim_ref`, `min_sim_ratio` = 0.75 |
+| `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ sim_threshold = max(ratio × sim_ref, qa.min_sim_abs = 0.25)`; ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (the normal case), `qa.min_sim_ratio` = 0.75 for a same-language dub |
 | `sim_ref` — the character's baseline | mean pairwise similarity of the character's own clean originals | — |
+| `margin` — whose voice is it | similarity to the own character's voice centroid minus the best other character's (`closest_char`); needs two characters with centroids | `margin ≥ qa.min_identity_margin` = −0.05, else reason `identity` |
 | `ratio` — length | dub speech / original speech (from `post`) | `qa.max_duration_ratio` = 1.35; for `fixed_length` 1 + `post.fixed_length_tolerance` = 1.03 |
 | `peak_db`, clipping | peak and share of clipped samples | peak no higher than `post.true_peak_db` + 0.5 dB |
 | silence | speech loudness | not quieter than −50 dB |
 
-Each metric in detail, its weak spots, and why similarity is measured against a baseline — [references/metrics.md](references/metrics.md).
+Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`, `identity` or `cer` (`sim_skipped`, `cer_skipped`). Each metric in detail, its weak spots, and why similarity is measured against a baseline — [references/metrics.md](references/metrics.md).
 
 ## Workflow
 
@@ -42,7 +43,7 @@ Each metric in detail, its weak spots, and why similarity is measured against a 
 2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `qa`, skill `babeldub-voice`); if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
 3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
 4. **Look at the metrics** of the relevant lines only:
-   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_ref,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
+   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
    In `query`, QA metrics live under the `qa.` prefix; to compare the text with what was recognized, add `translation.dub_text` and `qa.asr_text`.
 5. **Systemic defects.** If more than 20 % of one character's lines in a chunk fail, do not decide line by line: this is a prompt, reference or attribution problem. Return the character in `failing_chars` (to the orchestrator and to the voice and caster roles).
 6. **Decisions:** write them to `qa/decisions.agent.jsonl` and run `babeldub decide apply`. The decision table is below; details — [references/decisions.md](references/decisions.md).
@@ -60,11 +61,11 @@ Each metric in detail, its weak spots, and why similarity is measured against a 
 | `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
 | `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-CLI auto-decisions: `pass` → `accept`; a quality failure (`cer`, `sim`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
+CLI auto-decisions: `pass` → `accept`; a quality failure (`cer`, `sim`, `identity`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
 
 ## Thresholds
 
-The default thresholds are a starting point, not the truth: they are not calibrated on the voices of a particular game. When and how to change them (`babeldub set qa.max_cer=…`), why an absolute similarity threshold does not work, and what to do after changing a threshold — [references/thresholds.md](references/thresholds.md).
+The default thresholds are a starting point, not the truth: the voice thresholds come from one measured run (Low-Budget Repairs, Russian dub of English originals), the rest are not calibrated on the voices of a particular game. When and how to change them (`babeldub set qa.max_cer=…`), why an absolute similarity threshold does not work, and what to do after changing a threshold — [references/thresholds.md](references/thresholds.md).
 
 ## Rules
 

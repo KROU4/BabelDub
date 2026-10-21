@@ -33,6 +33,7 @@ def test_cast_with_qc_clusters_tiers_and_refs(project, fake_qc, make_lines, run)
     assert code == EXIT_OK, out
     assert out["ok"] is True
     assert out["clusters"] == 2 and out["uncertain"] == [] and out["no_ref"] == []
+    assert out["merged"] == 0 and out["merged_into"] == {}  # voices A and B are nobody named
     assert out["main"] == ["Zbyszek", "Maciek"]
     chars = {c["char_id"]: c for c in read_jsonl(project.path(layout.CHARACTERS))}
     assert set(chars) == {"zbyszek", "maciek", "fireman", "cluster_01", "cluster_02"}
@@ -69,6 +70,59 @@ def test_cast_with_qc_clusters_tiers_and_refs(project, fake_qc, make_lines, run)
     code, out = run(["cast", "--project", str(project.root)])
     assert code == EXIT_OK and out["clusters"] == 2
     assert fake_qc.loads == []
+
+
+def test_cast_merges_a_cluster_that_is_a_named_character(project, fake_qc, make_lines, run) -> None:
+    f = make_lines(fake_qc)
+    _build(project, f)
+    # Zbyszek's cutscene lines carry no speaker hint: they cluster by voice, then join him
+    cut = [f.add(None, 5.0, text=f"Cutscene {i}.", voice="Zbyszek", kind="cutscene") for i in range(4)]
+    f.save()
+    root = str(project.root)
+    code, out = run(["cast", "--project", root])
+    assert code == EXIT_OK, out
+    assert out["merged"] == 1 and out["merged_into"] == {"zbyszek": ["cluster_01"]}
+    assert out["clusters"] == 2  # voices A and B stay clusters (cluster_02, cluster_03)
+    chars = {c["char_id"]: c for c in read_jsonl(project.path(layout.CHARACTERS))}
+    assert set(chars) == {"zbyszek", "maciek", "fireman", "cluster_02", "cluster_03"}
+    z = chars["zbyszek"]
+    assert z["source"] == "metadata" and z["conf"] == 1.0 and z["n_lines"] == 14
+    [m] = z["merged_clusters"]
+    assert m["cluster_id"] == "cluster_01" and m["n_lines"] == 4 and m["speech_s"] == 20.0 and m["cos"] >= 0.75
+    assert "merged_clusters" not in chars["maciek"]
+    assign = {r["id"]: r for r in read_jsonl(project.path(layout.ASSIGN))}
+    assert {assign[ln["id"]]["char_id"] for ln in cut} == {"zbyszek"}
+    assert {assign[ln["id"]]["conf"] for ln in cut} == {m["cos"]}
+    sheet = project.path(layout.CASTING_SHEET).read_text(encoding="utf-8")
+    assert "## Voice clusters merged into characters" in sheet
+    assert "`cluster_01` → **Zbyszek** (`zbyszek`)" in sheet and "metadata + 1 voice cluster" in sheet
+    assert "### `cluster_01`" not in sheet  # no longer a cluster to label
+    progress = project.progress()["cast"]
+    assert progress["merged"] == 1 and progress["params"]["merge_threshold"] == 0.75
+
+    # the merge survives label/select re-renders of the casting sheet
+    assert run(["cast", "select", "--policy", "all", "--project", root])[0] == EXIT_OK
+    assert "`cluster_01` → **Zbyszek**" in project.path(layout.CASTING_SHEET).read_text(encoding="utf-8")
+
+    # a stricter bar keeps the cluster apart
+    from babeldub.commands.project import apply_setting
+    from babeldub.core.project import Project
+
+    def set_threshold(value: str) -> None:
+        p = Project.load(root)
+        apply_setting(p.data, "cast.merge_threshold", value)
+        p.save()
+
+    set_threshold("0.999")
+    code, out = run(["cast", "--project", root])
+    assert out["merged"] == 0 and out["merged_into"] == {} and out["clusters"] == 3, out
+    chars = {c["char_id"]: c for c in read_jsonl(project.path(layout.CHARACTERS))}
+    assert chars["cluster_01"]["n_lines"] == 4 and chars["zbyszek"]["n_lines"] == 10
+    assert "merged_clusters" not in chars["zbyszek"]
+
+    set_threshold("1.5")
+    code, out = run(["cast", "--project", root])
+    assert code == EXIT_USAGE and "merge_threshold" in out["error"]
 
 
 def test_cast_without_qc_groups_unknown(project, no_qc, make_lines, run) -> None:

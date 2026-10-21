@@ -60,6 +60,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `compute.device` | `auto` | GPU-first: every neural workload runs on the NVIDIA GPU when present; `cuda` requires a GPU; `cpu` only on the user's explicit request |
 | `translation.mode` | `auto` | `official` if an official translation into the target language exists for ≥ 95 % of the linked voiced lines; otherwise `translate`; the CLI decides in `translate plan` |
 | `cast.policy` | `main` | main characters (`cast.main_share` = 0.7) |
+| `cast.merge_threshold` | 0.75 | a voice cluster at least this similar to a named character is merged into him |
 | `tts.engine` | `qwen3tts-fast` | Qwen3-TTS (Apache-2.0) through `faster-qwen3-tts` on an NVIDIA GPU; `synth` falls back to the official `qwen3tts` on the CPU or without its env |
 | `tts.model` | `null` | the model is picked by the tier from `babeldub doctor` |
 | `tts.ref_strategy` | `auto` | `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` (the character's best reference) |
@@ -70,7 +71,10 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
 | `post.true_peak_db` | −1.0 | peak ceiling |
 | `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |
-| `qa.min_sim_ratio` | 0.75 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline |
+| `qa.min_sim_ratio_xlang` | 0.45 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline, when the dub is in another language than the original audio (the normal case) |
+| `qa.min_sim_ratio` | 0.75 | the same for a same-language dub |
+| `qa.min_sim_abs` | 0.25 | absolute floor of the similarity threshold |
+| `qa.min_identity_margin` | −0.05 | how much closer the dub may sit to another character's voice than to its own |
 | `qa.max_duration_ratio` | 1.35 | maximum ratio of the dub's duration to the original's |
 | `build.codec` | `auto` | the adapter picks the build codec |
 | `install.backup` | `true` | install only with a backup |

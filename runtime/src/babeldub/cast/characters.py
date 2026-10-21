@@ -234,6 +234,12 @@ def _cell(text: Any, limit: int = 90) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
+def _source_cell(c: dict[str, Any]) -> str:
+    text = _SOURCE_TEXT.get(c["source"], c["source"])
+    n = len(c.get("merged_clusters") or [])
+    return f"{text} + {n} voice cluster{'s' if n > 1 else ''}" if n else text
+
+
 def render_casting_sheet(
     *,
     game_name: str,
@@ -281,11 +287,26 @@ def render_casting_sheet(
                 sh=c.get("share", 0.0),
                 tier=_TIER_TEXT.get(c["tier"], c["tier"]),
                 sel="yes" if c.get("selected") else "no",
-                src=_SOURCE_TEXT.get(c["source"], c["source"]),
+                src=_source_cell(c),
                 ref=ref_cell,
                 ex=_cell(sample, 80),
             )
         )
+    merges = [(c, m) for c in chars for m in c.get("merged_clusters") or []]
+    if merges:
+        out += [
+            "",
+            "## Voice clusters merged into characters",
+            "",
+            "Lines without speaker metadata whose voice cluster matches a named character (centroid cosine",
+            "at or above `cast.merge_threshold`) belong to that character; their `conf` in `cast/assign.jsonl` is that cosine.",
+            "",
+        ]
+        for c, m in merges:
+            out.append(
+                f"- `{m.get('cluster_id')}` → **{_cell(c.get('name'), 40)}** (`{c['char_id']}`): cosine {m.get('cos', 0.0):.2f}, "
+                f"{m.get('n_lines', 0)} lines, {float(m.get('speech_s') or 0.0) / 60:.1f} min."
+            )
     if uncertain:
         out += ["", "## Needs review", ""]
         by_id = {c["char_id"]: c for c in chars}
@@ -322,6 +343,8 @@ def render_casting_sheet(
         "   (`gender`: m|f|u, `age`: child|adult|old|u; fields that do not change can be omitted).",
         "2. Merge the labels: `babeldub cast apply-labels`.",
         "3. Change the selection if needed: `babeldub cast select --policy main|all` or `babeldub cast select --chars A,B`.",
+        "4. A merge looks wrong (the merged lines address another character): raise the bar, e.g.",
+        "   `babeldub set cast.merge_threshold=0.85`, and run `babeldub cast` again.",
         "",
     ]
     return "\n".join(out)

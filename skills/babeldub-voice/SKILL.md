@@ -72,7 +72,7 @@ babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.s
 ```
 
 - `synth --dry-run` shows the plan in advance: how many lines, how many with each prompt (`by_ref`: `line`, `line-xvec`, `char`), what is skipped and why (`skipped`; `follows` are alt takes that reuse their leader's dub).
-- Pilot criteria per character: voice similarity `sim ≥ qa.min_sim_ratio × sim_ref` (0.75), intelligibility `cer ≤ qa.max_cer` (0.15), duration `ratio ≤ qa.max_duration_ratio` (1.35; for `fixed_length`, 1 + `post.fixed_length_tolerance`).
+- Pilot criteria per character: voice similarity `sim ≥ sim_threshold` (0.45 × `sim_ref` for a dub in another language, 0.75 × for a same-language dub, never below 0.25) and identity `margin ≥ −0.05`, intelligibility `cer ≤ qa.max_cer` (0.15), duration `ratio ≤ qa.max_duration_ratio` (1.35; for `fixed_length`, 1 + `post.fixed_length_tolerance`).
 - You cannot hear audio. The pilot does not block the work, but in the report (in the user's language) list 3–5 `post/audio/<uid>.wav` files of the main characters for the user to listen to, and explain how to compare them with `audio/orig/<uid>.wav`.
 - Analyze a character's pilot failure using the step 2 table and `references/ref-strategy.md`. A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role, not for synthesis.
 

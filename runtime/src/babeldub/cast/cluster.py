@@ -8,6 +8,11 @@ is similar enough, otherwise they are clustered among themselves.
 
 Calibration on Low-Budget Repairs (ECAPA, studio game voices): different lines of one actor
 score 0.44-0.65, different actors -0.16..0.28, hence the 0.35 default threshold.
+
+A cluster whose centroid is close to the voice centroid of a character named in the metadata
+is that character (his lines that lack a speaker hint, e.g. cutscenes): on Low-Budget Repairs
+zbyszek~cluster_04 scored 0.88 and maciek~cluster_05 0.89, every other pair 0.06-0.38, hence
+the 0.75 default of `cast.merge_threshold`.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ DEFAULT_THRESHOLD = 0.35  # average cosine between two groups of lines to treat 
 UNCERTAIN_CONF = 0.6  # clusters whose members sit further than this from the centroid need review
 MIN_CLUSTER_S = 1.5  # shorter lines give unstable embeddings: attached to centroids afterwards
 MAX_CLUSTER_POINTS = 3000  # memory bound of the similarity matrix (float32: ~36 MB)
+MERGE_THRESHOLD = 0.75  # centroid cosine of a cluster to a named character that makes it that character
 
 
 def l2_normalize(mat: np.ndarray) -> np.ndarray:
@@ -285,3 +291,24 @@ def centroid_of(vectors: list[np.ndarray]) -> np.ndarray | None:
     if not vectors:
         return None
     return l2_normalize(np.stack(vectors).mean(axis=0))[0]
+
+
+def merge_targets(
+    clusters: dict[str, np.ndarray],
+    chars: dict[str, np.ndarray],
+    threshold: float = MERGE_THRESHOLD,
+) -> dict[str, tuple[str, float]]:
+    """{cluster_id: (char_id, cosine)} for clusters whose centroid reaches `threshold` with the
+    closest character centroid. Clusters are never merged with each other here: the clustering
+    threshold already decided that."""
+    if not clusters or not chars:
+        return {}
+    ids = list(chars)
+    mat = l2_normalize(np.stack([chars[c] for c in ids]))
+    out: dict[str, tuple[str, float]] = {}
+    for cluster_id, centroid in clusters.items():
+        sims = mat @ l2_normalize(centroid)[0]
+        best = int(np.argmax(sims))
+        if float(sims[best]) >= threshold:
+            out[cluster_id] = (ids[best], float(sims[best]))
+    return out

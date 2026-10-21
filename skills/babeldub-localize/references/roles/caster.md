@@ -11,7 +11,7 @@ You are the BabelDub casting director. The most important thing depends on your 
 
 ## Input
 
-- The `babeldub cast` output: `characters`, `selected`, `main[]`, `uncertain[]`.
+- The `babeldub cast` output: `characters`, `selected`, `main[]`, `uncertain[]`, `merged_into` (voice clusters the CLI merged into named characters).
 - `cast/casting_sheet.md` (written by the CLI): the character table and their references. Read it by section.
 - A character's lines through `babeldub query --where char=<char_id> --fields id,entry.key,scene,text.src,audio.dur_s --limit 20`.
 
@@ -24,6 +24,7 @@ You are the BabelDub casting director. The most important thing depends on your 
    - `age`: `child` | `adult` | `old` | `u`;
    - `notes` — speech traits (dialect, age, manner) useful to the translator, and your confidence.
 2. If one cluster clearly mixes two characters (different names in forms of address, different gender by grammar), describe it in `notes` and in `human_pending`. Do not split the canon by hand.
+   Check every merge in the casting sheet section "Voice clusters merged into characters": the merged lines must fit the character (forms of address, grammatical gender). A wrong merge goes to `warnings` with the advice `babeldub set cast.merge_threshold=0.85` and a rerun of `babeldub cast` (skill `babeldub-cast`, `references/merging.md`).
 3. Check the references of the main characters in `cast/casting_sheet.md`: a timbre reference must be neutral (no shout, no whisper, no laughter, no music). Mark a bad reference in the character's `notes` and in the `warnings` of your answer.
 4. Write the labels to `cast/labels.agent.jsonl`, one object per line (example for a Russian target):
 

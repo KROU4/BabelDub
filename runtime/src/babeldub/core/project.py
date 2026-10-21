@@ -19,7 +19,8 @@ PROJECT_SCHEMA = "babeldub.project/1"
 DEFAULT_SETTINGS: dict[str, Any] = {
     # GPU-first: "auto" runs every neural workload on the NVIDIA GPU when one is present
     "compute": {"device": "auto"},
-    "cast": {"policy": "main", "list": [], "main_share": 0.7},
+    # merge_threshold: a voice cluster this similar (centroid cosine) to a named character is that character
+    "cast": {"policy": "main", "list": [], "main_share": 0.7, "merge_threshold": 0.75},
     "translation": {"mode": "auto"},
     # ref_strategy: "line" = the original line itself is the voice prompt (carries timbre AND the
     # emotion/delivery of that exact line); "char" = best clean reference of the character;
@@ -35,7 +36,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_attempts": 3,
     },
     "post": {"max_stretch": 0.12, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
-    "qa": {"max_cer": 0.15, "min_sim_ratio": 0.75, "max_duration_ratio": 1.35},
+    # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language
+    "qa": {
+        "max_cer": 0.15,
+        "min_sim_ratio": 0.75,
+        "min_sim_ratio_xlang": 0.45,
+        "min_sim_abs": 0.25,
+        "min_identity_margin": -0.05,
+        "max_duration_ratio": 1.35,
+    },
     "build": {"codec": "auto"},
     "install": {"backup": True},
 }

@@ -92,9 +92,9 @@ babeldub cast apply-labels
 babeldub cast select --chars A,B | --policy main|all
 ```
 
-- Characters come from metadata (`speaker_hint`); lines without it are grouped by voice (embeddings through the `qc` worker, on the GPU when present).
+- Characters come from metadata (`speaker_hint`); lines without it are grouped by voice (embeddings through the `qc` worker, on the GPU when present). A voice cluster that sounds like a named character (centroid cosine ≥ `cast.merge_threshold` = 0.75) is merged into him: typically his cutscene lines without a speaker hint.
 - A character's references are the cleanest and most typical original lines (`cast/refs.jsonl`, `cast/refs/<char_id>/*.wav`); the casting sheet is `cast/casting_sheet.md`.
-- `cast` output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters`, `refs`, `sheet`, `next`.
+- `cast` output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters` (left after merging), `merged`, `merged_into{char_id: [cluster_id]}`, `refs`, `sheet`, `next`.
 - Code 3: there are voice clusters or `uncertain[]`. The caster role labels them in `cast/labels.agent.jsonl` → `babeldub cast apply-labels` (output `updated`, `labeled`, `uncertain[]`; code 2 — invalid file, fix it).
 - `no_ref[]` — the character has no separate reference: their lines use the original line as the prompt (`line`); short lines of such a character may stay without synthesis.
 - After question 2 to the user: `babeldub cast select ...` (output `policy`, `selected[]`).
@@ -165,7 +165,7 @@ babeldub report
 ```
 
 - For the latest attempt of every line: speech recognition of the dub → CER against `dub_text`; similarity of the dub's voice to the hero's original line and to their reference (`sim`) against the character's baseline (`sim_ref`); duration ratio; peaks and silence. Runs on the GPU when present. Writes `qa/qa.jsonl`; auto-decisions go to `qa/decisions.jsonl`.
-- Thresholds: `qa.max_cer` = 0.15; `qa.min_sim_ratio` = 0.75 (`sim` ≥ 0.75 × `sim_ref`); `qa.max_duration_ratio` = 1.35.
+- Thresholds: `qa.max_cer` = 0.15; `sim` ≥ max(ratio × `sim_ref`, `qa.min_sim_abs` = 0.25) with ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio, `qa.min_sim_ratio` = 0.75 for a same-language dub; identity `margin` ≥ `qa.min_identity_margin` = −0.05; `qa.max_duration_ratio` = 1.35. Lines flagged `nonverbal` skip the voice and CER checks.
 - Auto-decisions: passed → `accept`; intelligibility, voice, peaks → `regen` while attempts remain, then `keep_original`; too long → `shorten` (up to 2 times), then `keep_original`; missing file, no translation, worker failure → no decision (attention).
 - `qa` output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `next`.
 - Code 3: `attention[]` is not empty. The qa role writes `qa/decisions.agent.jsonl` → `babeldub decide apply` (output `applied`, `skipped`, `by_decision`; code 2 — invalid file, fix it).
@@ -233,7 +233,7 @@ babeldub verify [--game-runtime]
 `query` is the main way to look at data. Always pass `--fields` and `--limit` (up to 50).
 
 - `--where` conditions: `field=value`, `field!=value`, `field~substring`, comma-separated.
-- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`.
+- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.sim_threshold`, `qa.margin`, `qa.closest_char`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`.
 - Example: `babeldub query --where char=Zbyszek,verdict=fail --fields id,qa.reasons,qa.cer,qa.sim,qa.sim_ref --limit 30`.
 
 ## 5. Project artifacts

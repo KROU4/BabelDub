@@ -11,8 +11,29 @@ from babeldub.cast.cluster import (
     agglomerative,
     cluster_voices,
     l2_normalize,
+    merge_targets,
     wav_signature,
 )
+
+
+def _unit(*xs: float) -> np.ndarray:
+    return l2_normalize(np.array(xs, dtype=np.float32))[0]
+
+
+def test_merge_targets_picks_the_closest_named_voice() -> None:
+    chars = {"zbyszek": _unit(1, 0, 0), "maciek": _unit(0, 1, 0)}
+    clusters = {
+        "cluster_01": _unit(0.9, 0.1, 0.1),  # ~0.99 to zbyszek
+        "cluster_02": _unit(0.1, 0.95, 0),  # ~0.99 to maciek
+        "cluster_03": _unit(0, 0, 1),  # nobody
+        "cluster_04": _unit(1, 1, 0),  # 0.71 to both: between two voices, stays a cluster
+    }
+    got = merge_targets(clusters, chars, 0.75)
+    assert set(got) == {"cluster_01", "cluster_02"}
+    assert got["cluster_01"][0] == "zbyszek" and got["cluster_02"][0] == "maciek"
+    assert got["cluster_01"][1] == pytest.approx(float(np.dot(clusters["cluster_01"], chars["zbyszek"])))
+    assert merge_targets(clusters, chars, 0.999) == {}
+    assert merge_targets(clusters, {}, 0.75) == {} and merge_targets({}, chars, 0.75) == {}
 
 
 def _naive_average_linkage(emb: np.ndarray, threshold: float) -> list[set[int]]:

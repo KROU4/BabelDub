@@ -40,7 +40,7 @@ def test_init_cast_list_and_locale(bd, game, tmp_path):
                    "--project-dir", tmp_path / "proj")
     assert code == 0
     data = read_json(tmp_path / "proj" / layout.PROJECT_JSON)
-    assert data["cast"] == {"policy": "list", "list": ["Zbyszek", "Maciek"], "main_share": 0.7}
+    assert data["cast"] == {"policy": "list", "list": ["Zbyszek", "Maciek"], "main_share": 0.7, "merge_threshold": 0.75}
     assert data["target_lang"] == "pt" and data["target_locale"] == "pt-BR"
     assert data["translation"]["mode"] == "translate"
 

@@ -11,11 +11,44 @@ from babeldub.qa.metrics import (
     cer,
     cosine,
     duration_ratio,
+    identity_margin,
     levenshtein,
     max_ratio_for,
     mean_pairwise_cosine,
     normalize_text,
 )
+
+
+def _unit(*xs: float) -> np.ndarray:
+    v = np.array(xs, dtype=np.float32)
+    return v / np.linalg.norm(v)
+
+
+def test_identity_margin() -> None:
+    hero, villain = _unit(1, 0, 0), _unit(0, 1, 0)
+    cents = {"hero": hero, "villain": villain}
+    margin, closest = identity_margin(_unit(0.8, 0.2, 0), "hero", cents, 0.75)
+    assert closest == "hero" and margin == pytest.approx(cosine(_unit(0.8, 0.2, 0), hero) - cosine(_unit(0.8, 0.2, 0), villain))
+    margin, closest = identity_margin(_unit(0.3, 0.9, 0), "hero", cents, 0.75)
+    assert closest == "villain" and margin < -0.5
+    # one centroid only, or the line's own character has none: no margin
+    assert identity_margin(hero, "hero", {"hero": hero}, 0.75) == (None, None)
+    assert identity_margin(hero, "ghost", cents, 0.75) == (None, "hero")
+
+
+def test_identity_margin_same_voice_is_not_another_character() -> None:
+    hero = _unit(1, 0, 0)
+    cluster = _unit(1, 0.45, 0)  # a merged voice cluster of the hero: centroid cosine ~0.91
+    villain = _unit(0, 0, 1)
+    dub = cluster  # the dub happens to sit right on the cluster's centroid
+    margin, closest = identity_margin(dub, "hero", {"hero": hero, "cluster_04": cluster, "villain": villain}, 0.75)
+    assert closest == "cluster_04"
+    assert margin == pytest.approx(cosine(dub, hero) - cosine(dub, villain)) and margin > 0.8
+    # with the same-voice rule off, the hero's own cluster would fail him
+    margin, _ = identity_margin(dub, "hero", {"hero": hero, "cluster_04": cluster, "villain": villain}, 1.01)
+    assert margin < -0.05
+    # every other centroid is the same voice: nothing to tell apart
+    assert identity_margin(dub, "hero", {"hero": hero, "cluster_04": cluster}, 0.75) == (None, "cluster_04")
 
 
 def _ref_lev(a: str, b: str) -> int:

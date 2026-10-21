@@ -81,6 +81,24 @@ def test_set_typed_values(bd, game):
     assert json.loads(events[-1])["stage"] == "set"
 
 
+def test_set_calibration_settings(bd, game):
+    _, init = bd("init", game, "--lang", "ru")
+    code, out = bd("set", "cast.merge_threshold=0.8", "qa.min_sim_ratio_xlang=0.5", "qa.min_sim_abs=0.2",
+                   "qa.min_identity_margin=-0.1", "qa.min_sim_ratio=0.7")
+    assert code == 0 and "warnings" not in out, out
+    data = read_json(Path(init["project"]) / layout.PROJECT_JSON)
+    assert data["cast"]["merge_threshold"] == 0.8
+    assert data["qa"]["min_sim_ratio_xlang"] == 0.5 and data["qa"]["min_sim_abs"] == 0.2
+    assert data["qa"]["min_identity_margin"] == -0.1 and data["qa"]["min_sim_ratio"] == 0.7
+    assert out["changed"]["qa.min_sim_ratio_xlang"] == {"old": 0.45, "new": 0.5}
+    # a project created before these keys existed still gets typed values and no warning
+    del data["qa"]["min_sim_abs"]
+    write_json(Path(init["project"]) / layout.PROJECT_JSON, data)
+    code, out = bd("set", "qa.min_sim_abs=0.3")
+    assert code == 0 and "warnings" not in out and out["changed"]["qa.min_sim_abs"] == {"old": None, "new": 0.3}
+    assert bd("set", "qa.min_sim_abs=low")[0] == 2
+
+
 def test_set_validation(bd, game):
     bd("init", game, "--lang", "ru")
     assert bd("set", "cast.policy=everyone")[0] == 2

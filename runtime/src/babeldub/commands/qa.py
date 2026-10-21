@@ -2,8 +2,11 @@
 
 For the latest post-processed file of every line: ASR in the target language -> CER against
 the dub text; speaker similarity (ECAPA) of the dub to the hero's original line and to his
-reference, judged against the character's own baseline; duration ratio; peaks and silence.
-Auto-decisions follow project.json `qa` thresholds; agents add theirs via `decide apply`.
+reference, judged against the character's own baseline (with a lower ratio for a dub in
+another language than the original audio, and an absolute floor); the identity margin (the
+dub must sound like its own character more than like any other); duration ratio; peaks and
+silence. Lines flagged `nonverbal` skip the voice and CER checks. Auto-decisions follow
+project.json `qa` thresholds; agents add theirs via `decide apply`.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any
 import numpy as np
 
 from babeldub.cast.characters import UNKNOWN_ID
-from babeldub.cast.cluster import EMBEDDINGS, Embedder, EmbeddingStore
+from babeldub.cast.cluster import EMBEDDINGS, MERGE_THRESHOLD, Embedder, EmbeddingStore
 from babeldub.commands.cast import sub_common
 from babeldub.core import layout
 from babeldub.core.jsonl import append_jsonl, latest_by, now_iso, read_jsonl, write_jsonl
@@ -27,6 +30,7 @@ from babeldub.core.project import Project
 from babeldub.core.takes import follower_map, project_followers
 from babeldub.qa.baseline import (
     BASELINE,
+    char_centroids,
     clean_original,
     compute_baselines,
     load_baseline,
@@ -41,7 +45,7 @@ from babeldub.qa.decisions import (
     needs_attention,
     validate_agent_row,
 )
-from babeldub.qa.metrics import audio_levels, cer, cosine, duration_ratio
+from babeldub.qa.metrics import audio_levels, cer, cosine, duration_ratio, identity_margin
 from babeldub.qa.qc import QcItemError, QcSession
 
 QA_SCHEMA = "babeldub.qa/1"
@@ -190,6 +194,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
     chosen_ref = {r["char_id"]: r for r in refs}
     shortened = Counter(r["id"] for r in decisions_all if r.get("decision") == "shorten")
     lang = project.data.get("target_lang")
+    chars = latest_by(read_jsonl(project.path(layout.CHARACTERS)), "char_id")
+    same_voice = float(project.setting("cast", "merge_threshold", MERGE_THRESHOLD))
 
     session = QcSession.open(
         root, project.data, need_asr=True, need_sv=True,
@@ -210,14 +216,17 @@ def cmd_qa(args: argparse.Namespace) -> int:
     try:
         char_lines: dict[str, list[dict[str, Any]]] = {}
         needed = {assign.get(i, UNKNOWN_ID) for i in to_check}
+        # voices a dub must be told apart from: the checked characters plus every selected or main one
+        voices = (needed | {cid for cid, c in chars.items() if c.get("selected") or c.get("tier") == "main"}) - {UNKNOWN_ID}
         for lid, cid in assign.items():
-            if cid in needed and lid in lines:
+            if (cid in needed or cid in voices) and lid in lines:
                 char_lines.setdefault(cid, []).append(lines[lid])
         baseline = compute_baselines(
-            root, char_lines, embedder, None if args.rebaseline else load_baseline(project.path(BASELINE)),
-            force=args.rebaseline,
+            root, {cid: v for cid, v in char_lines.items() if cid in needed}, embedder,
+            None if args.rebaseline else load_baseline(project.path(BASELINE)), force=args.rebaseline,
         )
         save_baseline(project.path(BASELINE), baseline)
+        centroids = char_centroids(root, {cid: v for cid, v in char_lines.items() if cid in voices}, embedder)
 
         def orig_emb(line_id: str) -> np.ndarray | None:
             line = lines.get(line_id)
@@ -241,6 +250,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             asr_text: str | None = None
             cer_v: float | None = None
             sims: dict[str, float] = {}
+            synth: np.ndarray | None = None
             qc_error = False
             audible = levels is not None and levels.dur_s >= 0.1 and levels.active_rms_db >= th.silence_db
             if audible:
@@ -266,6 +276,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
                             sims["char"] = cosine(synth, ref_vec)
             sim = float(np.mean(list(sims.values()))) if sims else None
             sim_ref = sim_ref_for(baseline, cid)
+            margin, closest = identity_margin(synth, cid, centroids, same_voice) if synth is not None else (None, None)
+            nonverbal = "nonverbal" in (line.get("flags") or [])  # a scream: voice and words are not comparable
             ratio = post.get("ratio")
             if ratio is None and levels is not None:
                 target = post.get("target_s") or (line.get("audio") or {}).get("dur_s")
@@ -284,6 +296,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 ratio=ratio,
                 fixed_length=bool(line.get("fixed_length")),
                 qc_error=qc_error,
+                margin=margin,
+                nonverbal=nonverbal,
             )
             new_qa.append(
                 {
@@ -293,10 +307,16 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "wav": post.get("wav"),
                     "asr_text": asr_text,
                     "cer": None if cer_v is None else round(cer_v, 4),
+                    "cer_skipped": "nonverbal" if nonverbal else None,
                     "sim": None if sim is None else round(sim, 4),
                     "sim_line": None if "line" not in sims else round(sims["line"], 4),
                     "sim_char": None if "char" not in sims else round(sims["char"], 4),
                     "sim_ref": round(sim_ref, 4),
+                    "sim_ratio": th.sim_ratio,
+                    "sim_threshold": round(th.sim_threshold(sim_ref), 4),
+                    "sim_skipped": "nonverbal" if nonverbal else None,
+                    "margin": None if margin is None else round(margin, 4),
+                    "closest_char": closest,
                     "ratio": None if ratio is None else round(float(ratio), 4),
                     "dur_s": None if levels is None else round(levels.dur_s, 3),
                     "peak_db": None if levels is None else round(levels.peak_db, 2),
@@ -429,6 +449,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     baseline = load_baseline(project.path(BASELINE))
     state = _state(post_latest, qa_latest, dec_latest)
     attention_set = set(state["attention"])
+    th = Thresholds.from_project(project.data)
+    lang_note = "the dub is in another language than the original audio" if th.cross_lang else "same-language dub"
 
     per: dict[str, dict[str, Any]] = {}
     for lid, post in post_latest.items():
@@ -460,8 +482,10 @@ def cmd_report(args: argparse.Namespace) -> int:
         f"need attention: **{len(state['attention'])}**, not checked yet: {state['pending']}.",
         "",
         "Voice similarity (`sim`) is the ECAPA cosine between the dub and the hero's original voice; `sim_ref` is the",
-        "character's baseline (how similar the character's own original lines are to each other). Check:",
-        f"`sim ≥ {project.setting('qa', 'min_sim_ratio', 0.75)} × sim_ref`, CER ≤ {project.setting('qa', 'max_cer', 0.15)}.",
+        "character's baseline (how similar the character's own original lines are to each other). Checks:",
+        f"`sim ≥ max({th.sim_ratio} × sim_ref, {th.min_sim_abs})` ({lang_note}); identity margin ≥ {th.min_identity_margin}",
+        f"(the dub is closer to its own character's voice than to any other); CER ≤ {th.max_cer}.",
+        "Lines flagged `nonverbal` (screams, laughs) skip the voice and CER checks.",
         "",
         "| Character | ID | Lines | Checked | Passed | Failed | Accepted | Regenerate | Shorten | Keep original | Attention | CER (median) | sim (median) | sim_ref |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",

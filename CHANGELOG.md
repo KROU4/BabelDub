@@ -5,6 +5,17 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+### Added
+
+- **Voice clusters merge into named characters.** After clustering, `cast` compares every cluster's centroid with the voice centroid of each character from metadata (up to 12 longest clean originals); a cluster at or above `cast.merge_threshold` (default 0.75) is that character: its lines are assigned to him (`conf` = the centroid cosine), `characters.jsonl` records `merged_clusters`, the casting sheet lists the merges, and the output has `merged` and `merged_into`. Clusters are not merged with each other beyond the clustering itself. On Low-Budget Repairs the 50 clusters of lines without speaker metadata included `cluster_04` (0.88 to Zbyszek) and `cluster_05` (0.89 to Maciek), their cutscene lines; every other pair scored 0.06–0.38.
+- **QA speaker identity margin.** When at least two characters have voice centroids (the checked characters plus every selected or main one), `qa` records `margin` (similarity to the own character's centroid minus the best other character's) and `closest_char`, and fails a dub with the reason `identity` below `qa.min_identity_margin` (default −0.05; auto-decision `regen`, then `keep_original`). Characters whose voices are at least `cast.merge_threshold` similar count as one voice.
+
+### Changed
+
+- **QA similarity is calibrated for cross-language dubs.** A dub in another language than the original audio (`source_lang` ≠ `target_lang`, the normal case) is judged with `qa.min_sim_ratio_xlang` = 0.45 × `sim_ref`; same-language dubs keep `qa.min_sim_ratio` = 0.75; an absolute floor `qa.min_sim_abs` = 0.25 applies to both. `qa.jsonl` records `sim_ratio` and `sim_threshold`. On Low-Budget Repairs (Russian Qwen3-TTS dub of English originals) the old bar 0.75 × 0.76 = 0.57 failed 27 of 30 dubs whose Whisper CER median was 0.0; good dubs scored 0.38–0.66 against the hero's centroid, clear failures 0.08–0.11.
+- **Nonverbal lines skip the voice and CER checks.** Screams and laughs (`nonverbal` flag) are measured but never fail on `sim`, `identity` or `cer` (`sim_skipped`, `cer_skipped` in `qa.jsonl`).
+- `babeldub set` knows the new settings (`cast.merge_threshold`, `qa.min_sim_ratio_xlang`, `qa.min_sim_abs`, `qa.min_identity_margin`), and new projects get them in `project.json`.
+
 ## [0.1.0] - 2026-10-21
 
 First public release: the full pipeline for localizing and dubbing a game in the voices of its original characters, driven by an AI agent.

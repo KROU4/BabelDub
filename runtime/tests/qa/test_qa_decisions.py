@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from babeldub.qa.decisions import Thresholds, auto_decide, evaluate, needs_attention, validate_agent_row
+from babeldub.qa.decisions import (
+    Thresholds,
+    auto_decide,
+    evaluate,
+    is_cross_language,
+    needs_attention,
+    validate_agent_row,
+)
 
+# a same-language dub: the classic ratio rule sim >= 0.75 x sim_ref
 TH = Thresholds(max_cer=0.15, min_sim_ratio=0.75, max_duration_ratio=1.35, fixed_length_tolerance=0.03,
-                peak_ceiling_db=-1.0, max_attempts=3)
+                peak_ceiling_db=-1.0, max_attempts=3, cross_lang=False)
+XLANG = Thresholds()  # defaults: Russian dub of English originals
 
 
 def _eval(**over: Any) -> tuple[str, list[str]]:
@@ -22,6 +31,46 @@ def test_thresholds_from_project() -> None:
     assert (th.max_cer, th.min_sim_ratio, th.max_duration_ratio) == (0.1, 0.8, 1.2)
     assert (th.fixed_length_tolerance, th.peak_ceiling_db, th.max_attempts) == (0.05, -2.0, 5)
     assert Thresholds.from_project({}).max_cer == 0.15
+    th = Thresholds.from_project({"source_lang": "en", "target_lang": "ru",
+                                  "qa": {"min_sim_ratio_xlang": 0.5, "min_sim_abs": 0.2, "min_identity_margin": -0.1}})
+    assert th.cross_lang and th.sim_ratio == 0.5
+    assert (th.min_sim_abs, th.min_identity_margin) == (0.2, -0.1)
+    same = Thresholds.from_project({"source_lang": "pt", "target_lang": "pt-BR"})
+    assert not same.cross_lang and same.sim_ratio == 0.75
+
+
+def test_cross_language() -> None:
+    assert is_cross_language("en", "ru")
+    assert is_cross_language(None, "ru")  # unknown source: the normal case is a dub into another language
+    assert not is_cross_language("en", "en")
+    assert not is_cross_language("pt_BR", "PT")
+
+
+def test_sim_threshold_ratio_and_floor() -> None:
+    # Low-Budget Repairs: sim_ref 0.76; good cross-language dubs 0.38-0.66, failures 0.08-0.11
+    assert XLANG.sim_threshold(0.76) == 0.45 * 0.76
+    assert TH.sim_threshold(0.76) == 0.75 * 0.76
+    assert XLANG.sim_threshold(0.4) == 0.25  # the absolute floor
+    assert XLANG.sim_threshold(None) == 0.25
+    for good in (0.38, 0.5, 0.66):
+        assert _eval(th=XLANG, sim=good, sim_ref=0.76) == ("pass", [])
+    for good in (0.38, 0.5):
+        assert _eval(th=TH, sim=good, sim_ref=0.76) == ("fail", ["sim"])  # the same-language bar is 0.57
+    for bad in (0.08, 0.11, 0.24):
+        assert _eval(th=XLANG, sim=bad, sim_ref=0.76) == ("fail", ["sim"])
+    assert _eval(th=XLANG, sim=0.2, sim_ref=0.3) == ("fail", ["sim"])  # 0.45 x 0.3 = 0.135, but the floor is 0.25
+
+
+def test_identity_margin_and_nonverbal() -> None:
+    assert _eval(margin=0.1) == ("pass", [])
+    assert _eval(margin=-0.04) == ("pass", [])  # within the default -0.05 tolerance
+    assert _eval(margin=-0.2) == ("fail", ["identity"])
+    assert _eval(margin=None) == ("pass", [])
+    assert _eval(sim=0.1, margin=-0.3) == ("fail", ["sim", "identity"])
+    # a scream: neither the voice nor the transcript is judged
+    assert _eval(nonverbal=True, sim=0.09, margin=-0.3, cer=0.9) == ("pass", [])
+    assert _eval(nonverbal=True, sim=0.09, ratio=1.6) == ("fail", ["duration"])
+    assert _eval(nonverbal=True, has_text=False, cer=None) == ("fail", ["no_dub_text"])
 
 
 def test_evaluate_rules() -> None:
@@ -52,6 +101,9 @@ def test_auto_decisions() -> None:
     d = auto_decide("fail", ["sim"], 2, TH)
     assert d.decision == "regen"
     d = auto_decide("fail", ["sim"], 3, TH)
+    assert d.decision == "keep_original" and d.attention
+    assert auto_decide("fail", ["identity"], 1, TH).decision == "regen"
+    d = auto_decide("fail", ["identity"], 3, TH)
     assert d.decision == "keep_original" and d.attention
     d = auto_decide("fail", ["duration"], 1, TH)
     assert d.decision == "shorten" and d.attention

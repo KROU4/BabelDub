@@ -72,12 +72,20 @@ class Voices:
         self.rng = np.random.default_rng(seed)
         self.centroids: dict[str, np.ndarray] = {}
 
-    def emb(self, voice: str, spread: float = 0.35) -> np.ndarray:
+    def centroid(self, voice: str) -> np.ndarray:
         if voice not in self.centroids:
             c = self.rng.standard_normal(DIM)
             self.centroids[voice] = c / np.linalg.norm(c)
+        return self.centroids[voice]
+
+    def emb(self, voice: str, spread: float = 0.35) -> np.ndarray:
         noise = self.rng.standard_normal(DIM)
-        v = self.centroids[voice] + spread * noise / np.linalg.norm(noise)
+        v = self.centroid(voice) + spread * noise / np.linalg.norm(noise)
+        return (v / np.linalg.norm(v)).astype(np.float32)
+
+    def mix(self, weights: dict[str, float]) -> np.ndarray:
+        """A voice between speakers, e.g. {"hero": 0.6, "villain": 0.8} (random voices are ~orthogonal)."""
+        v = sum(w * self.centroid(name) for name, w in weights.items())
         return (v / np.linalg.norm(v)).astype(np.float32)
 
 
@@ -94,13 +102,14 @@ class DubProject:
         self.post: list[dict[str, Any]] = []
         self.refs: list[dict[str, Any]] = []
 
-    def line(self, char: str, dur_s: float = 3.0, fixed_length: bool = False, flags: tuple[str, ...] = ()) -> str:
+    def line(self, char: str, dur_s: float = 3.0, fixed_length: bool = False, flags: tuple[str, ...] = (),
+             vec: np.ndarray | None = None) -> str:
         idx = len(self.lines)
         lid = line_id("fmod", "Data/Dialogue.bank", "fsb0", idx)
         u = uid(lid)
         rel = f"{layout.ORIG_AUDIO_DIR}/{u}.wav"
         write_voice(self.project.path(rel), dur_s, seed=idx)
-        self.qc.vectors[key(self.project.path(rel))] = self.voices.emb(char)
+        self.qc.vectors[key(self.project.path(rel))] = self.voices.emb(char) if vec is None else vec
         self.lines.append(
             {
                 "id": lid, "uid": u, "kind": "dialogue", "locale": "en-US",
@@ -116,12 +125,14 @@ class DubProject:
         self.translations.append({"id": lid, "dub_text": text, "lang": "ru", "by": "agent", "rev": 1})
 
     def dub(self, lid: str, attempt: int = 1, voice: str | None = None, asr: str | None = None,
-            dur_s: float = 3.0, ratio: float = 1.0, amp: float = 0.2) -> Path:
+            dur_s: float = 3.0, ratio: float = 1.0, amp: float = 0.2, vec: np.ndarray | None = None) -> Path:
         line = next(x for x in self.lines if x["id"] == lid)
         rel = f"{layout.POST_DIR}/{line['uid']}.wav"
         wav = self.project.path(rel)
         write_voice(wav, dur_s, amp=amp, seed=100 + attempt)
-        if voice is not None:
+        if vec is not None:
+            self.qc.vectors[key(wav)] = vec
+        elif voice is not None:
             self.qc.vectors[key(wav)] = self.voices.emb(voice)
         if asr is not None:
             self.qc.texts[key(wav)] = asr

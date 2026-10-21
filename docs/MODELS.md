@@ -85,9 +85,9 @@ To try it: `babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, then `babel
 The `qc` worker loads both QA models in one process:
 
 - **faster-whisper large-v3-turbo** transcribes the dub; `qa` computes the CER against `dub_text` (`qa.max_cer`, default 0.15).
-- **SpeechBrain ECAPA** compares the dub's voice with the original of this line and with the character's chosen reference. The check is relative to the character's own baseline (the mean pairwise similarity of their originals): `sim ≥ qa.min_sim_ratio · sim_ref` (default 0.75). The same embeddings cluster unlabelled voices in `cast`.
+- **SpeechBrain ECAPA** compares the dub's voice with the original of this line and with the character's chosen reference. The check is relative to the character's own baseline (the mean pairwise similarity of their originals): `sim ≥ max(ratio · sim_ref, qa.min_sim_abs)`, with ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (cross-language similarity is always lower), `qa.min_sim_ratio` = 0.75 for a same-language dub, and a floor of 0.25. The identity margin compares the dub with the voice centroids of the other characters. The same embeddings cluster unlabelled voices in `cast` and merge a cluster into the named character it sounds like.
 
-Duration (`qa.max_duration_ratio`, default 1.35) and peaks are checked without a model. A line that fails on CER, similarity, peaks or silence gets an automatic `regen` decision until `tts.max_attempts` is reached, then `keep_original`; `synth --attempt-next` re-voices it, and a `reref` decision also switches the voice prompt (`line` → `char` or another reference).
+Duration (`qa.max_duration_ratio`, default 1.35) and peaks are checked without a model. A line that fails on CER, similarity, identity, peaks or silence gets an automatic `regen` decision until `tts.max_attempts` is reached, then `keep_original`; `synth --attempt-next` re-voices it, and a `reref` decision also switches the voice prompt (`line` → `char` or another reference).
 
 ## Candidates for later versions (not in v0.1)
 

@@ -1,7 +1,8 @@
 """`babeldub cast`, `cast apply-labels`, `cast select`: who speaks, who gets dubbed, which references.
 
 Characters come from speaker metadata (`speaker_hint`) first; lines without it are grouped
-by voice (speaker embeddings from the qc worker, agglomerative clustering). For every
+by voice (speaker embeddings from the qc worker, agglomerative clustering), and a cluster
+whose voice matches a named character (`cast.merge_threshold`) is merged into him. For every
 selected character the cleanest, most typical original lines become voice references, so
 the dub keeps the hero's own timbre.
 """
@@ -35,16 +36,19 @@ from babeldub.cast.characters import (
 from babeldub.cast.cluster import (
     DEFAULT_THRESHOLD,
     EMBEDDINGS,
+    MERGE_THRESHOLD,
     UNCERTAIN_CONF,
     Embedder,
     EmbeddingStore,
     cluster_voices,
+    merge_targets,
 )
 from babeldub.cast.refs import candidate_pool, install_refs, rank_candidates, ref_rows
 from babeldub.core import layout
 from babeldub.core.jsonl import latest_by, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
 from babeldub.core.project import Project
+from babeldub.qa.baseline import char_centroids
 from babeldub.qa.qc import QcSession, qc_missing
 
 DEFAULT_PARAMS: dict[str, Any] = {"refs": 3, "min_ref_s": 3.0, "max_ref_s": 12.0}
@@ -258,11 +262,17 @@ def cmd_cast(args: argparse.Namespace) -> int:
     if policy not in POLICIES:
         raise BabelDubError(f"unknown cast.policy '{policy}'", code=EXIT_USAGE, hint="`babeldub set cast.policy=main`")
     main_share = float(cast_cfg.get("main_share", 0.7))
+    merge_threshold = cast_cfg.get("merge_threshold", MERGE_THRESHOLD)
+    if isinstance(merge_threshold, bool) or not isinstance(merge_threshold, (int, float)) or not 0.0 < merge_threshold <= 1.0:
+        raise BabelDubError("cast.merge_threshold must be a number in (0, 1]", code=EXIT_USAGE,
+                            hint=f"`babeldub set cast.merge_threshold={MERGE_THRESHOLD}`")
+    merge_threshold = float(merge_threshold)
     root = project.root
     lines = voiced_lines(_load_lines(project))
     if not lines:
         raise BabelDubError("no voiced lines with audio", code=EXIT_USAGE, hint="run `babeldub extract` first")
-    params = {"refs": args.refs, "min_ref_s": args.min_ref_s, "max_ref_s": args.max_ref_s, "threshold": args.threshold}
+    params = {"refs": args.refs, "min_ref_s": args.min_ref_s, "max_ref_s": args.max_ref_s, "threshold": args.threshold,
+              "merge_threshold": merge_threshold}
     project.mark_stage("cast", "running")
 
     warnings: list[str] = []
@@ -288,6 +298,7 @@ def cmd_cast(args: argparse.Namespace) -> int:
     chars: list[dict[str, Any]] = []
     assign_rows: list[dict[str, Any]] = []
     n_clusters = 0
+    merged: dict[str, str] = {}  # cluster_id -> char_id
     try:
         for cid, g in groups.items():
             ids = g["ids"]
@@ -302,12 +313,32 @@ def cmd_cast(args: argparse.Namespace) -> int:
             clusters = cluster_voices(embs, {k: durations[k] for k in embs}, threshold=args.threshold)
             clusters.sort(key=lambda cl: (-sum(durations[k] for k in cl.members), cl.members[0]))
             width = max(2, len(str(len(clusters))))
-            for n, cl in enumerate(clusters, 1):
-                cid = f"cluster_{n:0{width}d}"
+            named = [(f"cluster_{n:0{width}d}", cl) for n, cl in enumerate(clusters, 1)]
+            # a cluster that sounds like a named character is that character (e.g. his cutscene lines)
+            by_line = {line["id"]: line for line in lines}
+            meta_lines = {cid: [by_line[i] for i in g["ids"]] for cid, g in groups.items()}
+            targets = merge_targets(
+                {cid: cl.centroid for cid, cl in named},
+                char_centroids(root, meta_lines, embedder) if meta_lines else {},
+                merge_threshold,
+            )
+            by_char = {c["char_id"]: c for c in chars}
+            for cid, cl in named:
                 speech = sum(durations[k] for k in cl.members)
+                if cid in targets:
+                    owner, cos = targets[cid]
+                    c = by_char[owner]
+                    c["n_lines"] += len(cl.members)
+                    c["speech_s"] = round(c["speech_s"] + speech, 2)
+                    c.setdefault("merged_clusters", []).append(
+                        {"cluster_id": cid, "cos": round(cos, 3), "n_lines": len(cl.members), "speech_s": round(speech, 2)}
+                    )
+                    assign_rows += [{"id": k, "char_id": owner, "conf": round(cos, 3)} for k in cl.members]
+                    merged[cid] = owner
+                    continue
                 chars.append(new_character(cid, cid, "cluster", len(cl.members), speech, cl.conf))
                 assign_rows += [{"id": k, "char_id": cid, "conf": round(cl.member_cos[k], 3)} for k in cl.members]
-            n_clusters = len(clusters)
+            n_clusters = len(named) - len(merged)
         rest = [line for line in unhinted if line["id"] not in embs]
         if rest:
             speech = sum(durations[line["id"]] for line in rest)
@@ -350,10 +381,14 @@ def cmd_cast(args: argparse.Namespace) -> int:
 
     uncertain = _uncertain(chars)
     attention = bool(uncertain or no_ref)
+    merged_into: dict[str, list[str]] = {}
+    for cluster_id, owner in merged.items():
+        merged_into.setdefault(owner, []).append(cluster_id)
     summary = {
         "characters": len(chars),
         "selected": len(selected),
         "clusters": n_clusters,
+        "merged": len(merged),
         "uncertain": len(uncertain),
         "no_ref": len(no_ref),
         "embedded": embedder.computed,
@@ -368,6 +403,8 @@ def cmd_cast(args: argparse.Namespace) -> int:
             "uncertain": clip(uncertain),
             "no_ref": clip(no_ref),
             "clusters": n_clusters,
+            "merged": len(merged),
+            "merged_into": {owner: clip(ids, 5) for owner, ids in merged_into.items()},
             "refs": len(refs),
             "sheet": layout.CASTING_SHEET,
             "warnings": clip(warnings, 5),

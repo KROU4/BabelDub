@@ -8,8 +8,17 @@ Reason codes written to qa.jsonl:
   no_dub_text   no translation for the line    -> no auto decision (attention)
   cer           ASR differs from dub text      -> regen, then keep_original
   sim           voice drifted from the hero    -> regen, then keep_original
+  identity      dub sounds like another char   -> regen, then keep_original
   peak          peak above the ceiling/clipped -> regen, then keep_original
   duration      longer than allowed            -> shorten (translator agent shortens the text)
+
+Lines flagged `nonverbal` (screams, laughs) skip the voice checks (sim, identity) and CER: a
+scream's embedding and its transcript say nothing about the voice or the words.
+
+Similarity calibration on Low-Budget Repairs (Qwen3-TTS Russian dub of English originals,
+ECAPA): good dubs scored 0.38-0.66 against the character's centroid, clear failures 0.08-0.11,
+while the same-language baseline sim_ref was 0.76. A cross-language dub always scores lower,
+so it gets its own ratio (0.45 x 0.76 = 0.34) plus an absolute floor (0.25).
 """
 
 from __future__ import annotations
@@ -18,21 +27,44 @@ from dataclasses import dataclass
 from typing import Any
 
 DECISIONS = ("accept", "regen", "reref", "shorten", "retranslate", "keep_original", "skip")
-QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "peak"})
+QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak"})
 BLOCKING_REASONS = frozenset({"missing_file", "no_dub_text", "qc_error"})
 MAX_SHORTEN = 2  # after two shortened texts that still do not fit, the line needs a human
+
+
+def _lang(code: Any) -> str | None:
+    text = str(code or "").strip().replace("_", "-").split("-")[0].lower()
+    return text or None
+
+
+def is_cross_language(source_lang: Any, target_lang: Any) -> bool:
+    """The dub is in another language than the original audio (unknown source: assume so)."""
+    src, tgt = _lang(source_lang), _lang(target_lang)
+    return src is None or tgt is None or src != tgt
 
 
 @dataclass
 class Thresholds:
     max_cer: float = 0.15
-    min_sim_ratio: float = 0.75
+    min_sim_ratio: float = 0.75  # same-language dub: sim >= ratio x sim_ref
+    min_sim_ratio_xlang: float = 0.45  # dub language differs from the original audio (the normal case)
+    min_sim_abs: float = 0.25  # absolute floor of the similarity threshold
+    min_identity_margin: float = -0.05  # sim(own centroid) - max sim(other centroids)
     max_duration_ratio: float = 1.35
     fixed_length_tolerance: float = 0.03
     peak_ceiling_db: float = -1.0
     peak_margin_db: float = 0.5
     silence_db: float = -50.0
     max_attempts: int = 3
+    cross_lang: bool = True
+
+    @property
+    def sim_ratio(self) -> float:
+        return self.min_sim_ratio_xlang if self.cross_lang else self.min_sim_ratio
+
+    def sim_threshold(self, sim_ref: float | None) -> float:
+        """The bar `sim` must reach: ratio x the character's baseline, never below the floor."""
+        return max(self.sim_ratio * sim_ref if sim_ref is not None else 0.0, self.min_sim_abs)
 
     @classmethod
     def from_project(cls, data: dict[str, Any]) -> Thresholds:
@@ -43,11 +75,15 @@ class Thresholds:
         return cls(
             max_cer=float(qa.get("max_cer", base.max_cer)),
             min_sim_ratio=float(qa.get("min_sim_ratio", base.min_sim_ratio)),
+            min_sim_ratio_xlang=float(qa.get("min_sim_ratio_xlang", base.min_sim_ratio_xlang)),
+            min_sim_abs=float(qa.get("min_sim_abs", base.min_sim_abs)),
+            min_identity_margin=float(qa.get("min_identity_margin", base.min_identity_margin)),
             max_duration_ratio=float(qa.get("max_duration_ratio", base.max_duration_ratio)),
             fixed_length_tolerance=float(post.get("fixed_length_tolerance", base.fixed_length_tolerance)),
             peak_ceiling_db=float(post.get("true_peak_db", base.peak_ceiling_db)),
             silence_db=float(qa.get("silence_db", base.silence_db)),
             max_attempts=int(tts.get("max_attempts", base.max_attempts)),
+            cross_lang=is_cross_language(data.get("source_lang"), data.get("target_lang")),
         )
 
 
@@ -66,6 +102,8 @@ def evaluate(
     ratio: float | None,
     fixed_length: bool,
     qc_error: bool = False,
+    margin: float | None = None,
+    nonverbal: bool = False,
 ) -> tuple[str, list[str]]:
     """Apply the thresholds; returns (verdict, reasons)."""
     reasons: list[str] = []
@@ -79,10 +117,13 @@ def evaluate(
         reasons.append("qc_error")
     if not has_text:
         reasons.append("no_dub_text")
-    elif cer is not None and cer > th.max_cer:
+    elif cer is not None and cer > th.max_cer and not nonverbal:
         reasons.append("cer")
-    if sim is not None and sim_ref is not None and sim < th.min_sim_ratio * sim_ref:
-        reasons.append("sim")
+    if not nonverbal:
+        if sim is not None and sim < th.sim_threshold(sim_ref):
+            reasons.append("sim")
+        if margin is not None and margin < th.min_identity_margin:
+            reasons.append("identity")
     limit = 1.0 + th.fixed_length_tolerance if fixed_length else th.max_duration_ratio
     if ratio is not None and ratio > limit:
         reasons.append("duration")
@@ -102,7 +143,7 @@ class AutoDecision:
 def auto_decide(verdict: str, reasons: list[str], attempt: int, th: Thresholds, shortened: int = 0) -> AutoDecision:
     """Decision for one QA row.
 
-    pass -> accept. Quality failures (cer/sim/peak/empty/silent) -> regen while attempts remain,
+    pass -> accept. Quality failures (cer/sim/identity/peak/empty/silent) -> regen while attempts remain,
     then keep_original with attention. Too long -> shorten (the translator agent rewrites the
     text), at most MAX_SHORTEN times, then keep_original with attention.
     """

@@ -92,6 +92,6 @@ Ideas that are **not verified** and not implemented in v0.1: using the character
 
 - `sim_line` is the cosine similarity of ECAPA embeddings between the dub and the original line; `sim_char` is between the dub and the character reference; `sim` is their mean.
 - `sim_ref` is the character's baseline: the mean pairwise similarity of the character's own clean original lines (up to the 12 longest). Absolute similarity values differ from voice to voice, and cross-lingual similarity is lower than same-language similarity, so the comparison is made against this baseline.
-- Threshold: `sim ≥ qa.min_sim_ratio × sim_ref` (default 0.75). Below it, the reason is `sim`: the CLI auto-decides `regen` until attempts run out, then `keep_original`. The qa role may assign `reref` instead if the defect looks like a prompt problem (shouting, noise, an effect in the original).
+- Threshold: `sim ≥ max(ratio × sim_ref, qa.min_sim_abs)` with ratio `qa.min_sim_ratio_xlang` (0.45) for a dub in another language than the original audio, `qa.min_sim_ratio` (0.75) for a same-language dub, floor 0.25; the identity margin also fails a dub closer to another character's voice than to its own (reason `identity`). Below the threshold, the reason is `sim`: the CLI auto-decides `regen` until attempts run out, then `keep_original`. The qa role may assign `reref` instead if the defect looks like a prompt problem (shouting, noise, an effect in the original).
 
 Details: skill `babeldub-qa`.

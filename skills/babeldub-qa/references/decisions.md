@@ -29,11 +29,15 @@ Go from top to bottom; the first matching rule decides:
 2. **The line does not need dubbing** (a duplicate of another line that `link` did not flag, a service entry, a test string) → `skip`. Lines flagged `alt_take`/`duplicate` never reach QA: they follow their leader, and the build gives them the leader's accepted dub (`babeldub query --where follows!=null`); decide the leader only.
 3. **Service reason** (`missing_file`, `qc_error`, `no_dub_text`) → do not decide: fix the cause (`post`, rerun `qa`, translation).
 4. **Attempts exhausted** (`attempt` ≥ `tts.max_attempts`) and the defect is not about length → `keep_original`; in `note`, say what did not help.
-5. **The voice "drifted"** (`sim` < `min_sim_ratio × sim_ref`):
+5. **The voice "drifted"** (`sim` < `sim_threshold`):
    - `sim_line` low, `sim_char` normal, the prompt was `line` → `reref`;
    - both low, first attempt → `regen`;
    - both low again → `reref`;
    - widespread for a character (more than 20 % in a chunk) → do not decide line by line; return the character in `failing_chars`.
+   - `sim_ratio` is 0.75 on a dub into another language → `source_lang` is wrong in `project.json`; fix it (`babeldub set source_lang=en`) and rerun `babeldub qa --force` instead of deciding.
+5a. **Another character's voice** (`identity`: `margin` < `min_identity_margin`, `closest_char` names someone else):
+   - first attempt → `regen`; on repeat with the same `closest_char` → `reref`;
+   - many lines of one character closest to the same other character → a reference or attribution problem: return the character in `failing_chars` (caster role), do not decide line by line.
 6. **Intelligibility** (`cer` > `max_cer`), the voice is fine:
    - compare `dub_text` and `asr_text`; if the difference is only in a name, a number or an interjection → `accept` with a `note`, or `retranslate` (numbers as words, `pronounce`);
    - skipped words, repetitions, foreign words → `regen`;
@@ -52,7 +56,9 @@ Go from top to bottom; the first matching rule decides:
 | `cer` 0.05, `sim` 0.52, `sim_ref` 0.60 (0.87 × baseline), `ratio` 1.1 | `accept` | — |
 | `cer` 0.40; `dub_text` «Збышек, иди сюда»; `asr_text` «збышик иди сюда» | `accept` | "ASR misspells the name; the rest matches" |
 | `cer` 0.60; `asr_text` contains half the phrase and a repetition | `regen` | "skipped words and repetition, attempt 1" |
-| `sim` 0.30, `sim_line` 0.22, `sim_char` 0.38, `sim_ref` 0.58; the line is a shout over the radio | `reref` | "line prompt carries the radio effect; use char" |
+| `sim` 0.22 < `sim_threshold` 0.26 (0.45 × `sim_ref` 0.58), `sim_line` 0.12, `sim_char` 0.32; the line is a shout over the radio | `reref` | "line prompt carries the radio effect; use char" |
+| `sim` 0.41 ≥ `sim_threshold` 0.34, `margin` −0.18, `closest_char` `maciek` (the line is Zbyszek's) | `regen` | "sounds like Maciek, attempt 1" |
+| `nonverbal` scream, `sim_skipped` and `cer_skipped`, `verdict` pass | `accept` (auto) | — |
 | `ratio` 1.22, `fixed_length` true | `shorten` | "ratio 1.22 on a cutscene: cut ~3 syllables of 14" |
 | `ratio` 3.4, `cer` 0.7 | `regen` | "runaway generation" |
 | `synth` keeps failing with `error: "runaway"` (every prompt looped), attempts exhausted, the line never reached `post` | `keep_original` (or `retranslate` with a simpler text) | "loops in every prompt mode" |

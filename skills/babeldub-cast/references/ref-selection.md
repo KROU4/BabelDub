@@ -15,7 +15,7 @@ QA also compares the voice of every dubbed line with the character reference (`s
 
 ## 2. How the CLI picks references
 
-For every **selected** character, `babeldub cast` takes the character's original lines and filters them:
+For every **selected** character, `babeldub cast` takes the character's original lines (including the lines of voice clusters merged into the character, `references/merging.md`) and filters them:
 
 1. **Flags:** no `has_bed`, `nonverbal`, `alt_take`, `no_text`, `no_audio`.
 2. **Duration:** from `--min-ref-s` (3 s) to `--max-ref-s` (12 s); the ideal is about 7 s.
