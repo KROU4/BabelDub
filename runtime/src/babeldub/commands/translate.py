@@ -421,7 +421,9 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
     skipped_open: list[str] = []
     if args.ids or args.from_decisions:
         by_id = {ln["id"]: ln for ln in lines}
-        wanted = {i: "retranslate" for i in csv_list(args.ids)}
+        by_uid = {ln.get("uid"): ln["id"] for ln in lines if ln.get("uid")}
+        # accept short uids too, like synth/qa --ids do
+        wanted = {by_uid.get(i, i): "retranslate" for i in csv_list(args.ids)}
         if args.from_decisions:
             wanted.update(_decision_ids(project))
         unknown = [i for i in wanted if i not in by_id]
