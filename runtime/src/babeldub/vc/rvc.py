@@ -53,6 +53,20 @@ def cpu_cores() -> int:
     return max(1, min(6, (os.cpu_count() or 2) - 1))
 
 
+def save_every(epochs: int) -> int:
+    """Applio accepts --save-every-epoch in 1..100; use the largest divisor of `epochs` in that range
+    so the final epoch is always saved."""
+    return max(d for d in range(1, min(epochs, 100) + 1) if epochs % d == 0)
+
+
+def auto_epochs(minutes: float, base: int = 20) -> int:
+    """RVC needs a similar number of optimizer steps regardless of dataset size: small datasets
+    (minor characters, 1-5 min of speech) get more epochs. 30 min -> base, 1.5 min -> ~130, cap 300."""
+    if minutes <= 0:
+        return base
+    return int(min(300, max(base, round(base * 10.0 / minutes))))
+
+
 def train_commands(python: Path, name: str, dataset: Path, epochs: int, gpu: str) -> list[list[str]]:
     py, cores = str(python), str(cpu_cores())
     sr = str(SAMPLE_RATE)
@@ -62,7 +76,7 @@ def train_commands(python: Path, name: str, dataset: Path, epochs: int, gpu: str
         [py, "core.py", "extract", "--model-name", name, "--f0-method", "rmvpe", "--sample-rate", sr,
          "--gpu", gpu, "--cpu-cores", cores],
         [py, "core.py", "train", "--model-name", name, "--sample-rate", sr, "--total-epoch", str(epochs),
-         "--save-every-epoch", str(epochs), "--batch-size", "8", "--gpu", gpu, "--pretrained",
+         "--save-every-epoch", str(save_every(epochs)), "--batch-size", "8", "--gpu", gpu, "--pretrained",
          "--index-algorithm", "Auto"],
         [py, "core.py", "index", "--model-name", name, "--index-algorithm", "Auto"],
     ]

@@ -154,7 +154,10 @@ def cmd_vc_train(args: argparse.Namespace) -> int:
     for cid in chars:
         data = dataset_lines(project, lines, char_of, cid, minutes)
         speech = sum(float((ln.get("audio") or {}).get("dur_s") or 0.0) for ln, _ in data)
-        item = {"char_id": cid, "files": len(data), "minutes": round(speech / 60.0, 1), "data": data}
+        # explicit --epochs wins; otherwise small datasets get more epochs (similar step count)
+        item_epochs = epochs if args.epochs else rvc.auto_epochs(speech / 60.0, epochs)
+        item = {"char_id": cid, "files": len(data), "minutes": round(speech / 60.0, 1), "epochs": item_epochs,
+                "data": data}
         if cid in models and not args.force:
             item["action"] = "skip"
         elif not data:
@@ -187,11 +190,11 @@ def cmd_vc_train(args: argparse.Namespace) -> int:
         for item in todo:
             cid = item["char_id"]
             started = time.perf_counter()
-            result = _train_one(project, python, applio, cid, item["data"], epochs)
+            result = _train_one(project, python, applio, cid, item["data"], item["epochs"])
             if "error" in result:
                 failed.append(result)
                 continue
-            trained.append({"char_id": cid, "files": item["files"], "minutes": item["minutes"],
+            trained.append({"char_id": cid, "files": item["files"], "minutes": item["minutes"], "epochs": item["epochs"],
                             "elapsed_s": round(time.perf_counter() - started, 1)})
     project.log_event("vc_train", trained=[t["char_id"] for t in trained], failed=[f["char_id"] for f in failed],
                       epochs=epochs)

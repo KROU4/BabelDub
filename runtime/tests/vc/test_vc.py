@@ -203,3 +203,21 @@ def test_rvc_helpers(tmp_path: Path) -> None:
         (logs / f).write_bytes(b"x")
     pth, index = rvc.trained_files(logs, name)
     assert pth is not None and pth.name.endswith("_20e_140s.pth") and index is not None
+
+
+def test_save_every_respects_applio_limit_and_saves_final_epoch():
+    # Applio rejects --save-every-epoch > 100; the final epoch must still be a save point
+    assert rvc.save_every(20) == 20
+    assert rvc.save_every(150) == 75
+    assert rvc.save_every(300) == 100
+    assert rvc.save_every(101) == 1
+    for e in (1, 20, 99, 100, 150, 200, 300):
+        s = rvc.save_every(e)
+        assert 1 <= s <= 100 and e % s == 0
+
+
+def test_auto_epochs_scales_for_small_datasets():
+    assert rvc.auto_epochs(30.0) == 20
+    assert rvc.auto_epochs(1.5) == 133
+    assert rvc.auto_epochs(0.6) == 300
+    assert rvc.auto_epochs(0.0) == 20
