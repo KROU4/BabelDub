@@ -41,6 +41,13 @@ def test_leader_fallbacks_unflagged_then_best_then_order():
     assert follower_map(lines) == {lines[0]["id"]: lines[1]["id"]}
 
 
+def test_a_take_without_audio_never_leads():
+    empty = take(1, "dlg_Intro_i05", flags=["no_audio"])
+    empty["audio"]["dur_s"] = 0.0
+    real = take(2, "dlg_Intro_i05", flags=["duplicate"])
+    assert follower_map([empty, real]) == {empty["id"]: real["id"]}
+
+
 def test_groups_need_a_flag_one_asset_and_voiced_kinds():
     # same key without alt_take/duplicate flags: two distinct lines that share a subtitle
     assert follower_map([take(1, "a"), take(2, "b")]) == {}

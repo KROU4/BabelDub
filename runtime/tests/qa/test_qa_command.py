@@ -208,7 +208,17 @@ def test_followers_are_not_checked(dub, fake_qc, run) -> None:
     assert code == EXIT_OK and out["checked"] == 1 and out["follows"] == 1 and out["pending"] == 0, out
     assert set(latest_by(read_jsonl(dub.project.path(layout.QA)))) == {lead}
     code, out = run(["qa", "--ids", alt, "--project", root])
-    assert code == EXIT_USAGE and out["follows"] == {alt: lead}
+    assert code == EXIT_USAGE and out["follows"] == {alt: lead} and out["n_follows"] == 1
+    more = []
+    for i in range(11):  # many followers asked at once: one JSON error, not a traceback
+        lid = dub.line("hero", 1.0, flags=("alt_take",))
+        line = next(x for x in dub.lines if x["id"] == lid)
+        line.update(asset_id="fmod:Data/Dialogue.bank", entry={"key": f"dlg_Intro_i05_v{i + 2}"})
+        line["text"]["key"] = "dlg_Intro_i05"
+        more.append(lid)
+    dub.save()
+    code, out = run(["qa", "--ids", ",".join(more), "--project", root])
+    assert code == EXIT_USAGE and out["n_follows"] == 11 and len(out["follows"]) == 10
     code, out = run(["report", "--project", root])
     assert code == EXIT_OK and out["lines"] == 1
 

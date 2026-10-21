@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ from babeldub.core.ids import uid as make_uid
 from babeldub.core.jsonl import latest_by, read_jsonl
 from babeldub.core.paths import data_dir
 from babeldub.core.project import Project
-from babeldub.core.takes import follower_map
+from babeldub.core.takes import follower_map, project_followers
 
 ACCEPT = "accept"
 
@@ -73,8 +74,10 @@ def load_assets(project: Project) -> dict[str, Asset]:
 
 
 def accepted_decisions(project: Project) -> dict[str, dict[str, Any]]:
+    """Lines whose latest decision is accept; followers are left out (they reuse their leader)."""
     latest = latest_by(read_jsonl(project.path(layout.DECISIONS)))
-    return {lid: row for lid, row in latest.items() if row.get("decision") == ACCEPT}
+    follows = project_followers(project)
+    return {lid: row for lid, row in latest.items() if row.get("decision") == ACCEPT and lid not in follows}
 
 
 def _resolve(project: Project, value: str) -> Path:
@@ -114,8 +117,6 @@ def plan_build(project: Project, only: set[str] | None = None) -> BuildPlan:
     by_asset: dict[str, ContainerPlan] = {}
     matched_only: set[str] = set()
     for line_id in sorted(accepted):
-        if line_id in follows:  # dubbed through its leader below
-            continue
         decision = accepted[line_id]
         line = lines.get(line_id)
         if line is None:
@@ -187,7 +188,9 @@ def _match_model(catalog: list[dict[str, Any]], model: str) -> dict[str, Any] | 
 
 
 def collect_models(project: Project, accepted: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """{name, revision, license, engine, lines} for the TTS models behind the accepted takes."""
+    """{name, revision, license, engine, lines} for the TTS models behind the accepted takes
+    (a leader's followers count as lines of the leader's model)."""
+    reuse = Counter(project_followers(project).values())
     chosen: dict[str, dict[str, Any]] = {}
     for row in read_jsonl(project.path(layout.SYNTH_RESULTS)):
         line_id = row.get("id")
@@ -199,7 +202,7 @@ def collect_models(project: Project, accepted: dict[str, dict[str, Any]]) -> lis
         chosen[line_id] = row
     catalog = load_models_catalog()
     out: dict[tuple[str, str | None], dict[str, Any]] = {}
-    for row in chosen.values():
+    for line_id, row in chosen.items():
         model = str(row.get("model") or "")
         engine = row.get("engine")
         if not model and not engine:
@@ -216,7 +219,7 @@ def collect_models(project: Project, accepted: dict[str, dict[str, Any]]) -> lis
                 "engine": engine or (entry or {}).get("engine"),
                 "lines": 0,
             }
-        out[key]["lines"] += 1
+        out[key]["lines"] += 1 + reuse[line_id]
     return sorted(out.values(), key=lambda m: (str(m["name"]), str(m["revision"])))
 
 

@@ -279,7 +279,7 @@ def cmd_models_list(args: argparse.Namespace) -> int:
     catalog = load_catalog()
     rows = []
     for spec in catalog.models:
-        if args.engine and spec.engine != args.engine:
+        if args.engine and spec.engine != catalog.model_owner(args.engine):
             continue
         row = spec.summary()
         row["downloaded"] = is_model_downloaded(spec)

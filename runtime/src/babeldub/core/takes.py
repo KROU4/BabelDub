@@ -7,7 +7,8 @@ through synth, post and qa; at build time every follower gets the leader's accep
 adapter converts sample rate and channels as for any replacement).
 
 Leader of a group: the line whose entry.key equals text.key, else an unflagged member, else a
-member whose key contains "best" (any case), else the lowest order/index.
+member whose key contains "best" (any case), else the lowest order/index. A member without decoded
+audio (`no_audio` or zero duration) never leads while another member has audio.
 """
 
 from __future__ import annotations
@@ -30,13 +31,19 @@ def _int(value: Any) -> int:
         return sys.maxsize
 
 
-def _rank(line: dict[str, Any]) -> tuple[int, int, int, int, int, str]:
+def _no_audio(line: dict[str, Any]) -> bool:
+    audio = line.get("audio") or {}
+    return "no_audio" in (line.get("flags") or []) or ("dur_s" in audio and not audio.get("dur_s"))
+
+
+def _rank(line: dict[str, Any]) -> tuple[int, int, int, int, int, int, str]:
     """Lower is a better leader."""
     entry = line.get("entry") or {}
     key = str(entry.get("key") or "")
     text_key = (line.get("text") or {}).get("key")
     flagged = bool(TAKE_FLAGS.intersection(line.get("flags") or []))
     return (
+        1 if _no_audio(line) else 0,
         0 if key and key == text_key else 1,
         1 if flagged else 0,
         0 if "best" in key.lower() else 1,

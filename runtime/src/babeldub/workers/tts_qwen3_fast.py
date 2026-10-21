@@ -32,8 +32,9 @@ GEN_KEYS = (
     "do_sample", "top_k", "top_p", "temperature", "repetition_penalty", "max_new_tokens", "min_new_tokens",
 )
 CODEC_HZ = 12.5  # Qwen3-TTS 12Hz tokenizer: 12.5 generated tokens per second of audio
+PROMPT_RESERVE = 512  # static-cache positions kept for the prompt (reference codes + texts)
 
-STATE: dict[str, Any] = {"model": None, "sr": 24000, "device": None}
+STATE: dict[str, Any] = {"model": None, "sr": 24000, "device": None, "token_room": 2048 - PROMPT_RESERVE}
 
 
 def log(msg: str) -> None:
@@ -78,13 +79,17 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     dtype_name = str(req.get("dtype") or "bf16")
     dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}.get(dtype_name, torch.bfloat16)
     started = time.perf_counter()
+    max_seq_len = int(options.get("max_seq_len", 2048))
     model = FasterQwen3TTS.from_pretrained(
         model_path,
         device="cuda",
         dtype=dtype,
         attn_implementation=options.get("attn_implementation", "sdpa"),
-        max_seq_len=int(options.get("max_seq_len", 2048)),
+        max_seq_len=max_seq_len,
     )
+    # the static cache silently stops generation at max_seq_len: keep the cap inside it so that a
+    # loop is still reported as hit_token_limit instead of looking like a finished take
+    STATE["token_room"] = max(64, max_seq_len - PROMPT_RESERVE)
     load_s = time.perf_counter() - started
     model.warmup(prefill_len=int(options.get("warmup_prefill", 100)))  # captures the CUDA graphs once
     STATE.update(model=model, sr=int(getattr(model, "sample_rate", 24000) or 24000),
@@ -173,6 +178,7 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     item, error = _parse(req, "synth")
     if item is None:
         return error
+    item["gen"]["max_new_tokens"] = min(int(item["gen"].get("max_new_tokens") or STATE["token_room"]), STATE["token_room"])
     try:
         _seed_all(item["seed"])
         started = time.perf_counter()

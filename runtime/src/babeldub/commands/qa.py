@@ -164,7 +164,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
         followers = [t for t in want if t in follows]
         if followers:
             raise BabelDubError("these lines follow another take and are not checked", code=EXIT_USAGE,
-                                follows={t: follows[t] for t in clip(followers)},
+                                follows={t: follows[t] for t in followers[:10]}, n_follows=len(followers),
                                 hint="check their leaders; the build gives followers the leader's accepted audio")
         unknown = [t for t in want if t not in post_latest]
         if unknown:

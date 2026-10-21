@@ -239,6 +239,9 @@ def engine_for_device(engine: str, device: str, catalog: Any | None) -> tuple[st
     if not str(device).startswith("cuda"):
         return fallback, f"{engine} runs on CUDA only: using the official {fallback} engine on {device}"
     if spec.get("env") and not env_python(spec["env"]).exists():
+        fallback_env = _engine_spec(fallback, catalog).get("env")
+        if fallback_env and not env_python(fallback_env).exists():
+            return engine, None  # neither is installed: the env error should point to the fast engine
         return fallback, (f"{engine} env is not installed (`babeldub setup --engines {engine}`): "
                           f"using the official {fallback} engine")
     return engine, None
@@ -301,6 +304,11 @@ def _abs(project: Project, value: str | None) -> Path | None:
 def _exists(project: Project, value: str | None) -> bool:
     path = _abs(project, value)
     return path is not None and path.exists()
+
+
+def _usable(project: Project, row: dict[str, Any]) -> bool:
+    """An ok take with its file; a take that ran to the token cap (kept by older versions) is not."""
+    return row.get("status") == "ok" and not row.get("hit_token_limit") and _exists(project, row.get("wav"))
 
 
 @dataclass
@@ -534,7 +542,7 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)
-        ok_rows = [r for r in rows if r.get("status") == "ok" and _exists(project, r.get("wav"))]
+        ok_rows = [r for r in rows if _usable(project, r)]
         latest_ok = ok_rows[-1] if ok_rows else None
         ok_attempt = int(latest_ok.get("attempt") or 0) if latest_ok else 0
         decision = decisions.get(line_id) or {}
@@ -595,6 +603,8 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
             _check_icl(job, None if prefer == "line" else char_ref)
             if job.ref.mode == "line":
                 job.alt_ref = char_ref
+        if not job.ref.text and engine.name in TRANSCRIPT_ENGINES:
+            job.x_vector_only = True  # a prompt without a transcript can only give the timbre
         job.est_s = estimate_seconds(text, target)
         job.key = _job_key(project, engine, job)
         job.seed = _seed(line_id, job.attempt)
@@ -877,10 +887,13 @@ class _SynthRun:
                 job.x_vector_only = True
             else:
                 assert job.alt_ref is not None
-                job.ref, job.ref_trimmed = _fit_ref(job.alt_ref, self.cache_dir)
-                job.x_vector_only = job.ref_trimmed
+                try:
+                    job.ref, job.ref_trimmed = _fit_ref(job.alt_ref, self.cache_dir)
+                    job.key = _job_key(self.project, self.engine, job)
+                except (OSError, RuntimeError, ValueError) as exc:  # unreadable reference file
+                    return {"ok": False, "error": f"character reference: {type(exc).__name__}: {exc}"}, discarded
+                job.x_vector_only = job.ref_trimmed or not job.ref.text
                 job.alt_ref = None
-                job.key = _job_key(self.project, self.engine, job)
             reply = self.call(client, job)
             if not reply.get("ok") or not is_runaway(reply, job.est_s, job.target_s):
                 return reply, discarded
@@ -1031,10 +1044,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     follows = follower_map(lines.values())
     latest: dict[str, dict[str, Any]] = {}
     for row in results:
-        if row.get("status") != "ok" or "id" not in row:
-            continue
-        wav = _abs(project, row.get("wav"))
-        if wav is None or not wav.exists():
+        if "id" not in row or not _usable(project, row):
             continue
         prev = latest.get(row["id"])
         if prev is None or int(row.get("attempt") or 0) >= int(prev.get("attempt") or 0):

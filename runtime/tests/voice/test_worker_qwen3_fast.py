@@ -105,7 +105,7 @@ def worker(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, types.ModuleType, type
     fq = _module("faster_qwen3_tts", FAKE_FASTER_QWEN)
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "faster_qwen3_tts", fq)
-    monkeypatch.setattr(w, "STATE", {"model": None, "sr": 24000, "device": None})
+    monkeypatch.setattr(w, "STATE", {"model": None, "sr": 24000, "device": None, "token_room": 1536})
     return w, torch, fq
 
 
@@ -134,6 +134,7 @@ def test_load_needs_cuda_and_warms_up(worker: Any, tmp_path: Path) -> None:
     model = w.STATE["model"]
     assert model.path == str(tmp_path) and model.warm == 100
     assert model.kwargs == {"device": "cuda", "dtype": "bf16", "attn_implementation": "sdpa", "max_seq_len": 1024}
+    assert w.STATE["token_room"] == 1024 - w.PROMPT_RESERVE  # the cap stays inside the static cache
 
 
 def test_synth_icl_xvec_runaway_and_errors(worker: Any, tmp_path: Path) -> None:
@@ -151,6 +152,8 @@ def test_synth_icl_xvec_runaway_and_errors(worker: Any, tmp_path: Path) -> None:
     assert fq.CALLS[-1]["xvec_only"] is True and fq.CALLS[-1]["ref_text"] == ""
     loop = w.op_synth(req(tmp_path, "loop", text="Ю, ю, LOOP"))
     assert loop["hit_token_limit"] is True and loop["dur_s"] == pytest.approx(8.0)
+    big = w.op_synth(req(tmp_path, "big", text="LOOP", max_new_tokens=5000))  # beyond the static cache
+    assert fq.CALLS[-1]["max_new_tokens"] == 1536 and big["hit_token_limit"] is True
     assert w.op_synth(req(tmp_path, "oom", text="OOM"))["error"] == "CUDA out of memory"
     assert w.op_synth({**req(tmp_path, "noref"), "ref_wav": str(tmp_path / "missing.wav")})["ok"] is False
     batch = w.op_synth_batch({"items": [req(tmp_path, "b1"), req(tmp_path, "b2", text="OOM"), req(tmp_path, "b3")]})

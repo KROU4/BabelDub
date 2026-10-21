@@ -254,16 +254,22 @@ def op_asr(req: dict[str, Any]) -> dict[str, Any]:
     # VAD drops silent or noisy tails, on which Whisper hallucinates text ("to be continued...");
     # a 0.5 s pause already ends a speech chunk (the library default of 2 s keeps short tails)
     vad = bool(opts.get("vad_filter", True))
-    segments, info = model.transcribe(
-        audio,
-        language=lang,
-        beam_size=int(opts.get("beam_size", 5)),
-        vad_filter=vad,
-        vad_parameters=dict(opts.get("vad_parameters") or VAD_PARAMETERS) if vad else None,
-        condition_on_previous_text=False,
-        without_timestamps=True,
-    )
-    text = " ".join(seg.text.strip() for seg in segments).strip()
+
+    def transcribe(use_vad: bool) -> tuple[str, Any]:
+        segments, info = model.transcribe(
+            audio,
+            language=lang,
+            beam_size=int(opts.get("beam_size", 5)),
+            vad_filter=use_vad,
+            vad_parameters=dict(opts.get("vad_parameters") or VAD_PARAMETERS) if use_vad else None,
+            condition_on_previous_text=False,
+            without_timestamps=True,
+        )
+        return " ".join(seg.text.strip() for seg in segments).strip(), info
+
+    text, info = transcribe(vad)
+    if vad and not text:  # VAD heard no speech (a short or quiet bark): try once on the whole clip
+        text, info = transcribe(False)
     return {
         "id": req.get("id"),
         "text": text,

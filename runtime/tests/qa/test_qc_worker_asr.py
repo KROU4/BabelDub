@@ -14,10 +14,16 @@ from babeldub.workers import qc_worker
 class FakeWhisper:
     def __init__(self) -> None:
         self.kwargs: dict[str, Any] = {}
+        self.calls: list[bool] = []
+        self.vad_hears_nothing = False
 
     def transcribe(self, audio: np.ndarray, **kwargs: Any) -> tuple[Any, Any]:
         self.kwargs = kwargs
-        segments = iter([SimpleNamespace(text=" Привет, "), SimpleNamespace(text="как дела? ")])
+        self.calls.append(kwargs["vad_filter"])
+        if self.vad_hears_nothing and kwargs["vad_filter"]:
+            segments: Any = iter([])
+        else:
+            segments = iter([SimpleNamespace(text=" Привет, "), SimpleNamespace(text="как дела? ")])
         return segments, SimpleNamespace(language="ru", language_probability=0.98, duration=1.0)
 
 
@@ -48,3 +54,10 @@ def test_asr_filters_silence_and_does_not_condition_on_previous_text(whisper: Fa
 def test_asr_options_can_turn_vad_off(whisper: FakeWhisper) -> None:
     qc_worker.op_asr({"id": "a", "wav": "a.wav", "lang": "ru", "options": {"vad_filter": False}})
     assert whisper.kwargs["vad_filter"] is False and whisper.kwargs["vad_parameters"] is None
+    assert whisper.calls == [False]
+
+
+def test_asr_retries_without_vad_when_it_hears_nothing(whisper: FakeWhisper) -> None:
+    whisper.vad_hears_nothing = True  # e.g. a short quiet bark the VAD drops entirely
+    out = qc_worker.op_asr({"id": "a", "wav": "a.wav", "lang": "ru"})
+    assert out["text"] == "Привет, как дела?" and whisper.calls == [True, False]

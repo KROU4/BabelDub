@@ -197,12 +197,14 @@ def test_build_gives_followers_the_leader_audio(env: Env) -> None:
     assert code == EXIT_OK, out
     seen = FakeBankAdapter.verify_options[-1]
     assert alt in seen["replaced_ids"] and seen["replacements"][alt] == seen["replacements"][leader]
+    assert env.manifest()["models"][0]["lines"] == 6  # the alt take is voiced by the leader's model
     # the leader is no longer accepted: the alt take keeps the original despite its own accept
     env.decide([leader], decision="regen")
     code, out = env.run("build")
     assert "followers" not in out
     bank = next(c for c in env.manifest()["containers"] if c["adapter"] == "fakebank")
     assert set(bank["replacements"]) == {env.bank_lines[2]}
+    assert env.manifest()["models"][0]["lines"] == 4  # the follower's own old accept does not count
     data = json.loads((env.root / bank["out"]).read_text(encoding="utf-8"))
     assert [e["data"] for e in data["entries"][:2]] == ["orig0", "orig1"]
 

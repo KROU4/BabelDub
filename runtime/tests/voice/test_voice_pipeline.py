@@ -224,11 +224,16 @@ def test_fast_engine_on_cuda_with_fallback_to_official(project: Project, capsys:
     project.save()
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cpu")
     assert out["engine"] == "qwen3tts" and "CUDA only" in out["notes"][0]
+    # neither env installed: stay on the fast engine, so the env error asks to install it
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
-    assert out["engine"] == "qwen3tts" and "qwen3tts-fast env is not installed" in out["notes"][0]
-    fast_python = env_python("qwen3tts-fast")
-    fast_python.parent.mkdir(parents=True)
-    fast_python.write_bytes(b"")
+    assert out["engine"] == "qwen3tts-fast" and out["env_ready"] is False and out["notes"] == []
+    for env in ("qwen3tts", "qwen3tts-fast"):
+        python = env_python(env)
+        python.parent.mkdir(parents=True)
+        python.write_bytes(b"")
+        if env == "qwen3tts":  # only the official env exists: fall back to it, with a note
+            code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
+            assert out["engine"] == "qwen3tts" and "qwen3tts-fast env is not installed" in out["notes"][0]
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
     assert out["engine"] == "qwen3tts-fast" and out["model"] == "Qwen3-TTS-12Hz-1.7B-Base" and out["notes"] == []
     assert out["would_run"] == 3
@@ -377,6 +382,46 @@ def test_batch_runaway_is_retried_alone(project: Project, capsys: pytest.Capture
     assert [r.get("batch") for r in rows] == [3, 3, None]
     assert rows[2]["retry_reason"] == "runaway" and rows[2]["ref_mode"] == "line-xvec"
     assert rows[1]["est_s"] < rows[2]["est_s"]
+
+
+def test_unreadable_char_reference_during_recovery_is_an_error_row(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    set_src(project, "0001", "Okay RUNAWAY, let's see what's wrong with this old thing.")
+    project.data["tts"]["params"] = {"dummy_runaway_xvec": True}
+    project.save()
+    refs = read_jsonl(project.path(layout.REFS))
+    for row in refs:
+        if row["char_id"] == "Zbyszek":
+            row["dur_s"] = 0
+            project.path(row["wav"]).write_bytes(b"not a wav")
+    write_jsonl(project.path(layout.REFS), refs)
+    lid = line_id_of("0001")
+    code, out = run(capsys, project.root, "synth", "--ids", lid)
+    assert code == EXIT_ATTENTION and out["failed"] == 1, out
+    row = latest_by(results(project))[lid]
+    assert row["status"] == "error" and row["error"].startswith("character reference")
+    assert [d["ref_mode"] for d in row["discarded"]] == ["line", "line-xvec"]
+
+
+def test_prompt_without_transcript_is_timbre_only(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    refs = read_jsonl(project.path(layout.REFS))
+    for row in refs:
+        row["text"] = ""
+    write_jsonl(project.path(layout.REFS), refs)
+    assert run(capsys, project.root, "synth", "--ids", line_id_of("0003"))[0] == EXIT_OK
+    assert latest_by(results(project))[line_id_of("0003")]["ref_mode"] == "char-xvec"
+
+
+def test_takes_that_hit_the_cap_in_older_runs_are_redone(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    project.data["tts"]["params"] = {"syllables_per_s": 40.0}
+    project.save()
+    assert run(capsys, project.root, "synth")[1]["done"] == 3
+    rows = results(project)
+    rows[0]["hit_token_limit"] = True  # a looping take an older version kept as ok
+    write_jsonl(project.path(layout.SYNTH_RESULTS), rows)
+    code, out = run(capsys, project.root, "post")
+    assert out["done"] == 2 and rows[0]["id"] not in latest_by(read_jsonl(project.path(layout.POST)))
+    code, out = run(capsys, project.root, "synth", "--dry-run")
+    assert out["would_run"] == 1 and out["skipped"]["done"] == 2
 
 
 def test_icl_precheck_uses_char_ref_or_timbre_only(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
