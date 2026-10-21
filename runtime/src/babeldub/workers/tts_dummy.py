@@ -8,6 +8,8 @@ as a WAV, speaking the same JSONL protocol as the real workers (contract §6).
 Standalone script: runs under any Python with numpy + soundfile; never imports babeldub.
 Test hooks in `params`: dummy_fail = "error" (answer ok=false) | "exit" (crash the process) |
 "batch" (fail a whole synth_batch); dummy_sleep = seconds to stall before answering.
+Like VoxCPM2 it accepts a continuation prompt (`prompt_wav` + `prompt_text`, mode "ref+prompt"), so the
+bootstrap reference strategy can be tested end to end.
 
 Runaway simulation (a TTS model stuck in a loop until its token cap), for the CLI's runaway guard:
   * the word RUNAWAY in `text` -> every request for that line runs away;
@@ -134,6 +136,9 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("text") or "").strip()
     if not text:
         return {"ok": False, "op": "synth", "id": req.get("id"), "error": "empty text"}
+    prompt_wav = req.get("prompt_wav")
+    if prompt_wav and (not os.path.exists(prompt_wav) or not str(req.get("prompt_text") or "").strip()):
+        return {"ok": False, "op": "synth", "id": req.get("id"), "error": "prompt_wav needs an existing file and prompt_text"}
     ref_text = str(req.get("ref_text") or "").strip()
     xvec = bool(params.get("x_vector_only")) or not ref_text
     if xvec:
@@ -158,7 +163,8 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     dur = len(audio) / SR
     reply: dict[str, Any] = {
         "ok": True, "op": "synth", "id": req.get("id"), "wav": out, "sr": SR, "dur_s": round(dur, 4),
-        "rtf": round((time.perf_counter() - started) / dur, 4), "mode": "xvec" if xvec else "icl",
+        "rtf": round((time.perf_counter() - started) / dur, 4),
+        "mode": "ref+prompt" if prompt_wav else ("xvec" if xvec else "icl"),
     }
     if hit:
         reply["hit_token_limit"] = True

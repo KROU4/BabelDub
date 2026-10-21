@@ -69,14 +69,14 @@ def test_status_all_done(bd, game):
 def test_set_typed_values(bd, game):
     _, init = bd("init", game, "--lang", "ru")
     code, out = bd("set", "tts.best_of=2", "qa.max_cer=0.2", "cast.list=Anna, Bob", "install.backup=false",
-                   "tts.model=Qwen3-TTS-12Hz-1.7B-Base", "post.max_stretch=0", "game_name=LBR")
+                   "tts.model=Qwen3-TTS-12Hz-1.7B-Base", "post.tempo_max=1", "game_name=LBR")
     assert code == 0, out
     data = read_json(Path(init["project"]) / layout.PROJECT_JSON)
     assert data["tts"]["best_of"] == 2 and data["qa"]["max_cer"] == 0.2
     assert data["cast"]["list"] == ["Anna", "Bob"] and data["install"]["backup"] is False
-    assert data["tts"]["model"] == "Qwen3-TTS-12Hz-1.7B-Base" and data["post"]["max_stretch"] == 0.0
-    assert isinstance(data["post"]["max_stretch"], float) and data["game_name"] == "LBR"
-    assert out["changed"]["tts.best_of"] == {"old": 1, "new": 2}
+    assert data["tts"]["model"] == "Qwen3-TTS-12Hz-1.7B-Base" and data["post"]["tempo_max"] == 1.0
+    assert isinstance(data["post"]["tempo_max"], float) and data["game_name"] == "LBR"
+    assert out["changed"]["tts.best_of"] == {"old": 3, "new": 2}
     events = (Path(init["project"]) / layout.EVENTS).read_text(encoding="utf-8").splitlines()
     assert json.loads(events[-1])["stage"] == "set"
 

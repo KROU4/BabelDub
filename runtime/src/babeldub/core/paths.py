@@ -49,6 +49,11 @@ def tools_dir() -> Path:
     return babeldub_home() / "tools"
 
 
+def engines_dir() -> Path:
+    """Source checkouts of git engines (e.g. Applio for RVC voice conversion)."""
+    return babeldub_home() / "engines"
+
+
 def projects_dir() -> Path:
     return babeldub_home() / "projects"
 

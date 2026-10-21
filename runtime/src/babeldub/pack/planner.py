@@ -86,14 +86,14 @@ def _resolve(project: Project, value: str) -> Path:
 
 
 def _post_wav(project: Project, uid: str, post_row: dict[str, Any] | None) -> Path | None:
-    default = project.path(layout.POST_DIR, f"{uid}.wav")
-    if default.is_file():
-        return default
+    """The line's final audio: the latest post row's wav (vc/audio/<uid>.wav after `vc`), else
+    post/audio/<uid>.wav."""
     if post_row and post_row.get("wav"):
-        alt = _resolve(project, str(post_row["wav"]))
-        if alt.is_file():
-            return alt
-    return None
+        final = _resolve(project, str(post_row["wav"]))
+        if final.is_file():
+            return final
+    default = project.path(layout.POST_DIR, f"{uid}.wav")
+    return default if default.is_file() else None
 
 
 def _matches(asset: Asset, only: set[str]) -> bool:
@@ -219,6 +219,16 @@ def collect_models(project: Project, accepted: dict[str, dict[str, Any]]) -> lis
                 "engine": engine or (entry or {}).get("engine"),
                 "lines": 0,
             }
+        out[key]["lines"] += 1 + reuse[line_id]
+    # RVC voice conversion models (stage vc) behind the accepted takes, one per character
+    for line_id, row in latest_by(read_jsonl(project.path(layout.POST))).items():
+        vc = row.get("vc") if line_id in accepted else None
+        if not vc:
+            continue
+        key = (f"rvc:{vc.get('char_id')}", vc.get("model_key"))
+        if key not in out:
+            out[key] = {"name": key[0], "revision": vc.get("model_key"), "license": "MIT (Applio, RVC v2)",
+                        "engine": "applio", "lines": 0}
         out[key]["lines"] += 1 + reuse[line_id]
     return sorted(out.values(), key=lambda m: (str(m["name"]), str(m["revision"])))
 

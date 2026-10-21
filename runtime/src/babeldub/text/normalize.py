@@ -128,10 +128,21 @@ def apply_yo(text: str, lang: str, mode: str = "keep") -> str:
     return _YO_RE.sub(repl, text)
 
 
-def prepare_for_tts(text: str, lang: str, numbers: bool = True, yo: str = "keep") -> str:
-    """Text exactly as it should be sent to a TTS engine."""
+STRESS_MARK = "́"  # combining acute accent: Russian stress mark (а́)
+
+
+def strip_stress(text: str) -> str:
+    """Remove U+0301 stress marks. Every engine except an explicit stress model (ru-stress) needs plain
+    text: VoxCPM2 and Qwen3-TTS Base turn the marks into extra sounds."""
+    return text.replace(STRESS_MARK, "")
+
+
+def prepare_for_tts(text: str, lang: str, numbers: bool = True, yo: str = "keep", stress: bool = False) -> str:
+    """Text exactly as it should be sent to a TTS engine (stress=True keeps U+0301 marks)."""
     result = strip_markup(text)
     if numbers:
         result = numbers_to_words(result, lang)
     result = apply_yo(result, lang, yo)
+    if not stress:
+        result = strip_stress(result)
     return _WS_RE.sub(" ", result).strip()

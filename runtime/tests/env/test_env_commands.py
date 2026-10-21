@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -43,16 +44,24 @@ def test_doctor_without_envs_asks_for_setup(bd, machine):
     code, out = bd("doctor")
     assert code == 3 and out["ok"]
     assert out["gpu"]["name"] == GPU["name"] and out["tier"] == "8gb"
-    # with a GPU the default TTS engine is the CUDA-graph runtime of the same Qwen3-TTS models
-    assert {"env:qwen3tts-fast", "env:qc", "model:Qwen3-TTS-12Hz-1.7B-Base"} <= set(out["to_install"])
-    assert "env:qwen3tts" not in out["to_install"]
+    # an 8 GB GPU gets the default dubbing chain: VoxCPM2 + RVC (Applio) + QC
+    assert {"env:voxcpm", "env:applio", "env:qc", "model:VoxCPM2"} <= set(out["to_install"])
+    assert "env:qwen3tts-fast" not in out["to_install"] and "env:qwen3tts" not in out["to_install"]
     assert out["next"].startswith("babeldub setup")
 
 
+def test_doctor_small_gpu_keeps_qwen_fast(bd, machine):
+    machine["gpus"] = [{**GPU, "vram_gb": 6.0}]  # tier 8gb, but VoxCPM2 peaks at 6.5 GB
+    code, out = bd("doctor")
+    assert out["tier"] == "8gb"
+    assert {"env:qwen3tts-fast", "env:qc", "model:Qwen3-TTS-12Hz-1.7B-Base"} <= set(out["to_install"])
+    assert "env:voxcpm" not in out["to_install"] and "env:applio" not in out["to_install"]
+
+
 def test_doctor_all_ready(bd, machine, home):
-    machine["envs"] = {"qwen3tts-fast": {"status": "ok"}, "qc": {"status": "ok"}}
+    machine["envs"] = {"voxcpm": {"status": "ok"}, "applio": {"status": "ok"}, "qc": {"status": "ok"}}
     cat = load_catalog()
-    for name in ("Qwen3-TTS-12Hz-1.7B-Base", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"):
+    for name in ("VoxCPM2", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"):
         folder = model_dir(cat.model(name))
         folder.mkdir(parents=True)
         (folder / "model.safetensors").write_bytes(b"x")
@@ -74,15 +83,19 @@ def test_setup_dry_run_plan(bd, machine, home):
     code, out = bd("setup", "--dry-run")
     assert code == 0 and out["dry_run"]
     planned = {(i["kind"], i["name"]): i for i in out["planned"]}
-    assert ("engine", "qwen3tts-fast") in planned and ("engine", "qc") in planned
-    assert ("engine", "qwen3tts") not in planned
-    assert ("model", "Qwen3-TTS-12Hz-1.7B-Base") in planned
-    assert ("model", "qwen3-tts-12hz-1.7b-ru-stress-cf") not in planned  # language unknown without a project
-    assert planned[("model", "Qwen3-TTS-12Hz-1.7B-Base")]["license"] == "Apache-2.0"
+    assert {("engine", "voxcpm"), ("engine", "applio"), ("engine", "qc")} <= set(planned)
+    assert ("engine", "qwen3tts") not in planned and ("engine", "qwen3tts-fast") not in planned
+    assert ("model", "VoxCPM2") in planned and ("model", "Qwen3-TTS-12Hz-1.7B-Base") not in planned
+    assert planned[("model", "VoxCPM2")]["license"] == "Apache-2.0"
+    assert planned[("engine", "applio")]["license"] == "MIT"
     assert ("tool", "vgmstream-cli") in planned
     assert out["download_gb"] > 5
-    assert not (home / "envs" / "qwen3tts").exists()
-    assert Path(out["plan"]).is_file()
+    assert not (home / "envs" / "voxcpm").exists()
+    plan = json.loads(Path(out["plan"]).read_text(encoding="utf-8"))
+    applio = next(i for i in plan["items"] if i["name"] == "applio")
+    steps = " ".join(applio["commands"])
+    assert "fetch --depth 1 https://github.com/IAHispano/Applio 5171e1dcf31a33d1afeb14ef7c6aac6dadae5dc1" in steps
+    assert "@filter-requirements" in steps and "prerequisites --pretraineds-hifigan --models --no-exe" in steps
 
 
 def test_setup_dry_run_uses_project_language(bd, machine, tmp_path):
@@ -91,20 +104,25 @@ def test_setup_dry_run_uses_project_language(bd, machine, tmp_path):
     assert bd("init", game, "--lang", "ru")[0] == 0
     code, out = bd("setup", "--dry-run")
     names = [i["name"] for i in out["planned"]]
-    assert out["lang"] == "ru" and "Qwen3-TTS-12Hz-1.7B-Base" in names
+    assert out["lang"] == "ru" and "VoxCPM2" in names and "voxcpm" in names
     assert "qwen3-tts-12hz-1.7b-ru-stress-cf" not in names  # opt in explicitly (keeps the voice worse)
     code, out = bd("setup", "--dry-run", "--models", "qwen3-tts-12hz-1.7b-ru-stress-cf")
     warn = next(i for i in out["planned"] if i["name"] == "qwen3-tts-12hz-1.7b-ru-stress-cf")
     assert "license" in warn["warning"]
 
 
-def test_setup_polish_project_picks_chatterbox(bd, machine, tmp_path):
+def test_setup_polish_project_picks_voxcpm_or_chatterbox(bd, machine, tmp_path):
     game = tmp_path / "Game"
     game.mkdir()
     bd("init", game, "--lang", "pl")
     code, out = bd("setup", "--dry-run", "--tier", "12gb")
     names = [i["name"] for i in out["planned"]]
+    assert "voxcpm" in names and "VoxCPM2" in names and "chatterbox" not in names  # VoxCPM2 speaks Polish
+    machine["gpus"] = [{**GPU, "vram_gb": 6.0}]
+    code, out = bd("setup", "--dry-run")  # too small for VoxCPM2: the engine for Polish without it
+    names = [i["name"] for i in out["planned"]]
     assert "chatterbox" in names and "chatterbox-multilingual" in names and "qwen3tts" not in names
+    assert "applio" not in names
 
 
 def test_setup_never_installs_the_cuda_only_engine_on_the_cpu_tier(bd, machine):

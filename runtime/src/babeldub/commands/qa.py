@@ -137,10 +137,18 @@ def _state(
     return {"attention": attention, "pending": pending, "decisions": dict(decisions)}
 
 
-def _next(state: dict[str, Any]) -> str:
+def _waiting(project: Project) -> int:
+    """Lines `synth` left for bootstrap phase 2 (they wait for a target-language prompt)."""
+    return int((project.progress().get("synth") or {}).get("bootstrap_wait") or 0)
+
+
+def _next(state: dict[str, Any], waiting: int = 0) -> str:
     dec = state["decisions"]
     if dec.get("regen"):
-        return "`babeldub synth --attempt-next`, then `babeldub post` and `babeldub qa`"
+        return "`babeldub synth --attempt-next`, then `babeldub post`, `babeldub vc` and `babeldub qa`"
+    if waiting:
+        return (f"`babeldub synth`: {waiting} lines wait for their character's target-language prompt "
+                "(bootstrap phase 2), then `babeldub post`, `babeldub vc` and `babeldub qa`")
     if dec.get("shorten"):
         return "translator: shorten the dub text of lines with decision=shorten, then synth/post/qa them again"
     if state["attention"]:
@@ -183,7 +191,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
     if not to_check:
         state = _state(post_latest, qa_latest, dec_latest)
         payload: dict[str, Any] = {"checked": 0, "attention": clip(state["attention"]), "pending": state["pending"],
-                                   "decisions": state["decisions"], "next": _next(state)}
+                                   "decisions": state["decisions"], "next": _next(state, _waiting(project))}
         if len(post_all) > len(post_latest):
             payload["follows"] = len(post_all) - len(post_latest)
         return emit(payload, EXIT_ATTENTION if state["attention"] else EXIT_OK)
@@ -374,7 +382,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             "errors": clip(errors, 5),
             "warnings": clip(warnings, 3),
             "file": layout.QA,
-            "next": _next(state),
+            "next": _next(state, _waiting(project)),
         },
         EXIT_ATTENTION if attention else EXIT_OK,
     )

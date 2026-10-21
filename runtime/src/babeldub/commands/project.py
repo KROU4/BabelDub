@@ -21,20 +21,20 @@ from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubEr
 from babeldub.core.paths import projects_dir
 from babeldub.core.project import DEFAULT_SETTINGS, Project
 from babeldub.core.takes import follower_map
-from babeldub.envsetup.catalog import engine_for_language, load_catalog
+from babeldub.envsetup.catalog import AUTO_ENGINE, PREMIUM_TTS, engine_for_language, load_catalog
 
 Common = Callable[[argparse.ArgumentParser], None]
 
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 CAST_POLICIES = ("all", "main", "list")
 TRANSLATION_MODES = ("auto", "translate", "adapt", "official")
-REF_STRATEGIES = ("auto", "line", "char")
+REF_STRATEGIES = ("auto", "bootstrap", "line", "char")
 ENUMS: dict[str, tuple[str, ...]] = {
     "compute.device": ("auto", "cuda", "cpu"),
     "cast.policy": CAST_POLICIES,
     "translation.mode": TRANSLATION_MODES,
     "tts.ref_strategy": REF_STRATEGIES,
-    "tts.engine": ("qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
+    "tts.engine": ("auto", "voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}
@@ -47,6 +47,7 @@ STAGE_COMMANDS: dict[str, str] = {
     "translate": "babeldub translate plan",
     "synth": "babeldub synth",
     "post": "babeldub post",
+    "vc": "babeldub vc",
     "qa": "babeldub qa",
     "build": "babeldub build",
     "verify": "babeldub verify",
@@ -189,8 +190,10 @@ def parse_value(text: str, current: Any) -> Any:
 
 
 def _default_engine(lang: str) -> tuple[str | None, list[str]]:
+    """`auto` (synth picks voxcpm on an 8 GB+ GPU when installed, else qwen3tts-fast/qwen3tts/chatterbox)."""
     catalog = load_catalog()
-    engine = engine_for_language(lang, catalog)
+    premium = catalog.engines.get(PREMIUM_TTS)
+    engine = AUTO_ENGINE if engine_for_language(lang, catalog) or (premium and premium.supports(lang)) else None
     if engine is None:
         known = sorted({code for e in catalog.engines.values() if e.env for code in e.languages if code != "*"})
         return None, [f"no TTS engine in the catalog speaks '{lang}' (supported: {', '.join(known)})"]
@@ -324,6 +327,13 @@ def cmd_status(args: argparse.Namespace) -> int:
     if attention:
         payload["attention"] = attention
     code = EXIT_ATTENTION if attention else EXIT_OK
+    waiting = int(progress.get("synth", {}).get("bootstrap_wait") or 0)
+    if waiting and stages["qa"] in ("done", "attention") and next_stage in (None, "build"):
+        # bootstrap: the first lines of each character are checked, the rest waits for its prompt
+        payload["bootstrap_wait"] = waiting
+        payload["next_stage"] = "synth"
+        payload["next"] = "babeldub synth (bootstrap phase 2), then post, vc and qa again"
+        return emit(payload, code)
     if next_stage is None:
         payload["next"] = None
         payload["done"] = True

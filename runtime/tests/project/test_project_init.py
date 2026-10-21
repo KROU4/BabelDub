@@ -16,7 +16,9 @@ def test_init_creates_project_registry_and_active(bd, game, home):
     assert data["target_lang"] == "ru" and data["game_name"] == "Low-Budget Repairs"
     assert data["cast"]["policy"] == "main" and data["cast"]["main_share"] == 0.7
     assert data["translation"]["mode"] == "auto"
-    assert data["tts"]["engine"] == "qwen3tts-fast" and data["tts"]["ref_strategy"] == "auto"
+    # auto: synth runs voxcpm on a GPU with its env, else qwen3tts-fast/qwen3tts/chatterbox
+    assert data["tts"]["engine"] == "auto" and data["tts"]["ref_strategy"] == "auto"
+    assert data["tts"]["best_of"] == 3 and data["post"]["tempo_max"] == 1.2 and data["vc"]["epochs"] == 20
     assert Path(data["game_dir"]) == game.resolve()
     progress = read_json(root / layout.PROGRESS)
     assert progress["init"]["status"] == "done"
@@ -32,7 +34,7 @@ def test_init_is_idempotent_and_refuses_other_language(bd, game):
     code, other = bd("init", game, "--lang", "pl")
     assert code == 2 and "--slug" in other["hint"]
     code, pl = bd("init", game, "--lang", "pl", "--slug", "lbr-pl")
-    assert code == 0 and pl["engine"] == "chatterbox" and pl["slug"] == "lbr-pl"
+    assert code == 0 and pl["engine"] == "auto" and pl["slug"] == "lbr-pl"
 
 
 def test_init_cast_list_and_locale(bd, game, tmp_path):

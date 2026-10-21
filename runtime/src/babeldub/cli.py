@@ -22,6 +22,7 @@ COMMAND_MODULES = [
     "babeldub.commands.cast",  # cast
     "babeldub.commands.translate",  # glossary, batch, translate
     "babeldub.commands.voice",  # synth, post
+    "babeldub.commands.vc",  # vc, vc train
     "babeldub.commands.qa",  # qa, decide, report
     "babeldub.commands.pack",  # build, verify, install, uninstall, reapply
 ]

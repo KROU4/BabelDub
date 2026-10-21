@@ -32,6 +32,11 @@ SYNTH_RESULTS = "synth/results.jsonl"
 SYNTH_DIR = "synth/raw"
 POST = "post/post.jsonl"
 POST_DIR = "post/audio"
+SYNTH_PROMPTS_DIR = "synth/prompts"  # bootstrap: long timbre references and target-language prompts per character
+
+VC_DIR = "vc"  # vc/<char_id>/model.pth|model.index|model.json, vc/<char_id>/dataset/
+VC_AUDIO_DIR = "vc/audio"  # converted lines; vc appends their rows to post/post.jsonl
+VC_MODEL_JSON = "model.json"
 
 QA = "qa/qa.jsonl"
 DECISIONS = "qa/decisions.jsonl"
@@ -52,6 +57,7 @@ STAGES = [
     "translate",
     "synth",
     "post",
+    "vc",
     "qa",
     "build",
     "verify",

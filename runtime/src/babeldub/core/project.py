@@ -22,20 +22,26 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # merge_threshold: a voice cluster this similar (centroid cosine) to a named character is that character
     "cast": {"policy": "main", "list": [], "main_share": 0.7, "merge_threshold": 0.75},
     "translation": {"mode": "auto"},
-    # ref_strategy: "line" = the original line itself is the voice prompt (carries timbre AND the
-    # emotion/delivery of that exact line); "char" = best clean reference of the character;
-    # "auto" = line when the original is long enough and has a source transcript, else char.
-    # engine: qwen3tts-fast on CUDA when its env exists, else synth falls back to the official qwen3tts
+    # engine: auto = voxcpm on an NVIDIA GPU when its env exists, else qwen3tts-fast (CUDA) / qwen3tts / chatterbox
+    # ref_strategy: auto = bootstrap for voxcpm (long original timbre reference, then a target-language
+    # prompt built from the character's first accepted dubs), else line/char: "line" = the original line
+    # itself is the voice prompt (timbre AND delivery), "char" = best clean reference of the character.
+    # best_of: candidates per line (different seeds); the one closest to the original's speech length wins
     "tts": {
-        "engine": "qwen3tts-fast",
+        "engine": "auto",
         "model": None,
         "tier": "auto",
         "ref_strategy": "auto",
         "line_ref_min_s": 1.6,
-        "best_of": 1,
+        "best_of": 3,
         "max_attempts": 3,
+        "bootstrap_lines": 4,
+        "bootstrap_min_accepted": 3,
     },
-    "post": {"max_stretch": 0.12, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
+    # tempo fit only within [tempo_min, tempo_max] (pitch kept), the rest is silence; exact original length
+    "post": {"tempo_min": 0.93, "tempo_max": 1.2, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
+    # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
+    "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"},
     # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language
     "qa": {
         "max_cer": 0.15,

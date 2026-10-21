@@ -56,3 +56,10 @@ def test_prepare_for_tts(monkeypatch):
     text = "{ColorStart}{CharacterName}:{ColorEnd} Ох, черт… ее еще нет, 25 раз"
     assert prepare_for_tts(text, "ru", yo="restore") == "Ох, чёрт… её ещё нет, двадцать пять раз"
     assert prepare_for_tts(text, "ru", numbers=False) == "Ох, черт… ее еще нет, 25 раз"
+
+
+def test_stress_marks_are_stripped_unless_kept():
+    stressed = "Ну что, мало́й, пое́хали."
+    assert normalize.strip_stress(stressed) == "Ну что, малой, поехали."
+    assert prepare_for_tts(stressed, "ru") == "Ну что, малой, поехали."
+    assert prepare_for_tts(stressed, "ru", stress=True) == stressed

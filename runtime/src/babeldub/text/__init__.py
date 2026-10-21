@@ -6,6 +6,7 @@ from babeldub.text.normalize import (
     numbers_to_words,
     prepare_for_tts,
     strip_markup,
+    strip_stress,
 )
 from babeldub.text.placeholders import check_placeholders, extract_placeholders, has_errors
 from babeldub.text.syllables import budget_syllables, count_syllables, fit_status, speech_rate
@@ -23,4 +24,5 @@ __all__ = [
     "prepare_for_tts",
     "speech_rate",
     "strip_markup",
+    "strip_stress",
 ]

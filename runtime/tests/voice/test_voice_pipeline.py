@@ -214,7 +214,7 @@ def test_engine_checks(project: Project, capsys: pytest.CaptureFixture[str]) -> 
     project.save()
     with pytest.raises(BabelDubError) as err:
         run(capsys, project.root, "synth")
-    assert err.value.code == EXIT_USAGE and "chatterbox" in (err.value.hint or "")
+    assert err.value.code == EXIT_USAGE and "voxcpm" in (err.value.hint or "")
 
 
 def test_fast_engine_on_cuda_with_fallback_to_official(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
@@ -251,30 +251,32 @@ def _orig(project: Project, suffix: str) -> tuple[np.ndarray, int]:
     return read_audio(project.path(layout.ORIG_AUDIO_DIR, f"{make_uid(f'fmod:Audio/Dialogue_en.bank#fsb0:{suffix}')}.wav"))
 
 
-def test_post_without_stretch(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+def test_post_exact_length_without_tempo_change(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     project.data["tts"]["params"] = {"syllables_per_s": 40.0}  # dummy speaks fast: everything fits
+    project.data["post"]["tolerance"] = 100.0  # no tempo change at all: the difference becomes silence
     project.save()
     assert run(capsys, project.root, "synth")[0] == EXIT_OK
     code, out = run(capsys, project.root, "post")
     assert code == EXIT_OK, out
-    assert out["done"] == 3 and out["stretch"] == {"none": 3}
+    assert out["done"] == 3 and out["stretch"] == {"none": 3} and out["exact"] == 3
     rows = latest_by(read_jsonl(project.path(layout.POST)))
     for suffix in ("0001", "0002", "0003"):
         line_id = f"fmod:Audio/Dialogue_en.bank#fsb0:{suffix}"
         row = rows[line_id]
         info = probe(project.path(row["wav"]))
         orig, o_sr = _orig(project, suffix)
-        assert info["sr"] == o_sr == 48000 and info["ch"] == orig.shape[1]
-        assert row["lead_s"] == pytest.approx(0.12, abs=0.02)  # edge silence copied from the original
+        # exactly the original's sample count, rate and channels
+        assert info["sr"] == o_sr == 48000 and info["ch"] == orig.shape[1] and info["frames"] == orig.shape[0]
+        assert row["exact"] is True and row["frames"] == orig.shape[0] and row["tempo"] == 1.0
+        assert row["lead_s"] == pytest.approx(0.12, abs=0.025)  # speech starts where the original's does
         assert row["peak_db"] <= -0.95
         assert row["lufs_out"] == pytest.approx(row["level_ref"], abs=1.0)  # loudness matched to the original
-    assert rows["fmod:Audio/Dialogue_en.bank#fsb0:0002"]["dur_s"] <= probe(project.path(layout.ORIG_AUDIO_DIR, f"{make_uid('fmod:Audio/Dialogue_en.bank#fsb0:0002')}.wav"))["dur_s"] + 1e-3
     code, out = run(capsys, project.root, "post")
     assert code == EXIT_OK and out["done"] == 0 and out["up_to_date"] == 3
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
-def test_post_stretches_and_flags_over_length(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+def test_post_tempo_fit_is_bounded_and_flags_over_length(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     project.data["tts"]["params"] = {"syllables_per_s": 2.5}  # dummy speaks slowly: lines run long
     project.save()
     assert run(capsys, project.root, "synth")[0] == EXIT_OK
@@ -282,15 +284,23 @@ def test_post_stretches_and_flags_over_length(project: Project, capsys: pytest.C
     rows = latest_by(read_jsonl(project.path(layout.POST)))
     fixed = rows["fmod:Audio/Dialogue_en.bank#fsb0:0002"]
     assert fixed["fixed_length"] is True
-    assert fixed["stretch"] == pytest.approx(0.88, abs=1e-3)  # clamped by post.max_stretch
+    assert fixed["tempo"] == pytest.approx(1.2, abs=1e-3)  # never faster than post.tempo_max
     assert fixed["stretch_method"] == "atempo"
     assert fixed["over_length"] is True and fixed["id"] in out["over_length"]
+    assert fixed["exact"] is False and fixed["id"] in out["not_exact"]  # speech is never cut: the file runs longer
     assert code == EXIT_ATTENTION
     for row in rows.values():
-        if row["stretch"] < 1.0:
+        if row["tempo"] > 1.0:
             assert row["ratio"] < row["ratio_raw"]
     data, sr = read_audio(project.path(fixed["wav"]))
     assert dsp.true_peak_db(data, sr) <= -0.95
+    # a dub much shorter than the original is slowed down to post.tempo_min at most, the rest is silence
+    project.data["tts"]["params"] = {"syllables_per_s": 40.0}
+    project.save()
+    assert run(capsys, project.root, "synth", "--force")[0] == EXIT_OK
+    run(capsys, project.root, "post", "--stretch-method", "atempo")
+    for row in latest_by(read_jsonl(project.path(layout.POST))).values():
+        assert row["tempo"] == pytest.approx(0.93, abs=1e-3) and row["exact"] is True
 
 
 # ---- runaway guard, ICL pre-check, followers ------------------------------------------------

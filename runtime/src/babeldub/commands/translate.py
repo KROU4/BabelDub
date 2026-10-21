@@ -42,7 +42,6 @@ from babeldub.text.syllables import budget_syllables, count_syllables, fit_statu
 
 Common = Callable[[argparse.ArgumentParser], None]
 
-OFFICIAL_SHARE = 0.95
 OVER_FACTOR = 1.15
 TRANSLATIONS_SCHEMA = "babeldub.translations/1"
 GLOSSARY_SCHEMA = "babeldub.glossary/1"
@@ -57,9 +56,12 @@ RULES = (
     "Write {out}: one JSON object per line {{id, dub_text, sub_text?, variants?, notes?}} for EVERY id below. "
     "dub_text is what the original character says in {lang}: natural spoken {lang} with the same meaning, emotion, "
     "register and delivery as src (the voice is cloned from the original line, so the performance must match). "
+    "task=adapt: tgt_official is the game's official {lang} text; turn it into dub_text a voice actor would say: "
+    "keep its meaning and agreed terms, but spoken and colloquial, numbers and symbols written as words, Latin-script "
+    "names transliterated into {lang} script, and fit the syllable budget. "
     "Keep every token from `placeholders` exactly (tags, {{vars}}, %s); line breaks may move. Aim at budget_syll "
     "syllables: more than 115% is flagged, fixed_length lines must fit. variants = shorter alternatives, best first. "
-    "sub_text only if the subtitle must differ from dub_text."
+    "sub_text only if the subtitle must differ from dub_text (in adapt mode the subtitle is usually tgt_official)."
 )
 
 
@@ -71,13 +73,15 @@ def configured_mode(project: Project) -> str:
 
 
 def decide_mode(project: Project, voiced: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
-    """auto -> official when >=95% of the linked voiced lines have an official target text, else translate."""
+    """auto -> adapt when official target texts exist (the agent turns them into spoken-style dub
+    texts; lines without one are translated in the same batches), else translate. `official` (voice
+    the official text as is) is chosen only explicitly."""
     configured = configured_mode(project)
     linked = [ln for ln in voiced if src_text(ln) or official_text(ln)]
     with_official = sum(1 for ln in linked if official_text(ln))
     share = round(with_official / len(linked), 4) if linked else 0.0
     if configured == "auto":
-        mode = "official" if linked and share >= OFFICIAL_SHARE else "translate"
+        mode = "adapt" if with_official else "translate"
     else:
         mode = configured
     stats = {
@@ -431,8 +435,8 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
         tasks = dict(wanted)
     else:
         candidates = [ln for ln in voiced if ln["id"] not in open_ids and needs_agent(ln, mode, translations.get(ln["id"]))]
-        task = "adapt" if mode == "adapt" else "translate"
-        tasks = {ln["id"]: task for ln in candidates}
+        # adapt: lines with an official text are adapted from it, the others are translated
+        tasks = {ln["id"]: "adapt" if mode == "adapt" and official_text(ln) else "translate" for ln in candidates}
 
     positions = {ln["id"]: i for i, ln in enumerate(lines)}
     ranks = _scene_ranks(lines)
@@ -689,6 +693,8 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
         current = translations.get(in_row["id"])
         rev = int(current.get("rev") or 0) + 1 if current else 1
         sub = out.get("sub_text")
+        if not (isinstance(sub, str) and sub.strip()) and in_row.get("task") == "adapt" and in_row.get("tgt_official"):
+            sub = in_row["tgt_official"]  # an adapted dub keeps the official subtitle
         row = make_translation(
             line, dub, sub.strip() if isinstance(sub, str) and sub.strip() else None, lang, "agent", rev,
             batch=bid, variants=variants or None, picked_variant=picked, notes=out.get("notes") or None,

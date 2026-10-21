@@ -10,29 +10,35 @@ def _lines(line, n, official_every=1):
     ]
 
 
-def test_plan_auto_official(bd, project_with_lines, line):
+def test_plan_auto_adapts_official_texts(bd, project_with_lines, line):
+    # an official translation exists: the agent adapts it into spoken dub texts (numbers as words, names
+    # transliterated, colloquial, length budget); the official text stays the subtitle
     project = project_with_lines(_lines(line, 20))
     code, out = bd("translate", "plan")
     assert code == 0, out
-    assert out["mode"] == "official" and out["configured"] == "auto"
-    assert out["official_share"] == 1.0 and out["need_agent"] == 0
-    assert out["next"] == "babeldub translate use-official"
-    assert Project.load(str(project.root)).data["translation"]["resolved_mode"] == "official"
+    assert out["mode"] == "adapt" and out["configured"] == "auto"
+    assert out["official_share"] == 1.0 and out["need_agent"] == 20
+    assert out["next"] == "babeldub batch make"
+    assert Project.load(str(project.root)).data["translation"]["resolved_mode"] == "adapt"
     assert read_json(project.path(layout.PROGRESS))["translate"]["status"] == "running"
 
 
-def test_plan_auto_falls_back_to_translate(bd, project_with_lines, line):
+def test_plan_auto_adapts_partial_official_and_translates_without_texts(bd, project_with_lines, line):
     project_with_lines(_lines(line, 20, official_every=2))
     code, out = bd("translate", "plan")
-    assert out["mode"] == "translate" and out["with_official"] == 10 and out["need_agent"] == 20
+    assert out["mode"] == "adapt" and out["with_official"] == 10 and out["need_agent"] == 20
     assert out["next"] == "babeldub batch make"
 
 
-def test_plan_threshold_is_95_percent(bd, project_with_lines, line):
-    lines = _lines(line, 20)
-    lines[0]["text"]["tgt_official"] = None  # 19/20 = 95%
-    project_with_lines(lines)
-    assert bd("translate", "plan")[1]["mode"] == "official"
+def test_plan_auto_translates_without_official_texts(bd, project_with_lines, line):
+    project_with_lines(_lines(line, 5, official_every=99))
+    assert bd("translate", "plan")[1]["mode"] == "translate"
+
+
+def test_plan_official_is_explicit(bd, project_with_lines, line):
+    project_with_lines(_lines(line, 20), mode="official")
+    code, out = bd("translate", "plan")
+    assert out["mode"] == "official" and out["need_agent"] == 0 and out["next"] == "babeldub translate use-official"
 
 
 def test_plan_adapt_and_no_text(bd, project_with_lines, line):
@@ -69,7 +75,7 @@ def test_use_official_copies_and_is_idempotent(bd, project_with_lines, line):
 
 def test_use_official_keeps_agent_translations(bd, project_with_lines, line):
     lines = _lines(line, 2)
-    project = project_with_lines(lines)
+    project = project_with_lines(lines, mode="official")
     write_jsonl(project.path(layout.TRANSLATIONS), [{"id": lines[0]["id"], "dub_text": "Своё", "by": "agent", "rev": 1}])
     code, out = bd("translate", "use-official")
     assert code == 0 and out["copied"] == 1 and out["kept_agent"] == 1

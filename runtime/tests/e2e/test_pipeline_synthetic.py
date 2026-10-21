@@ -4,11 +4,11 @@ The game is a Unity folder with an FMOD Studio dialogue bank (built from synthet
 FMOD adapter's own FSB5 writer) and Unity Localization string tables (en + official ru for most
 lines). Every stage runs through `babeldub.cli.main` exactly as an agent calls it:
 
-  init -> set -> scan -> extract -> link -> cast (+ apply-labels) -> translate plan -> use-official
+  init -> set -> scan -> extract -> link -> cast (+ apply-labels) -> translate plan (auto -> adapt)
   -> glossary apply -> batch make/next/submit (the agent's .out is written here) -> glossary check
-  -> synth (dummy TTS engine, ref_strategy=line) -> post -> qa (EXIT_ENV without the qc env, then a
-  fake qc worker) -> decide apply -> report -> build -> verify -> install (into a COPY of the
-  game) -> reapply -> uninstall (the copy is byte-identical to the pristine game again).
+  -> synth (dummy TTS engine, ref_strategy=line, best of 2) -> post -> vc (no RVC model: pass through)
+  -> qa (EXIT_ENV without the qc env, then a fake qc worker) -> decide apply -> report -> build -> verify
+  -> install (into a COPY of the game) -> reapply -> uninstall (the copy is byte-identical again).
 
 Only two things are faked: the content probe of the Unity bundles (real UnityFS bundles would need
 Unity to author) and the qc worker process (faster-whisper + ECAPA live in a torch venv).
@@ -268,7 +268,9 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     assert code == EXIT_OK, out
     root = Path(out["project"])
     assert out["next"] == "babeldub scan"
-    code, out = bd("set", "tts.engine=dummy", "compute.device=cpu")
+    # post.tolerance: CI runners have no ffmpeg, so the dubs keep their natural tempo here (the bounded
+    # tempo fit is covered by tests/voice); best of 2 candidates per line
+    code, out = bd("set", "tts.engine=dummy", "compute.device=cpu", "post.tolerance=100", "tts.best_of=2")
     assert code == EXIT_OK, out
     assert bd("set", "compute.device=gpu")[0] == EXIT_USAGE
 
@@ -318,32 +320,41 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     code, out = bd("cast", "apply-labels")
     assert code == EXIT_OK and out["uncertain"] == [], out
 
-    # text: official Russian where it exists, the agent translates the rest
+    # text: the official Russian exists for most lines, so `auto` adapts it (spoken style, length budget);
+    # the line without one is translated in the same batch
     code, out = bd("translate", "plan")
-    assert code == EXIT_OK and out["mode"] == "translate", out
-    code, out = bd("translate", "use-official")
-    assert code == EXIT_ATTENTION and out["copied"] == 3 and out["missing"] == 1, out
+    assert code == EXIT_OK and out["mode"] == "adapt" and out["need_agent"] == 4, out
+    (root / layout.GLOSSARY_AGENT).parent.mkdir(parents=True, exist_ok=True)
     (root / layout.GLOSSARY_AGENT).write_text(
         json.dumps({"term": "Mia", "translation": "Миа"}, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     assert bd("glossary", "apply")[0] == EXIT_OK
     code, out = bd("batch", "make")
-    assert code == EXIT_OK and out["batches"] == ["b0001"] and out["lines"] == 1, out
+    assert code == EXIT_OK and out["batches"] == ["b0001"] and out["lines"] == 4, out
     code, out = bd("batch", "next")
     assert code == EXIT_OK and out["state"] == "new", out
-    header, row = read_jsonl_raw(Path(out["in"]))
-    assert header["_batch"] == "b0001" and header["target_lang"] == "ru"
-    assert row["src"] == "I will fix it before the sun goes down." and row["speaker"] == "Mia"
+    header, *rows = read_jsonl_raw(Path(out["in"]))
+    assert header["_batch"] == "b0001" and header["target_lang"] == "ru" and header["mode"] == "adapt"
+    row = next(r for r in rows if r["speaker"] == "Mia")
+    assert row["src"] == "I will fix it before the sun goes down." and row["tgt_official"] is None
+    assert "task" not in row  # no official text: translated
+    adapted = [r for r in rows if r.get("task") == "adapt"]
+    assert len(adapted) == 3 and all(r["tgt_official"] for r in adapted)
     out_path = Path(out["out"])
     out_path.write_text(json.dumps({"id": row["id"], "dub_text": ""}) + "\n", encoding="utf-8")
     code, out = bd("batch", "submit", "b0001")
     assert code == EXIT_USAGE and out["merged"] == 0, out  # invalid agent file: nothing merged
-    out_path.write_text(
-        json.dumps({"id": row["id"], "dub_text": MIA_DUB}, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    answers = [{"id": row["id"], "dub_text": MIA_DUB}]
+    answers += [{"id": r["id"], "dub_text": r["tgt_official"].replace("Давным-давно", "Давным-давным-давно")}
+                for r in adapted]
+    out_path.write_text("".join(json.dumps(a, ensure_ascii=False) + "\n" for a in answers), encoding="utf-8")
     code, out = bd("batch", "submit", "b0001")
-    assert code == EXIT_OK and out["merged"] == 1, out
+    assert code == EXIT_OK and out["merged"] == 4, out
     assert bd("batch", "next")[1]["done"] is True
+    merged = latest_by(read_jsonl(root / layout.TRANSLATIONS))
+    intro = next(r for r in adapted if r["tgt_official"].startswith("Давным"))
+    assert merged[intro["id"]]["sub_text"] == intro["tgt_official"]  # the subtitle stays official
+    assert merged[intro["id"]]["dub_text"].startswith("Давным-давным-давно")
     code, out = bd("glossary", "check")
     assert code == EXIT_OK and out["total"] == 0, out
 
@@ -362,6 +373,13 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     for lid, post in latest_by(read_jsonl(root / layout.POST)).items():
         info = sf.info(str(root / post["wav"]))
         assert (info.samplerate, info.channels) == (lines[lid]["audio"]["sr"], lines[lid]["audio"]["ch"])
+    for res in latest_by(read_jsonl(root / layout.SYNTH_RESULTS)).values():
+        assert res["best_of"]["n"] == 2 and res["best_of"]["usable"] == 2
+
+    # vc: no character has an RVC model here, every line passes through unchanged
+    code, out = bd("vc")
+    assert code == EXIT_OK and out["converted"] == 0 and sum(out["passthrough"].values()) == 4, out
+    assert "vc train" in out["notes"][0] and out["next"] == "babeldub qa"
 
     # qa: honest EXIT_ENV without the qc venv, then a fake qc worker
     code, out = bd("qa")

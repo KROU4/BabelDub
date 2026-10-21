@@ -18,7 +18,7 @@ import yaml
 
 from babeldub.core.jsonl import read_json
 from babeldub.core.output import EXIT_ERROR, EXIT_USAGE, BabelDubError
-from babeldub.core.paths import data_dir, env_python, envs_dir, models_dir
+from babeldub.core.paths import data_dir, engines_dir, env_python, envs_dir, models_dir
 
 TIERS = ["cpu", "8gb", "12gb", "24gb"]
 MODEL_MARKER = ".babeldub-model.json"
@@ -54,12 +54,19 @@ class EngineSpec:
     models_of: str | None = None  # runs the catalog models of another engine
     cuda_only: bool = False  # never installed or used without an NVIDIA GPU (CPU tier)
     fallback: str | None = None  # engine used instead when this one cannot run
+    role: str = "tts"  # tts | qc | vc
+    git: dict[str, Any] | None = None  # {url, commit}: source checkout under BABELDUB_HOME/engines/<name>
+    requirements: str | None = None  # requirements file inside the checkout (torch lines are dropped)
+    post_install: list[list[str]] = field(default_factory=list)  # env-python commands run in the checkout
 
     def supports(self, lang: str | None) -> bool:
         return _langs_support(self.languages, lang)
 
     def env_dir(self) -> Path | None:
         return envs_dir() / self.env if self.env else None
+
+    def source_dir(self) -> Path | None:
+        return engines_dir() / self.name if self.git else None
 
     def python_path(self) -> Path | None:
         return env_python(self.env) if self.env else None
@@ -178,7 +185,13 @@ def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
             models_of=raw.get("models_of"),
             cuda_only=bool(raw.get("cuda_only", False)),
             fallback=raw.get("fallback"),
+            role=str(raw.get("role") or "tts"),
+            git=raw.get("git"),
+            requirements=raw.get("requirements"),
+            post_install=[_as_list(cmd) for cmd in raw.get("post_install") or []],
         )
+        if engines[name].git and not (engines[name].git or {}).get("url"):
+            raise BabelDubError(f"catalog engine '{name}' has git without url", code=EXIT_ERROR)
     for name, spec in engines.items():
         for ref in (spec.models_of, spec.fallback):
             if ref and ref not in engines:
@@ -357,6 +370,11 @@ def model_for_role(role: str, tier: str, lang: str | None = None, catalog: Catal
 
 
 DEFAULT_TTS_PREFERENCE = ("qwen3tts-fast", "qwen3tts", "chatterbox")
+AUTO_ENGINE = "auto"  # tts.engine=auto: PREMIUM_TTS on an 8 GB+ GPU when it speaks the language, else the preference
+PREMIUM_TTS = "voxcpm"
+VC_ENGINE = "applio"
+GPU_TIERS = ("8gb", "12gb", "24gb")
+MIN_BIG_GPU_GB = 7.5  # an "8 GB" card reports ~7.6-8.0 GB
 
 
 def engine_for_language(lang: str, catalog: Catalog | None = None,
@@ -370,12 +388,43 @@ def engine_for_language(lang: str, catalog: Catalog | None = None,
 
 
 def runnable_engine(name: str, tier: str, catalog: Catalog | None = None) -> str:
-    """`name`, or its fallback when it is CUDA only and the tier is `cpu` (no usable NVIDIA GPU)."""
+    """`name`, or the first engine of its fallback chain that is not CUDA only when the tier is `cpu`."""
     catalog = catalog or load_catalog()
-    spec = catalog.engines.get(name)
-    if spec is not None and spec.cuda_only and tier == "cpu" and spec.fallback:
-        return spec.fallback
+    seen: set[str] = set()
+    while name not in seen:
+        seen.add(name)
+        spec = catalog.engines.get(name)
+        if spec is None or not (spec.cuda_only and tier == "cpu" and spec.fallback):
+            return name
+        name = spec.fallback
     return name
+
+
+def big_gpu(tier: str, vram_gb: float | None = None) -> bool:
+    """An NVIDIA GPU with 8 GB+ (VoxCPM2 peaks at 6.5 GB; RVC training needs the GPU too).
+    vram_gb None = only the tier is known (e.g. `setup --tier 8gb`)."""
+    return tier in GPU_TIERS and (vram_gb is None or vram_gb >= MIN_BIG_GPU_GB)
+
+
+def setup_tts_engine(configured: str | None, lang: str | None, tier: str, catalog: Catalog | None = None,
+                     vram_gb: float | None = None) -> str | None:
+    """TTS engine `setup` installs: tts.engine=auto -> PREMIUM_TTS on an 8 GB+ GPU when it speaks the
+    language, else the first preferred engine for the language (its fallback on the cpu tier)."""
+    catalog = catalog or load_catalog()
+    name = configured if configured in catalog.engines else AUTO_ENGINE
+    if name != AUTO_ENGINE and lang and not catalog.engines[name].supports(lang):
+        name = AUTO_ENGINE
+    if name == AUTO_ENGINE:
+        premium = catalog.engines.get(PREMIUM_TTS)
+        if premium is not None and big_gpu(tier, vram_gb) and premium.supports(lang):
+            return PREMIUM_TTS
+        found = engine_for_language(lang or "en", catalog)
+        return runnable_engine(found, tier, catalog) if found else None
+    runnable = runnable_engine(name, tier, catalog)
+    if lang and not catalog.engines[runnable].supports(lang):  # e.g. voxcpm -> qwen3tts on a cpu tier for pl
+        found = engine_for_language(lang, catalog)
+        return runnable_engine(found, tier, catalog) if found else None
+    return runnable
 
 
 def env_marker(engine: EngineSpec) -> dict[str, Any] | None:

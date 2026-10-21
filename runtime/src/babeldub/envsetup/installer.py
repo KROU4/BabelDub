@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -104,7 +105,7 @@ def _tail(path: Path, n: int = 8) -> list[str]:
     return [ln[:240] for ln in lines if ln.strip()][-n:]
 
 
-def run_logged(cmd: list[str], log_path: Path, timeout: float) -> int:
+def run_logged(cmd: list[str], log_path: Path, timeout: float, cwd: Path | None = None) -> int:
     """Run a command with stdout+stderr appended to log_path; returns the exit code (-1: could not start)."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8", errors="replace") as log:
@@ -112,7 +113,8 @@ def run_logged(cmd: list[str], log_path: Path, timeout: float) -> int:
         log.flush()
         try:
             proc = subprocess.run(
-                cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=timeout, env=child_env()
+                cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=timeout, env=child_env(),
+                cwd=str(cwd) if cwd else None,
             )
             code = proc.returncode
         except subprocess.TimeoutExpired:
@@ -143,7 +145,7 @@ def env_spec(engine: EngineSpec, accel: str) -> dict[str, Any]:
     if torch:
         torch["index"] = torch.get("index") if accel == "cuda" else torch.get("cpu_index") or "https://download.pytorch.org/whl/cpu"
         torch.pop("cpu_index", None)
-    return {
+    spec: dict[str, Any] = {
         "engine": engine.name,
         "python": engine.python,
         "accel": accel,
@@ -151,14 +153,66 @@ def env_spec(engine: EngineSpec, accel: str) -> dict[str, Any]:
         "packages": list(engine.packages),
         "gpu_packages": list(engine.gpu_packages) if accel == "cuda" else [],
     }
+    if engine.git:  # the marker records the pinned checkout too
+        spec["git"] = dict(engine.git)
+        spec["requirements"] = engine.requirements
+        spec["post_install"] = [list(c) for c in engine.post_install]
+    return spec
+
+
+FILTERED_REQUIREMENTS = "req-babeldub.txt"  # requirements of a git engine without torch/torchaudio
+_TORCH_REQ = re.compile(r"^\s*(torch|torchaudio)\s*([=<>!~;\[]|$)", re.IGNORECASE)
+
+
+def filter_requirements(src: Path, dst: Path) -> int:
+    """Copy a requirements file without its torch/torchaudio lines (torch comes from the CUDA index)."""
+    lines = src.read_text(encoding="utf-8").splitlines()
+    kept = [ln for ln in lines if not _TORCH_REQ.match(ln)]
+    dst.write_text("\n".join(kept) + "\n", encoding="utf-8", newline="\n")
+    return len(lines) - len(kept)
+
+
+def git_head(folder: Path) -> str | None:
+    """Commit checked out in a git engine folder (None: no checkout or no git)."""
+    git = find_tool("git")
+    if git is None or not (folder / ".git").exists():
+        return None
+    try:
+        proc = subprocess.run([str(git), "-C", str(folder), "rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def source_ready(engine: EngineSpec) -> bool:
+    """A git engine's checkout is at the pinned commit (always True for a pip-only engine)."""
+    folder = engine.source_dir()
+    if folder is None or not engine.git:
+        return True
+    commit = str(engine.git.get("commit") or "")
+    head = git_head(folder)
+    return head is not None and (not commit or head == commit)
 
 
 def engine_commands(engine: EngineSpec, accel: str, uv: str) -> list[list[str]]:
+    """Install steps. Steps starting with "@" run inside the CLI: `@filter-requirements src dst`
+    and `@cd <dir> <cmd...>` (a command run in that folder)."""
     env_dir, python = engine.env_dir(), engine.python_path()
     if env_dir is None or python is None:
         return []
     spec = env_spec(engine, accel)
-    cmds = [[uv, "venv", str(env_dir), "--python", engine.python, "--allow-existing"]]
+    cmds: list[list[str]] = []
+    source = engine.source_dir()
+    if source is not None and engine.git:
+        git = str(find_tool("git") or "git")
+        commit = str(engine.git.get("commit") or "HEAD")
+        cmds += [
+            [git, "init", "--quiet", str(source)],
+            [git, "-C", str(source), "fetch", "--depth", "1", str(engine.git["url"]), commit],
+            [git, "-C", str(source), "checkout", "--force", "--detach", "FETCH_HEAD"],
+        ]
+    cmds.append([uv, "venv", str(env_dir), "--python", engine.python, "--allow-existing"])
     torch = spec["torch"]
     if torch:
         version = torch["version"]
@@ -166,11 +220,34 @@ def engine_commands(engine: EngineSpec, accel: str, uv: str) -> list[list[str]]:
             [uv, "pip", "install", "--python", str(python), f"torch=={version}", f"torchaudio=={version}",
              "--index-url", torch["index"]]
         )
+    if source is not None and engine.requirements:
+        filtered = source / FILTERED_REQUIREMENTS
+        cmds.append(["@filter-requirements", str(source / engine.requirements), str(filtered)])
+        cmds.append([uv, "pip", "install", "--python", str(python), "-r", str(filtered)])
     if engine.packages:
         cmds.append([uv, "pip", "install", "--python", str(python), *engine.packages])
     if spec["gpu_packages"]:
         cmds.append([uv, "pip", "install", "--python", str(python), *spec["gpu_packages"]])
+    for step in engine.post_install:
+        cmds.append(["@cd", str(source or env_dir), str(python), *step])
     return cmds
+
+
+def run_step(cmd: list[str], log: Path, timeout: float) -> int:
+    """One install step: a subprocess, or an "@" step handled here (see engine_commands)."""
+    if cmd and cmd[0] == "@filter-requirements":
+        try:
+            dropped = filter_requirements(Path(cmd[1]), Path(cmd[2]))
+        except OSError as exc:
+            with log.open("a", encoding="utf-8") as fh:
+                fh.write(f"\n[babeldub] cannot filter {cmd[1]}: {exc}\n")
+            return -1
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n[{now_iso()}] filtered {cmd[1]} -> {cmd[2]} ({dropped} torch lines dropped)\n")
+        return 0
+    if cmd and cmd[0] == "@cd":
+        return run_logged(cmd[2:], log, timeout, cwd=Path(cmd[1]))
+    return run_logged(cmd, log, timeout)
 
 
 def plan_engine(engine: EngineSpec, tier: str, force: bool = False, import_check: bool = True) -> PlanItem:
@@ -190,21 +267,24 @@ def plan_engine(engine: EngineSpec, tier: str, force: bool = False, import_check
     if not force and python.exists():
         marker = read_json(env_dir / ENV_MARKER, default=None)
         wanted = env_spec(engine, accel)
-        if marker and marker.get("spec") == wanted:
+        checkout = source_ready(engine)
+        if marker and marker.get("spec") == wanted and checkout:
             if not import_check or check_imports(python, engine.imports)[0]:
                 item.action, item.reason, item.size_gb = "skip", "installed", None
                 return item
             item.reason = "venv exists but imports fail: reinstalling packages"
-        elif marker is None and import_check and check_imports(python, engine.imports)[0]:
+        elif marker is None and checkout and import_check and check_imports(python, engine.imports)[0]:
             item.action, item.reason, item.size_gb = "adopt", "existing venv imports fine; recording marker", None
             return item
+        elif not checkout:
+            item.reason = "source checkout missing or not at the pinned commit"
         elif marker is not None:
             item.reason = "catalog spec changed: updating venv"
     uv = find_tool("uv")
     if uv is None:
         item.action, item.reason = "blocked", "uv not found (https://docs.astral.sh/uv/)"
         return item
-    if engine.needs_git() and find_tool("git") is None:
+    if (engine.needs_git() or engine.git) and find_tool("git") is None:
         item.action, item.reason = "blocked", "git not found (needed for a git+ package)"
         return item
     item.commands = engine_commands(engine, accel, str(uv))
@@ -228,7 +308,7 @@ def run_engine(item: PlanItem, engine: EngineSpec, tier: str) -> dict[str, Any]:
         _write_env_marker(engine, tier, adopted=True)
         return {"name": engine.name, "kind": "engine", "status": "adopted"}
     for cmd in item.commands:
-        code = run_logged(cmd, log, ENGINE_STEP_TIMEOUT)
+        code = run_step(cmd, log, ENGINE_STEP_TIMEOUT)
         if code != 0:
             return {"name": engine.name, "kind": "engine", "status": "failed", "error": f"exit code {code}",
                     "step": Path(cmd[0]).name + " " + " ".join(cmd[1:3]), "log": str(log), "tail": _tail(log, 5)}

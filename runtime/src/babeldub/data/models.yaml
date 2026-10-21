@@ -16,6 +16,10 @@
 #   models_of      run the models listed for another engine (same weights, different runtime)
 #   cuda_only      never installed on the cpu tier and never run without CUDA
 #   fallback       engine `synth`/`setup` use instead when a cuda_only engine cannot run
+#   role           tts (default) | qc | vc
+#   git            {url, commit}: source checkout in BABELDUB_HOME/engines/<name> at a pinned commit
+#   requirements   requirements file of the checkout, installed without its torch/torchaudio lines
+#   post_install   commands run with the env python inside the checkout after the packages
 # models[]:
 #   name           folder under BABELDUB_HOME/models (aliases: older folder names that are recognised)
 #   repo/include   Hugging Face repo and optional file patterns (only these files are downloaded)
@@ -24,6 +28,34 @@
 #   size_gb        download size; vram_gb: approximate peak VRAM during inference
 
 engines:
+  voxcpm:
+    env: voxcpm
+    python: "3.12"
+    torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    packages: ["voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git", "soundfile", "numpy"]
+    import: [voxcpm, soundfile]
+    worker: tts_voxcpm.py
+    size_gb: 4.5
+    languages: [ar, my, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko, lo, ms, "no", pl, pt, ru, es, sw, sv, tl, th, tr, vi]
+    license: Apache-2.0
+    cuda_only: true
+    fallback: qwen3tts-fast
+    notes: "Default on NVIDIA GPUs with 8 GB+ (tts.engine=auto): VoxCPM2, 2B, 48 kHz, 30 languages. Timbre from a long original reference (reference_wav_path) plus a target-language continuation prompt (ref_strategy=bootstrap). Peak VRAM 6.5 GB on an RTX 3060 Ti. Takes plain text: no U+0301 stress marks."
+  applio:
+    env: applio
+    role: vc
+    python: "3.12"
+    torch: {version: "2.11.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    git: {url: "https://github.com/IAHispano/Applio", commit: "5171e1dcf31a33d1afeb14ef7c6aac6dadae5dc1"}
+    requirements: requirements-engine.txt
+    post_install:
+      - [core.py, prerequisites, --pretraineds-hifigan, --models, --no-exe]
+    import: [torch, faiss, librosa]
+    size_gb: 8.5
+    languages: ["*"]
+    license: MIT
+    cuda_only: true
+    notes: "RVC v2 voice conversion (stage `vc`): one model per main character trained on its clean original lines (`babeldub vc train`), applied after `post`. Works for any target language. Training needs an NVIDIA GPU (20 epochs on 30 min of speech: ~15 min on an RTX 3060 Ti)."
   qwen3tts-fast:
     env: qwen3tts-fast
     python: "3.12"
@@ -83,6 +115,18 @@ engines:
     notes: "Test engine without a venv or model: writes a tone of the expected length. For pipeline tests only."
 
 models:
+  - name: VoxCPM2
+    repo: openbmb/VoxCPM2
+    engine: voxcpm
+    role: tts
+    license: Apache-2.0
+    commercial: true
+    size_gb: 4.7
+    vram_gb: 6.5
+    tiers: [8gb, 12gb, 24gb]
+    auto_tiers: [8gb, 12gb, 24gb]
+    languages: [ar, my, zh, da, nl, en, fi, fr, de, el, he, hi, id, it, ja, km, ko, lo, ms, "no", pl, pt, ru, es, sw, sv, tl, th, tr, vi]
+    notes: "Default dubbing model on 8 GB+ GPUs. Low-Budget Repairs (en->ru, with RVC): CER 0.045, ECAPA to the originals ~0.65-0.70; won the blind listening rounds."
   - name: Qwen3-TTS-12Hz-1.7B-Base
     repo: Qwen/Qwen3-TTS-12Hz-1.7B-Base
     engine: qwen3tts
