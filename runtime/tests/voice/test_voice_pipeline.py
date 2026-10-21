@@ -217,6 +217,31 @@ def test_engine_checks(project: Project, capsys: pytest.CaptureFixture[str]) -> 
     assert err.value.code == EXIT_USAGE and "chatterbox" in (err.value.hint or "")
 
 
+def test_fast_engine_on_cuda_with_fallback_to_official(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    from babeldub.core.paths import env_python
+
+    project.data["tts"]["engine"] = "qwen3tts-fast"
+    project.save()
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cpu")
+    assert out["engine"] == "qwen3tts" and "CUDA only" in out["notes"][0]
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
+    assert out["engine"] == "qwen3tts" and "qwen3tts-fast env is not installed" in out["notes"][0]
+    fast_python = env_python("qwen3tts-fast")
+    fast_python.parent.mkdir(parents=True)
+    fast_python.write_bytes(b"")
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
+    assert out["engine"] == "qwen3tts-fast" and out["model"] == "Qwen3-TTS-12Hz-1.7B-Base" and out["notes"] == []
+    assert out["would_run"] == 3
+    # takes of the official package count as done for the fast runtime (same models, same output per seed)
+    project.data["tts"]["engine"] = "dummy"
+    project.save()
+    assert run(capsys, project.root, "synth")[0] == EXIT_OK
+    rows = [{**r, "engine": "qwen3tts", "model": "Qwen3-TTS-12Hz-1.7B-Base"} for r in results(project)]
+    write_jsonl(project.path(layout.SYNTH_RESULTS), rows)
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda", "--engine", "qwen3tts-fast")
+    assert out["would_run"] == 0 and out["skipped"]["done"] == 3
+
+
 def _orig(project: Project, suffix: str) -> tuple[np.ndarray, int]:
     return read_audio(project.path(layout.ORIG_AUDIO_DIR, f"{make_uid(f'fmod:Audio/Dialogue_en.bank#fsb0:{suffix}')}.wav"))
 

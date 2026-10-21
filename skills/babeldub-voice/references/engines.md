@@ -8,7 +8,8 @@ Markers: **[v0.1]** means present in CLI v0.1 (engine, worker, model in the cata
 
 | Engine (`tts.engine`) | Catalog models | Languages | Weights license | Notes |
 |---|---|---|---|---|
-| `qwen3tts` **[v0.1, default]** | `Qwen3-TTS-12Hz-1.7B-Base` (also for `ru`); fallback `Qwen3-TTS-12Hz-0.6B-Base`; `qwen3-tts-12hz-1.7b-ru-stress-cf` only explicitly via `tts.model` | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | ICL cloning: prompt audio + its text; emotion comes from the prompt |
+| `qwen3tts-fast` **[v0.1, default on NVIDIA GPUs]** | the `qwen3tts` models (same folders) | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 weights; runtime `faster-qwen3-tts` (MIT) | the same Qwen3-TTS through CUDA graphs: ~7× faster per line, identical output for the same seed; CUDA only, one line per call |
+| `qwen3tts` **[v0.1, on the CPU and as the fallback]** | `Qwen3-TTS-12Hz-1.7B-Base` (also for `ru`); fallback `Qwen3-TTS-12Hz-0.6B-Base`; `qwen3-tts-12hz-1.7b-ru-stress-cf` only explicitly via `tts.model` | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | official `qwen-tts` package; ICL cloning: prompt audio + its text; emotion comes from the prompt |
 | `chatterbox` **[v0.1]** | `chatterbox-multilingual` (Multilingual V3) | ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh | MIT | cloning from audio without a transcript; `exaggeration`; PerTh watermark |
 | `dummy` | — | any | MIT | test engine: writes a tone of the required length; only for checking the pipeline |
 
@@ -16,32 +17,35 @@ Every engine has its own venv in `BABELDUB_HOME/envs/<engine>`, because the pack
 
 Choosing: `babeldub set tts.engine=<engine>`, or for one run `babeldub synth --engine <engine>`. The model within the engine: `babeldub set tts.model=<name>`; without it the CLI takes the catalog model by tier (`tts.tier=auto`) and language.
 
+`qwen3tts-fast` is what `init` writes for the Qwen3-TTS languages. When `synth` runs on the CPU or the `qwen3tts-fast` env is missing, it uses the official `qwen3tts` instead and says so in `notes`; `setup` installs `qwen3tts-fast` only when a GPU is visible (never on the `cpu` tier). Lines already voiced by one of the two count as done for the other. `tts.engine=qwen3tts` forces the official package.
+
 ## 2. Language → engine (8 GB VRAM, permissive licenses only)
 
 | Target language | v0.1 engine | Comment |
 |---|---|---|
-| ru | `qwen3tts` (1.7B-Base; `ru-stress-cf` only explicitly) | stress via the U+0301 mark (see section 3) |
-| en, de, fr, es, pt, it, zh, ja, ko | `qwen3tts` | Apache-2.0 |
+| ru | `qwen3tts-fast` (1.7B-Base; `ru-stress-cf` only explicitly; `qwen3tts` without CUDA) | stress via the U+0301 mark (see section 3) |
+| en, de, fr, es, pt, it, zh, ja, ko | `qwen3tts-fast` (`qwen3tts` without CUDA) | Apache-2.0 |
 | pl, tr, and also ar, da, el, fi, he, hi, ms, nl, no, sv, sw | `chatterbox` | MIT; watermark in every file: tell the user |
 | uk and others | none | say so honestly: v0.1 has no engine with a permissive license; candidates are in section 5 |
 
 ## 3. Qwen3-TTS: what matters
 
 - **Checkpoints.** 1.7B-Base (≈4.5 GB) and 0.6B-Base (≈2.5 GB); only the 12 Hz variants are published. The CustomVoice and VoiceDesign variants (presets and voice from a description) are not needed for dubbing: they cannot clone a specific character.
-- **Cloning.** `ref_audio` + `ref_text`. Without a transcript (`x_vector_only_mode`) the model clones only the timbre from the embedding and sounds worse; the CLI enables this mode itself when the prompt has no text or the prompt was trimmed.
+- **Cloning.** `ref_audio` + `ref_text` (ICL). The transcript must be exact: with a transcript that does not match the audio (an alternative take, a rewritten subtitle) generation can loop until the token cap. Without a transcript (`x_vector_only_mode`, `line-xvec` in the results) the model clones only the timbre from the embedding and loses some delivery; the CLI uses this mode when the prompt has no text, was trimmed, fails the transcript-rate check, or ran away in ICL mode (`references/ref-strategy.md`, section 2.1).
 - **Emotions.** Base has no text style instructions: emotion and paralinguistics come from the prompt. Hence the `line` strategy (`references/ref-strategy.md`).
 - **Duration.** There is no explicit duration parameter. Length is held by the syllable budget during translation, compression in `post` and shortening of the text (`references/length-policy.md`).
 - **Quality as self-reported by the authors** (MiniMax Multilingual set): Russian WER 3.21 and SIM 0.792 for 1.7B; 4.46 and 0.781 for 0.6B. These are the model authors' numbers, not an independent measurement; for the voices of a specific game, look at the pilot metrics.
 - **Russian stress.** The base model follows the U+0301 stress mark in 65% of cases on the dictionary vowel and in 17% against the dictionary; the `ru-stress-cf` fine-tune follows it in 100% and 96% (measured by the fine-tune's author). But on three Low-Budget Repairs lines it preserved the original actor's voice worse (ECAPA similarity to the original 0.05–0.37 versus 0.37–0.51 for 1.7B-Base), so `setup` does not install it and `synth` never picks it by itself: enable it explicitly (`babeldub models fetch …`, `babeldub set tts.model=…`) and check `sim` in the pilot. A caveat from the model card: the weights are Apache-2.0, but part of the training text comes from a dataset with no declared license; check this before commercial use.
-- **Speed.** The official `qwen-tts` package is slow: about 0.23× real time on an RTX 4060 under Windows. The `faster-qwen3-tts` accelerator (CUDA Graphs) on the same card gives 1.83× real time for 1.7B and 2.26× for 0.6B (measured by the accelerator's author). The v0.1 catalog uses the official `qwen-tts`; `faster-qwen3-tts` is a **[candidate]**: it needs a different transformers version and cannot be installed into the same venv. On an RTX 3060 Ti (8 GB, official `qwen-tts`, 1.7B-Base), BabelDub measured `rtf` ≈ 4.5 for a single line and ≈ 1.4–2.1 for a batch of 3–4 lines, with a VRAM peak of 4.3–5.5 GB; check `rtf` in the `synth` output.
+- **Speed.** The official `qwen-tts` package is slow. On an RTX 3060 Ti (8 GB, 1.7B-Base, Low-Budget Repairs lines) BabelDub measured: `qwen3tts-fast` (`faster-qwen3-tts` 0.5.4, CUDA graphs) `rtf` ≈ 0.52 per line with a VRAM peak ≈ 4.5 GB and ~15 s of load and warm-up per run; the official `qwen3tts` ≈ 3.7–4.5 for a single line and ≈ 1.2–1.4 for a batch of 4 (VRAM peak up to 5.5 GB). Same audio for the same seed, same Whisper CER (0.0 and 0.074 on the test lines). `qwen3tts-fast` needs its own venv because it pins `transformers==5.15.1` (5.20.x breaks the codec config). Check `rtf` in the `synth` output.
+- **Runaways.** One looping line in a batch of the official package forces the whole batch to the token cap (VRAM 7.8 of 8 GB, RTF ~4 in one LBR batch). `synth` caps every line from its own estimate and the original, groups batches by estimated length, and retries a looping line alone (`references/ref-strategy.md`, section 2.1).
 - **Windows.** FlashAttention 2 is not shipped for Windows; `sdpa` is used.
 
 ## 4. Video-memory tiers
 
 | Tier | What `setup` installs by default | What to expect |
 |---|---|---|
-| CPU | `Qwen3-TTS-12Hz-0.6B-Base` | works, but many times slower than real time; warn that dubbing the game will take hours ❓ |
-| 8 GB | 1.7B-Base, Chatterbox V3 | the main scenario; one model on the GPU at a time; on `CUDA out of memory`, use 0.6B |
+| CPU | `qwen3tts` with `Qwen3-TTS-12Hz-0.6B-Base` | works, but many times slower than real time; warn that dubbing the game will take hours ❓ |
+| 8 GB | `qwen3tts-fast` with 1.7B-Base, Chatterbox V3 for its languages | the main scenario; one model on the GPU at a time; on `CUDA out of memory`, use 0.6B |
 | 12 GB | the same | memory headroom; a second engine for comparison is a **[candidate]**: VoxCPM2 |
 | 16–24 GB | the same | **[candidates]** VoxCPM2, FireRedTTS3 (best published SIM for Russian), MOSS-TTS with a duration parameter |
 

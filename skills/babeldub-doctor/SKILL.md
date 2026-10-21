@@ -81,7 +81,7 @@ Qwen3-TTS supports zh, en, ja, ko, de, fr, ru, pt, es, it.
    - By default only models with permissive licenses (Apache-2.0, MIT) are installed.
    - The CLI blocks non-commercial (NC) models (`blocked[]`) until explicit consent. Install one only after the user asked for that model themselves and confirmed its license; then run `babeldub setup --accept-license <model>`. Without such a request, leave NC models alone.
    - Copy catalog warnings (a model's `warning`, for example about the origin of its training data) into the report.
-3. Install: `babeldub setup` (engines, models and utilities for the recommended tier and the project language), or explicitly `babeldub setup --engines qwen3tts,qc --tools --models auto`. A single model: `babeldub models fetch <name>`.
+3. Install: `babeldub setup` (engines, models and utilities for the recommended tier and the project language), or explicitly `babeldub setup --engines qwen3tts-fast,qc --tools --models auto` (`qwen3tts-fast` is CUDA only; on the `cpu` tier use `qwen3tts`). A single model: `babeldub models fetch <name>`.
 4. Output: `done[]`, `skipped[]`, `failed[]`, `blocked[]`.
    - Code 1 (`failed[]`): read the log of the failed step (its path is in the output or in the plan file), fix the cause, rerun `setup` once. Network failures usually pass on the second try.
    - Code 3 (`blocked[]`): the reason is in the plan file (`reason`): no uv or git, a non-commercial license, no `uvx`/`huggingface_hub`.
@@ -103,7 +103,7 @@ Installation is long: venvs with torch and model weights take gigabytes (the CLI
 Return a short summary to the orchestrator (or to the user, if the skill was called directly):
 
 ```json
-{"cli": "0.1.0", "exe": "...", "tier": "8gb", "gpu": "NVIDIA GeForce RTX 3060 Ti 8 GB", "installed": ["qwen3tts", "qc", "vgmstream-cli"], "missing": [], "todo": [], "warnings": []}
+{"cli": "0.1.0", "exe": "...", "tier": "8gb", "gpu": "NVIDIA GeForce RTX 3060 Ti 8 GB", "installed": ["qwen3tts-fast", "qc", "vgmstream-cli"], "missing": [], "todo": [], "warnings": []}
 ```
 
 The values in the example are illustrative: take them from the output of `bootstrap.py`, `babeldub doctor` and `babeldub setup`.

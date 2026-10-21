@@ -42,7 +42,7 @@ Stage statuses in `state/progress.json` (`project.mark_stage`): `running | done 
 BABELDUB_HOME (default ~/.babeldub, i.e. C:\Users\<user>\.babeldub on Windows; env BABELDUB_HOME)
 ├── active.json        active project {"project": "<dir>"}
 ├── games.json         registry of game folders (for the guard hook)
-├── envs/<engine>/     engine venvs: qwen3tts, chatterbox, qc (marker babeldub-env.json)
+├── envs/<engine>/     engine venvs: qwen3tts-fast, qwen3tts, chatterbox, qc (marker babeldub-env.json)
 ├── models/<name>/     weights (hf download --local-dir; marker .babeldub-model.json)
 ├── hf-cache/          HF_HOME for workers (speechbrain/<model> is the working copy of ECAPA)
 ├── tools/<tool>/      external utilities (vgmstream/INSTALLED.json etc.)
@@ -86,7 +86,7 @@ All JSONL files are UTF-8 without BOM, one object per line; the first line of ca
   "compute": {"device": "auto"},
   "cast": {"policy": "main", "list": [], "main_share": 0.7},
   "translation": {"mode": "auto"},
-  "tts": {"engine": "qwen3tts", "model": null, "tier": "auto", "ref_strategy": "auto", "line_ref_min_s": 1.6, "best_of": 1, "max_attempts": 3},
+  "tts": {"engine": "qwen3tts-fast", "model": null, "tier": "auto", "ref_strategy": "auto", "line_ref_min_s": 1.6, "best_of": 1, "max_attempts": 3},
   "post": {"max_stretch": 0.12, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
   "qa": {"max_cer": 0.15, "min_sim_ratio": 0.75, "max_duration_ratio": 1.35},
   "build": {"codec": "auto"},
@@ -98,7 +98,7 @@ All JSONL files are UTF-8 without BOM, one object per line; the first line of ca
 - `translation.mode`: `auto` (official if an official translation exists for ≥ 95 % of the linked voiced lines; otherwise translate; `adapt` only when set explicitly) | `translate` | `adapt` (the official text exists; the agent adapts it to the duration) | `official` (voice the official text as is). `translate plan` writes the resolved mode to `translation.resolved_mode`.
 - Optional keys the CLI reads: `target_locale` (`pt-BR` etc., written by `init`), `tts.device` (`cuda|cpu`), `tts.dtype` (`bf16`), `tts.batch_size` (lines per generation call, default 4), `tts.params` (engine generation kwargs), `tts.options` (model load options, for example `attn_implementation`), `tts.yo` (`keep|strip|restore` for `prepare_for_tts`), `post.tolerance` (0.05: no stretching if the dub is at most 5 % longer), `qa.silence_db` (−50), `qa.asr_model`, `qa.sv_model` (qc model folders).
 - `tts.best_of` is not used in v0.1 (`synth` says so in `notes`): weak lines are re-voiced by the QA loop (`regen`/`reref` → `synth --attempt-next`).
-- `set` validates the enumerations `compute.device`, `cast.policy`, `translation.mode`, `tts.ref_strategy`, `tts.tier`, `tts.engine` (`qwen3tts|chatterbox|dummy`); `_schema`, `cli_version`, `created`, `slug`, `game_dir`, `target_lang` are protected (another language means a new project).
+- `set` validates the enumerations `compute.device`, `cast.policy`, `translation.mode`, `tts.ref_strategy`, `tts.tier`, `tts.engine` (`qwen3tts-fast|qwen3tts|chatterbox|dummy`; `init` writes `qwen3tts-fast` for the Qwen3-TTS languages, `chatterbox` for its other languages); `_schema`, `cli_version`, `created`, `slug`, `game_dir`, `target_lang` are protected (another language means a new project).
 
 ### 4.2 `inventory/assets.jsonl`: containers (`adapters.base.Asset`)
 `asset_id`, `adapter`, `relpath`, `role` (`voice|text|audio|other`), `size`, `sha1`, `locale`, `level` (`A|B|C`), `info{}`.
@@ -153,7 +153,7 @@ All JSONL files are UTF-8 without BOM, one object per line; the first line of ca
 
 ### 4.7 `synth/results.jsonl`
 `{id, attempt, engine, model, wav, sr, dur_s, seed, ref_id, text, status (ok|error), error?, rtf?, ts}` plus `ref_mode (line|line-xvec|char|char-xvec)` (`-xvec`: timbre only, the transcript was not sent), `ref_wav`, `ref_trimmed`, `lang`, `char_id`, `reason (new|retry|retranslated|regen|reref|force)`, `key` (hash of the inputs: engine, model, language, text, reference), `est_s` (spoken length estimated from the dub text), `max_new_tokens?` (the generation cap sent), `ref_reason?` and `src_rate?` (ICL pre-check, below), `retry_reason?` (`runaway`) with `discarded?: [{ref_mode, ref_id, dur_s, hit_token_limit}]`, `batch?` (batch size; a batch shares one seed), `hit_token_limit?`, `vram_peak_gb?`. Failed rows have `status=error`, `wav=null`.
-- **Length estimate and cap.** `est_s` = `count_syllables(dub text) / rate`, where the rate is `text.syllables.SYLLABLE_RATE` of the target language (ru 5.5 syl/s) or 5.0 for other languages; `target_s` is the original's `audio.dur_s`. For engines with a token cap (`qwen3tts`, `dummy`): `max_new_tokens = ceil(12.5 · cap_s)`, `cap_s = max(6.0, 2.0 · max(est_s, target_s) + 2.5)` (Qwen3-TTS 12Hz generates 12.5 tokens per second of audio); an explicit `tts.params.max_new_tokens` wins.
+- **Length estimate and cap.** `est_s` = `count_syllables(dub text) / rate`, where the rate is `text.syllables.SYLLABLE_RATE` of the target language (ru 5.5 syl/s) or 5.0 for other languages; `target_s` is the original's `audio.dur_s`. For engines with a token cap (`qwen3tts-fast`, `qwen3tts`, `dummy`): `max_new_tokens = ceil(12.5 · cap_s)`, `cap_s = max(6.0, 2.0 · max(est_s, target_s) + 2.5)` (Qwen3-TTS 12Hz generates 12.5 tokens per second of audio); an explicit `tts.params.max_new_tokens` wins.
 - **ICL pre-check.** ICL cloning needs the exact transcript of its prompt. For a `line` prompt the CLI computes `src_rate` = syllables of `text.src` / speech seconds of the original (`audio.dsp.speech_seconds`); outside [1.2, 8.5] syl/s the transcript probably does not match the audio, and the line is voiced with the character reference (`char`), or with the line in timbre-only mode (`line-xvec`) when the character has none (or a `reref` asked for the line). `ref_reason` says why.
 - **Runaway policy.** An output is a runaway when it hit the cap (`hit_token_limit`) or `dur_s > 2.2 · max(est_s, target_s) + 2.0`. It is discarded (never an `ok` attempt) and the line is retried alone, not in a batch: first timbre-only on the same reference (engines that use transcripts), then, for a `line` prompt, the character's chosen reference in ICL mode. The row of the first usable take has `retry_reason: "runaway"` and the discarded takes in `discarded`; if every try runs away the row is `status=error`, `error: "runaway"` (no file is kept) and the next `synth` makes a new attempt with a new seed until `tts.max_attempts`; then the line is in `attention` and the agent decides (usually `keep_original`).
 - **Batches** are built from lines of similar `est_s` (sorted by character, then `est_s`), because a batch generates until its longest item finishes or the largest cap is hit.
@@ -186,7 +186,7 @@ Common flags: `--project <dir|slug>` (otherwise `BABELDUB_PROJECT`, then the act
 | Module | Command | What it does | Output (key fields) |
 |---|---|---|---|
 | `commands/env.py` | `doctor [--no-import-check]` | OS, Python, uv, ffmpeg/ffprobe, vgmstream-cli, rubberband, git, GPU (nvidia-smi: name, VRAM, driver), free space, which envs (with an import check) and models are present; recommends a tier; the full report is `BABELDUB_HOME/logs/doctor.json`. Code 4: no uv/ffmpeg/ffprobe; 3: envs/models needed | `tier`, `gpu`, `tools{}`, `envs{}`, `models[]`, `missing[]`, `optional_missing[]`, `to_install[]`, `install{}`, `next` |
-| | `setup [--engines qwen3tts,qc] [--models auto\|none\|a,b] [--tools] [--tier] [--lang] [--accept-license M] [--force] [--dry-run] [--no-import-check]` | Without flags: the project's TTS engine + qc, `auto` models for the tier and language, vgmstream. Creates a venv (`uv venv`, torch cu128/cu124/cpu), installs packages per the catalog, downloads weights (`hf download`) and tools (vgmstream from the GitHub release, sha256); "adopts" an existing working venv; `opt_in` models only with `--accept-license`. Plan: `logs/setup-plan.json` | `planned[]`, `done[]`, `skipped[]`, `failed[]`, `blocked[]`, `download_gb`, `free_gb` |
+| | `setup [--engines qwen3tts-fast,qc] [--models auto\|none\|a,b] [--tools] [--tier] [--lang] [--accept-license M] [--force] [--dry-run] [--no-import-check]` | Without flags: the project's TTS engine + qc, `auto` models for the tier and language, vgmstream. A `cuda_only` engine (`qwen3tts-fast`) is replaced by its `fallback` (`qwen3tts`) on the `cpu` tier, and asked for explicitly there it is `blocked`. Creates a venv (`uv venv`, torch cu128/cu124/cpu), installs packages per the catalog, downloads weights (`hf download`) and tools (vgmstream from the GitHub release, sha256); "adopts" an existing working venv; `opt_in` models only with `--accept-license`. Plan: `logs/setup-plan.json` | `planned[]`, `done[]`, `skipped[]`, `failed[]`, `blocked[]`, `download_gb`, `free_gb` |
 | | `models list [--engine E]` / `models fetch a,b [--accept-license M] [--force] [--dry-run]` | The `data/models.yaml` catalog with licenses and status; downloading weights | `models[]` / `done[]`, `skipped[]` |
 | `commands/project.py` | `init <game_dir> --lang ru [--cast all\|main\|list] [--chars A,B] [--mode auto\|translate\|adapt\|official] [--slug] [--name] [--project-dir]` | Creates the project (TTS engine by language), registers the game in `games.json`, makes it active; a repeat is idempotent; another game/language in the same slug is code 2; a language without an engine is code 3 | `project`, `slug`, `engine`, `next` |
 | | `status` | Stages, counters, next step: `next_stage` is the first stage in `pending`, `running` or `failed`; stages in `attention`/`failed` go to `attention{stage: summary}` with code 3; `counts.follows` = voiced followers (§4.3), never synthesized | `stages{}`, `counts{}`, `next_stage`, `next`, `attention{}`, `done` |
@@ -207,7 +207,7 @@ Common flags: `--project <dir|slug>` (otherwise `BABELDUB_PROJECT`, then the act
 | | `batch submit <bid> [--force]` | Validates `.out.jsonl` (all ids, extra ids, empty `dub_text`, types, placeholders/tags) and merges it into `translations.jsonl`; errors give code 2 and `<bid>.errors.json`; exceeding the syllable budget gives code 3 | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants` |
 | | `glossary check` | A glossary term in the source without the agreed translation in `dub_text` is a violation (code 3, `glossary_violations.jsonl`) | `terms`, `checked`, `violations[]`, `total` |
 | | `glossary apply` | Validates and merges `glossary.agent.jsonl` into `glossary.jsonl` | `added`, `updated`, `total` |
-| `commands/voice.py` | `synth [--chars A,B] [--ids a,b] [--limit N] [--attempt-next] [--engine qwen3tts\|chatterbox\|dummy] [--device cuda\|cpu] [--wait-lock S] [--batch N] [--force] [--dry-run]` | Prepares the voice prompts (§4.1), runs the engine worker in its venv (one model load per run, batches per character), writes `synth/raw` and `results.jsonl` after every line; holds `gpu.lock`. Idempotent: the same text with the same engine/model is not repeated. Followers are skipped (`skipped.follows`); runaways are discarded and retried (§4.7) | `done`, `failed`, `remaining`, `rtf`, `batch`, `vram_peak_gb`, `by_ref{}`, `skipped{}`, `attention[]`, `runaway[]?`, `runaway_recovered?` |
+| `commands/voice.py` | `synth [--chars A,B] [--ids a,b] [--limit N] [--attempt-next] [--engine qwen3tts-fast\|qwen3tts\|chatterbox\|dummy] [--device cuda\|cpu] [--wait-lock S] [--batch N] [--force] [--dry-run]` | Prepares the voice prompts (§4.1), runs the engine worker in its venv (one model load per run, batches per character when the worker reports `info.batch`), writes `synth/raw` and `results.jsonl` after every line; holds `gpu.lock`. `qwen3tts-fast` falls back to `qwen3tts` (with a note in `notes`) when the device is not CUDA or its env is missing. Idempotent: the same text with the same engine/model is not repeated (`qwen3tts-fast` and `qwen3tts` count as one engine: same models, same output per seed). Followers are skipped (`skipped.follows`); runaways are discarded and retried (§4.7) | `done`, `failed`, `remaining`, `rtf`, `batch`, `vram_peak_gb`, `by_ref{}`, `skipped{}`, `attention[]`, `runaway[]?`, `runaway_recovered?` |
 | | `post [--ids] [--limit] [--force] [--dry-run] [--stretch-method rubberband\|ffmpeg-rubberband\|atempo]` | Trims silence, fits the duration (within `max_stretch`), edge silence and loudness as in the original, format as in the original (§4.8) | `done`, `up_to_date`, `over_length[]`, `stretch{}` |
 | `commands/qa.py` | `qa [--ids] [--limit] [--force] [--rebaseline] [--device] [--wait-lock S]` | The `qc` worker: ASR (CER against `dub_text`), voice similarity to the original and to the character reference relative to the character's baseline, duration, peaks → `qa.jsonl`; automatic decisions → `decisions.jsonl` (§4.9). Without the `qc` env: code 4 | `checked`, `pass`, `fail`, `accept`, `regen`, `shorten`, `keep_original`, `attention[]`, `pending`, `cer_median`, `sim_median`, `device` |
 | | `decide apply [--by agent\|human]` | Validates and merges `decisions.agent.jsonl` (all or nothing; repeats are skipped) | `applied`, `skipped`, `by_decision{}` |
@@ -239,7 +239,7 @@ Workers are self-contained scripts in `runtime/src/babeldub/workers/*.py`. They 
 → {"op": "stats"} / {"op": "ping"} / {"op": "quit"}
 ```
 
-v0.1 engines: `qwen3tts` (`tts_qwen3.py`, ICL prompt ref_audio + ref_text), `chatterbox` (`tts_chatterbox.py`), `dummy` (`tts_dummy.py`: a TEST engine without a neural network for CI and end-to-end tests; runs in the CLI interpreter; supports `synth_batch`).
+v0.1 engines: `qwen3tts-fast` (`tts_qwen3_fast.py`: the Qwen3-TTS models through `faster-qwen3-tts` with CUDA graphs; CUDA only, `load` refuses another device; one text per generate call, so `load` reports `info.batch: false` and `synth_batch` is a sequential loop; warm-up after load), `qwen3tts` (`tts_qwen3.py`, official `qwen-tts`, ICL prompt ref_audio + ref_text, batched), `chatterbox` (`tts_chatterbox.py`), `dummy` (`tts_dummy.py`: a TEST engine without a neural network for CI and end-to-end tests; runs in the CLI interpreter; supports `synth_batch`).
 
 A `synth` reply may carry `hit_token_limit: true` (the output reached `0.97 · max_new_tokens / 12.5` s) and `mode` (`icl|xvec`). The `dummy` engine simulates a runaway for tests: the word `RUNAWAY` in `text` loops in every mode, in `ref_text` only in ICL mode, and `params.dummy_runaway_xvec` makes timbre-only requests loop too; a runaway answer is exactly as long as the cap (60 s without one) with `hit_token_limit: true`, and normal output is cut at the cap like a real engine.
 
@@ -269,6 +269,15 @@ The CLI-side client is `babeldub/workers/client.py`: `WorkerClient(env|python_pa
 
 ```yaml
 engines:
+  qwen3tts-fast:
+    env: qwen3tts-fast
+    torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128"}
+    packages: ["faster-qwen3-tts==0.5.4", "transformers==5.15.1", "soundfile", "numpy"]
+    worker: tts_qwen3_fast.py
+    languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
+    models_of: qwen3tts       # runs the qwen3tts models
+    cuda_only: true           # never installed on the cpu tier, never run without CUDA
+    fallback: qwen3tts        # what setup/synth use instead
   qwen3tts:
     env: qwen3tts
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128"}
@@ -285,7 +294,7 @@ models:
     vram_gb: 6
     tiers: [8gb, 12gb, 24gb]
 ```
-- Engines: `qwen3tts`, `chatterbox`, `qc` (faster-whisper + SpeechBrain ECAPA), `dummy` (`env: null`, for tests). API: `babeldub.envsetup.catalog` (`load_catalog`, `default_model`, `model_dir`, `is_model_downloaded`, `engine_for_language`, `tier_for_vram`).
+- Engines: `qwen3tts-fast` (default for the Qwen3-TTS languages; `transformers==5.15.1` is pinned because 5.20.x fails with `'MimiConfig' object has no attribute 'rope_theta'`), `qwen3tts`, `chatterbox`, `qc` (faster-whisper + SpeechBrain ECAPA), `dummy` (`env: null`, for tests). API: `babeldub.envsetup.catalog` (`load_catalog`, `default_model`, `model_dir`, `is_model_downloaded`, `engine_for_language` (preference `qwen3tts-fast`, `qwen3tts`, `chatterbox`), `runnable_engine` (the fallback of a `cuda_only` engine on the `cpu` tier), `Catalog.models_for_engine` (follows `models_of`), `tier_for_vram`).
 - Models with `commercial: false` get `opt_in` and are installed only with `--accept-license`.
 - By default `synth` takes the downloaded general (not language-specific) model of the engine, the larger one first; language fine-tunes (`qwen3-tts-12hz-1.7b-ru-stress-cf`) are used only when set explicitly in `tts.model`: on the test lines they preserved the original actor's voice worse.
 - Human-readable overview of models, tiers, licenses and measured VRAM: `docs/MODELS.md`.

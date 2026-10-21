@@ -51,6 +51,9 @@ class EngineSpec:
     license: str | None = None
     size_gb: float = 0.0
     notes: str = ""
+    models_of: str | None = None  # runs the catalog models of another engine
+    cuda_only: bool = False  # never installed or used without an NVIDIA GPU (CPU tier)
+    fallback: str | None = None  # engine used instead when this one cannot run
 
     def supports(self, lang: str | None) -> bool:
         return _langs_support(self.languages, lang)
@@ -135,8 +138,14 @@ class Catalog:
             f"unknown model '{name}'", code=EXIT_USAGE, known=[m.name for m in self.models], hint="see `babeldub models list`"
         )
 
+    def model_owner(self, engine: str) -> str:
+        """Engine whose catalog models `engine` runs (itself unless it declares `models_of`)."""
+        spec = self.engines.get(engine)
+        return spec.models_of if spec is not None and spec.models_of else engine
+
     def models_for_engine(self, engine: str) -> list[ModelSpec]:
-        return [m for m in self.models if m.engine == engine]
+        owner = self.model_owner(engine)
+        return [m for m in self.models if m.engine == owner]
 
 
 def _as_list(value: Any) -> list[str]:
@@ -166,7 +175,14 @@ def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
             license=raw.get("license"),
             size_gb=float(raw.get("size_gb") or 0.0),
             notes=str(raw.get("notes") or ""),
+            models_of=raw.get("models_of"),
+            cuda_only=bool(raw.get("cuda_only", False)),
+            fallback=raw.get("fallback"),
         )
+    for name, spec in engines.items():
+        for ref in (spec.models_of, spec.fallback):
+            if ref and ref not in engines:
+                raise BabelDubError(f"catalog engine '{name}' refers to unknown engine '{ref}'", code=EXIT_ERROR)
     models: list[ModelSpec] = []
     seen: set[str] = set()
     for raw in data.get("models") or []:
@@ -297,9 +313,10 @@ def auto_models(
     (non-commercial) are picked only when their license was accepted explicitly.
     """
     accepted = accepted or set()
+    owners = {catalog.model_owner(e) for e in engines}
     picked: list[ModelSpec] = []
     for spec in catalog.models:
-        if spec.engine not in engines or tier not in spec.auto_tiers:
+        if spec.engine not in owners or tier not in spec.auto_tiers:
             continue
         if spec.language_specific and (lang is None or not spec.supports(lang)):
             continue
@@ -339,13 +356,26 @@ def model_for_role(role: str, tier: str, lang: str | None = None, catalog: Catal
     return None
 
 
-def engine_for_language(lang: str, catalog: Catalog | None = None, preference: tuple[str, ...] = ("qwen3tts", "chatterbox")) -> str | None:
-    """First preferred TTS engine that speaks `lang`."""
+DEFAULT_TTS_PREFERENCE = ("qwen3tts-fast", "qwen3tts", "chatterbox")
+
+
+def engine_for_language(lang: str, catalog: Catalog | None = None,
+                        preference: tuple[str, ...] = DEFAULT_TTS_PREFERENCE) -> str | None:
+    """First preferred TTS engine that speaks `lang` (qwen3tts-fast falls back to qwen3tts off CUDA)."""
     catalog = catalog or load_catalog()
     for name in preference:
         if name in catalog.engines and catalog.engines[name].supports(lang):
             return name
     return None
+
+
+def runnable_engine(name: str, tier: str, catalog: Catalog | None = None) -> str:
+    """`name`, or its fallback when it is CUDA only and the tier is `cpu` (no usable NVIDIA GPU)."""
+    catalog = catalog or load_catalog()
+    spec = catalog.engines.get(name)
+    if spec is not None and spec.cuda_only and tier == "cpu" and spec.fallback:
+        return spec.fallback
+    return name
 
 
 def env_marker(engine: EngineSpec) -> dict[str, Any] | None:

@@ -24,8 +24,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # ref_strategy: "line" = the original line itself is the voice prompt (carries timbre AND the
     # emotion/delivery of that exact line); "char" = best clean reference of the character;
     # "auto" = line when the original is long enough and has a source transcript, else char.
+    # engine: qwen3tts-fast on CUDA when its env exists, else synth falls back to the official qwen3tts
     "tts": {
-        "engine": "qwen3tts",
+        "engine": "qwen3tts-fast",
         "model": None,
         "tier": "auto",
         "ref_strategy": "auto",

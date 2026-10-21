@@ -16,7 +16,7 @@ def test_init_creates_project_registry_and_active(bd, game, home):
     assert data["target_lang"] == "ru" and data["game_name"] == "Low-Budget Repairs"
     assert data["cast"]["policy"] == "main" and data["cast"]["main_share"] == 0.7
     assert data["translation"]["mode"] == "auto"
-    assert data["tts"]["engine"] == "qwen3tts" and data["tts"]["ref_strategy"] == "auto"
+    assert data["tts"]["engine"] == "qwen3tts-fast" and data["tts"]["ref_strategy"] == "auto"
     assert Path(data["game_dir"]) == game.resolve()
     progress = read_json(root / layout.PROGRESS)
     assert progress["init"]["status"] == "done"

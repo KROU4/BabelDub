@@ -29,6 +29,7 @@ from babeldub.envsetup.catalog import (
     is_model_downloaded,
     load_catalog,
     model_dir,
+    runnable_engine,
     tier_for_vram,
 )
 from babeldub.envsetup.probe import (
@@ -71,11 +72,15 @@ def _try_project(project_arg: str | None) -> Project | None:
         return None
 
 
-def default_engines(catalog: Catalog, project: Project | None, lang: str | None) -> list[str]:
-    """TTS engine of the project (or the first engine that speaks its language) + the QC engine."""
+def default_engines(catalog: Catalog, project: Project | None, lang: str | None, tier: str) -> list[str]:
+    """TTS engine of the project (or the first engine that speaks its language) + the QC engine.
+
+    A CUDA-only engine (qwen3tts-fast) is replaced by its fallback on the cpu tier."""
     tts = project.setting("tts", "engine") if project else None
     if tts not in catalog.engines or (lang and not catalog.engines[tts].supports(lang)):
-        tts = engine_for_language(lang, catalog) if lang else "qwen3tts"
+        tts = engine_for_language(lang or "en", catalog)
+    if tts:
+        tts = runnable_engine(tts, tier, catalog)
     names = [n for n in (tts, "qc") if n and n in catalog.engines and catalog.engines[n].env]
     return list(dict.fromkeys(names))
 
@@ -108,7 +113,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     tools = tools_report()
     env_engines = [e for e in catalog.engines.values() if e.env]
     envs = envs_report(env_engines, import_check=not args.no_import_check)
-    wanted_engines = default_engines(catalog, project, lang)
+    wanted_engines = default_engines(catalog, project, lang, tier)
     wanted_models = auto_models(catalog, wanted_engines, tier, lang)
     downloaded = [m.name for m in catalog.models if is_model_downloaded(m)]
     free_gb = free_space_gb(home)
@@ -210,7 +215,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
     accepted = _accepted(args)
     explicit = bool(args.engines or args.models or args.tools)
 
-    base_engines = default_engines(catalog, project, lang)
+    base_engines = default_engines(catalog, project, lang, tier)
     engines = _csv(args.engines) if args.engines else ([] if explicit else base_engines)
     for name in engines:
         catalog.engine(name)  # validates the name

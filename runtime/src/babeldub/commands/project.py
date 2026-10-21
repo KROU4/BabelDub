@@ -34,7 +34,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "cast.policy": CAST_POLICIES,
     "translation.mode": TRANSLATION_MODES,
     "tts.ref_strategy": REF_STRATEGIES,
-    "tts.engine": ("qwen3tts", "chatterbox", "dummy"),
+    "tts.engine": ("qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}

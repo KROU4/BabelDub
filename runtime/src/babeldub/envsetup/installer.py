@@ -181,6 +181,11 @@ def plan_engine(engine: EngineSpec, tier: str, force: bool = False, import_check
     if python is None or env_dir is None:
         item.action, item.reason, item.size_gb = "skip", "built-in engine, no venv", None
         return item
+    if engine.cuda_only and tier == "cpu":
+        item.action = "blocked"
+        item.reason = "runs on CUDA only: not installed on the cpu tier" + (
+            f" (`synth` uses {engine.fallback} instead)" if engine.fallback else "")
+        return item
     accel = accel_for_tier(tier)
     if not force and python.exists():
         marker = read_json(env_dir / ENV_MARKER, default=None)

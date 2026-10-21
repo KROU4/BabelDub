@@ -40,7 +40,7 @@ Details on why a line prompt carries the emotion, when `char` is needed, and how
 
 ## Step 1. Engine and model
 
-- The default is `tts.engine=qwen3tts` (Qwen3-TTS-12Hz-1.7B-Base, Apache-2.0). Languages: zh, en, ja, ko, de, fr, ru, pt, es, it. The Russian-stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` keeps the hero's voice less faithfully: it is not installed by default and is enabled only explicitly (`references/engines.md`).
+- The default is `tts.engine=qwen3tts-fast`: Qwen3-TTS-12Hz-1.7B-Base (Apache-2.0) through `faster-qwen3-tts` with CUDA graphs, about 7× faster per line than the official package with identical output. Without CUDA or without its env, `synth` uses the official `qwen3tts` and says so in `notes`; `tts.engine=qwen3tts` forces the official package. Languages: zh, en, ja, ko, de, fr, ru, pt, es, it. The Russian-stress fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` keeps the hero's voice less faithfully: it is not installed by default and is enabled only explicitly (`references/engines.md`).
 - For `pl`, `tr` and the other languages of Chatterbox Multilingual V3 (MIT, 23 languages, an inaudible PerTh watermark in every file): `babeldub set tts.engine=chatterbox`, or for one run `babeldub synth --engine chatterbox`.
 - If the engine does not speak the target language, `synth` returns exit code 2 with a hint about which engine to use. If no v0.1 engine fits (for example, `uk`), say so honestly in the report: models with non-commercial licenses (OmniVoice and others) are not part of v0.1.
 - The engine's model is chosen by hardware tier (`tts.tier=auto`). To pick one explicitly, run `babeldub set tts.model=<name from babeldub models list>`, for example `Qwen3-TTS-12Hz-0.6B-Base` when video memory is short.

@@ -60,7 +60,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `compute.device` | `auto` | GPU-first: every neural workload runs on the NVIDIA GPU when present; `cuda` requires a GPU; `cpu` only on the user's explicit request |
 | `translation.mode` | `auto` | `official` if an official translation into the target language exists for ≥ 95 % of the linked voiced lines; otherwise `translate`; the CLI decides in `translate plan` |
 | `cast.policy` | `main` | main characters (`cast.main_share` = 0.7) |
-| `tts.engine` | `qwen3tts` | Qwen3-TTS, Apache-2.0 license |
+| `tts.engine` | `qwen3tts-fast` | Qwen3-TTS (Apache-2.0) through `faster-qwen3-tts` on an NVIDIA GPU; `synth` falls back to the official `qwen3tts` on the CPU or without its env |
 | `tts.model` | `null` | the model is picked by the tier from `babeldub doctor` |
 | `tts.ref_strategy` | `auto` | `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` (the character's best reference) |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |

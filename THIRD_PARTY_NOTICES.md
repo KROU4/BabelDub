@@ -37,13 +37,13 @@ Weights are not part of BabelDub. A model's license also governs the audio it ge
 
 | Model | Purpose | Weights license | Commercial use |
 |---|---|---|---|
-| [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), [0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) (`qwen-tts` package) | voice cloning, default engine | Apache-2.0 | yes |
+| [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base), [0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) (`faster-qwen3-tts` on NVIDIA GPUs, the official `qwen-tts` package otherwise) | voice cloning, default engine | Apache-2.0 | yes |
 | [siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf](https://huggingface.co/siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf) | Russian stress marks for Qwen3-TTS (opt-in, not installed by default) | Apache-2.0 | yes, but the author warns that part of the training texts comes from a dataset without a declared license: check before commercial use |
 | [Chatterbox Multilingual V3](https://huggingface.co/ResembleAI/chatterbox) (Resemble AI) | cloning for pl, tr and other languages | MIT | yes; every file carries an inaudible PerTh watermark |
 | [faster-whisper large-v3-turbo](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo) ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | speech recognition for QA | MIT | yes |
 | [SpeechBrain ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) ([SpeechBrain](https://github.com/speechbrain/speechbrain)) | voice similarity to the original, voice clustering | Apache-2.0 | yes |
 
-Environment packages: `qwen-tts` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1).
+Environment packages: `qwen-tts` (Apache-2.0), `faster-qwen3-tts` (MIT) with `qwen-tts-hf` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1).
 
 ### Models that may appear as options
 

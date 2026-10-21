@@ -13,6 +13,9 @@
 #   worker         script in babeldub/workers run as `<env python> -u <worker>`
 #   languages      ISO 639-1 codes the engine can speak ("*" = any)
 #   size_gb        approximate download size of the venv (torch wheels dominate)
+#   models_of      run the models listed for another engine (same weights, different runtime)
+#   cuda_only      never installed on the cpu tier and never run without CUDA
+#   fallback       engine `synth`/`setup` use instead when a cuda_only engine cannot run
 # models[]:
 #   name           folder under BABELDUB_HOME/models (aliases: older folder names that are recognised)
 #   repo/include   Hugging Face repo and optional file patterns (only these files are downloaded)
@@ -21,6 +24,21 @@
 #   size_gb        download size; vram_gb: approximate peak VRAM during inference
 
 engines:
+  qwen3tts-fast:
+    env: qwen3tts-fast
+    python: "3.12"
+    torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    # transformers 5.20.x breaks the codec ('MimiConfig' object has no attribute 'rope_theta'): keep the pin
+    packages: ["faster-qwen3-tts==0.5.4", "transformers==5.15.1", "soundfile", "numpy"]
+    import: [faster_qwen3_tts, soundfile]
+    worker: tts_qwen3_fast.py
+    size_gb: 4.0
+    languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
+    license: MIT
+    models_of: qwen3tts
+    cuda_only: true
+    fallback: qwen3tts
+    notes: "Default on NVIDIA GPUs: the same Qwen3-TTS models through faster-qwen3-tts (CUDA graphs). RTX 3060 Ti, 1.7B-Base: RTF ~0.52 per line vs ~3.7 (single) / ~1.2-1.4 (batch 4) for qwen-tts, peak VRAM ~4.5 GB, same output for the same seed."
   qwen3tts:
     env: qwen3tts
     python: "3.12"
@@ -31,7 +49,7 @@ engines:
     size_gb: 4.0
     languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
     license: Apache-2.0
-    notes: "Default engine. In-context cloning: ref_audio + ref_text of the original line carry timbre and emotion."
+    notes: "Official qwen-tts package; the engine on the CPU and the fallback of qwen3tts-fast. In-context cloning: ref_audio + ref_text of the original line carry timbre and emotion."
   chatterbox:
     env: chatterbox
     python: "3.12"

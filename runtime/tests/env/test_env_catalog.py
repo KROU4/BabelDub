@@ -16,6 +16,7 @@ from babeldub.envsetup.catalog import (
     model_dir,
     model_for_role,
     parse_catalog,
+    runnable_engine,
     tier_for_vram,
 )
 
@@ -96,9 +97,27 @@ def test_default_model_prefers_general_base():
     assert model_for_role("sv", "cpu", None, cat).name == "spkrec-ecapa-voxceleb"
 
 
+def test_fast_qwen_engine_runs_the_qwen_models_on_cuda_only():
+    cat = load_catalog()
+    fast = cat.engine("qwen3tts-fast")
+    assert fast.worker == "tts_qwen3_fast.py" and fast.cuda_only and fast.fallback == "qwen3tts"
+    assert fast.torch["version"] == "2.8.0" and fast.torch["index"].endswith("/cu128")
+    assert "transformers==5.15.1" in fast.packages  # 5.20.x breaks the codec config
+    assert any(p.startswith("faster-qwen3-tts") for p in fast.packages)
+    assert [m.name for m in cat.models_for_engine("qwen3tts-fast")] == [m.name for m in cat.models_for_engine("qwen3tts")]
+    assert default_model("qwen3tts-fast", "8gb", "ru", cat).name == "Qwen3-TTS-12Hz-1.7B-Base"
+    assert [m.name for m in auto_models(cat, ["qwen3tts-fast"], "8gb", "ru")] == ["Qwen3-TTS-12Hz-1.7B-Base"]
+    assert runnable_engine("qwen3tts-fast", "8gb", cat) == "qwen3tts-fast"
+    assert runnable_engine("qwen3tts-fast", "cpu", cat) == "qwen3tts"
+    assert runnable_engine("chatterbox", "cpu", cat) == "chatterbox"
+    with pytest.raises(BabelDubError):
+        parse_catalog({"engines": {"a": {"env": "a", "fallback": "missing"}}})
+
+
 def test_engine_for_language_and_tiers():
     cat = load_catalog()
-    assert engine_for_language("ru", cat) == "qwen3tts"
+    assert engine_for_language("ru", cat) == "qwen3tts-fast"  # the default on CUDA; synth falls back off CUDA
+    assert engine_for_language("ru", cat, ("qwen3tts", "chatterbox")) == "qwen3tts"
     assert engine_for_language("pl", cat) == "chatterbox"
     assert engine_for_language("uk", cat) is None
     assert tier_for_vram(None) == "cpu"

@@ -60,7 +60,9 @@ from babeldub.text.syllables import SYLLABLE_RATE, count_syllables
 from babeldub.workers.client import GpuLock, WorkerClient, WorkerError
 
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
-ENGINES = ("qwen3tts", "chatterbox", "dummy")
+ENGINES = ("qwen3tts-fast", "qwen3tts", "chatterbox", "dummy")
+# same models and the same output for one seed: a take of one is "done" for the other
+ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
 EDGE_PAD_S = 0.03  # silence kept around speech when trimming synthesized audio
 DEFAULT_LEVEL_LUFS = -20.0  # loudness target when the original audio is missing
@@ -69,13 +71,19 @@ DEFAULT_BATCH = 4  # lines per generate call when the worker supports synth_batc
 DEFAULT_SPEECH_RATE = 5.0  # syllables/s for the length estimate when a language has no measured rate
 CAP_MIN_S = 6.0  # generation cap never below this many seconds of audio
 ICL_RATE_RANGE = (1.2, 8.5)  # syl/s of a line transcript over its original speech that fit an ICL prompt
-TOKEN_CAP_ENGINES = ("qwen3tts", "dummy")  # engines that take params.max_new_tokens
-TRANSCRIPT_ENGINES = ("qwen3tts", "dummy")  # engines whose voice prompt uses ref_text (ICL vs timbre only)
+TOKEN_CAP_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # engines that take params.max_new_tokens
+TRANSCRIPT_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # voice prompt uses ref_text (ICL vs timbre only)
 SYNTH_SCHEMA = "babeldub.synth_results/1"
 POST_SCHEMA = "babeldub.post/1"
 
 # Fallback when data/models.yaml or babeldub.envsetup is unavailable.
 BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
+    "qwen3tts-fast": {
+        "env": "qwen3tts-fast", "worker": "tts_qwen3_fast.py",
+        "languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
+        "model": "Qwen3-TTS-12Hz-1.7B-Base", "repo": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        "cuda_only": True, "fallback": "qwen3tts",
+    },
     "qwen3tts": {
         "env": "qwen3tts", "worker": "tts_qwen3.py",
         "languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
@@ -94,6 +102,10 @@ BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
 # ---- small helpers -----------------------------------------------------------------------
 def _primary(lang: str | None) -> str:
     return (lang or "").replace("_", "-").split("-")[0].lower()
+
+
+def _family(engine: Any) -> str:
+    return ENGINE_FAMILY.get(str(engine), str(engine))
 
 
 def _num(value: float | None, digits: int = 3) -> float | None:
@@ -207,14 +219,36 @@ def _resolve_model(engine: str, wanted: str | None, lang: str, tier: str, catalo
     return repo, name, "hf"
 
 
+def _engine_spec(engine: str, catalog: Any | None) -> dict[str, Any]:
+    spec = dict(BUILTIN_ENGINES[engine])
+    if catalog is not None and engine in getattr(catalog, "engines", {}):
+        cat = catalog.engines[engine]
+        spec.update(env=cat.env, worker=cat.worker or spec["worker"], languages=list(cat.languages),
+                    cuda_only=cat.cuda_only, fallback=cat.fallback)
+    return spec
+
+
+def engine_for_device(engine: str, device: str, catalog: Any | None) -> tuple[str, str | None]:
+    """The engine itself, or its fallback (with a note) when it is CUDA only and cannot run here."""
+    if engine not in BUILTIN_ENGINES:
+        return engine, None
+    spec = _engine_spec(engine, catalog)
+    fallback = spec.get("fallback")
+    if not spec.get("cuda_only") or not fallback:
+        return engine, None
+    if not str(device).startswith("cuda"):
+        return fallback, f"{engine} runs on CUDA only: using the official {fallback} engine on {device}"
+    if spec.get("env") and not env_python(spec["env"]).exists():
+        return fallback, (f"{engine} env is not installed (`babeldub setup --engines {engine}`): "
+                          f"using the official {fallback} engine")
+    return engine, None
+
+
 def resolve_engine(project: Project, engine: str, catalog: Any | None = None, check_env: bool = True) -> EngineChoice:
     """Engine venv, worker script and model for this project; raises EXIT_ENV if the venv is missing."""
     if engine not in ENGINES:
         raise BabelDubError(f"unknown TTS engine '{engine}'", code=EXIT_USAGE, known=list(ENGINES))
-    spec = dict(BUILTIN_ENGINES[engine])
-    if catalog is not None and engine in getattr(catalog, "engines", {}):
-        cat = catalog.engines[engine]
-        spec.update(env=cat.env, worker=cat.worker or spec["worker"], languages=list(cat.languages))
+    spec = _engine_spec(engine, catalog)
     lang = _primary(project.target_lang)
     languages = [str(x) for x in spec["languages"]]
     if "*" not in languages and lang not in languages:
@@ -540,7 +574,7 @@ def _plan_synth(project: Project, args: argparse.Namespace, engine: EngineChoice
             # attempt stands (it may come from a QA reref), new prompts need --force or a decision
             same = (
                 latest_ok.get("text") == text
-                and latest_ok.get("engine") == engine.name
+                and _family(latest_ok.get("engine")) == _family(engine.name)
                 and latest_ok.get("model") == engine.model_name
                 and _primary(latest_ok.get("lang")) == _primary(target)
             )
@@ -607,14 +641,21 @@ def _engine_params(project: Project, engine: EngineChoice, job: Job) -> dict[str
 def cmd_synth(args: argparse.Namespace) -> int:
     project = Project.load(args.project)
     catalog = _catalog()
-    engine_name = args.engine or str(project.setting("tts", "engine", "qwen3tts"))
+    # GPU-first (contract §1.6): tts.device / --device override, else compute.device (auto -> cuda if present)
+    device = args.device or project.setting("tts", "device") or resolve_device(project.setting("compute", "device", "auto"))
+    engine_name = args.engine or str(project.setting("tts", "engine", "qwen3tts-fast"))
+    notes: list[str] = []
+    engine_name, fallback_note = engine_for_device(engine_name, str(device), catalog)
+    if fallback_note:
+        notes.append(fallback_note)
     engine = resolve_engine(project, engine_name, catalog, check_env=not args.dry_run)
+    if engine.name == "dummy":
+        device = "cpu"
     jobs, skipped, attention = _plan_synth(project, args, engine)
     planned = len(jobs)
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
     by_ref = Counter(j.ref_mode for j in jobs)
-    notes: list[str] = []
     if int(project.setting("tts", "best_of", 1) or 1) > 1:
         notes.append("tts.best_of>1 is not used by synth v0.1: QA regenerates weak lines via decisions + --attempt-next")
 
@@ -645,10 +686,6 @@ def cmd_synth(args: argparse.Namespace) -> int:
     _ensure_header(results_path, SYNTH_SCHEMA)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     log_path = project.path(layout.LOGS_DIR, f"synth-{stamp}.log")
-    # GPU-first (contract §1.6): tts.device / --device override, else compute.device (auto -> cuda if present)
-    device = args.device or project.setting("tts", "device") or resolve_device(project.setting("compute", "device", "auto"))
-    if engine.name == "dummy":
-        device = "cpu"
     device_note: str | None = None
     lock = GpuLock(project.path(layout.GPU_LOCK), owner=f"synth:{engine.name}", wait_s=args.wait_lock)
     run = _SynthRun(project, engine, results_path, cache_dir)

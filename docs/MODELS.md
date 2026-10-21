@@ -16,35 +16,37 @@ This page explains which models v0.1 uses for each task and hardware tier, their
 
 | Task | Engine (env) | Model | Languages | Weights license | Download | VRAM (catalog estimate) | Installed by default on tiers |
 |---|---|---|---|---|---|---|---|
-| Voice cloning, default | `qwen3tts` | [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | 4.54 GB | ~6 GB | 8gb, 12gb, 24gb |
-| Voice cloning, smaller fallback | `qwen3tts` | [Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) | same 10 languages | Apache-2.0 | 2.52 GB | ~4 GB | cpu (runs on every tier) |
-| Russian stress marks (**opt-in**) | `qwen3tts` | [qwen3-tts-12hz-1.7b-ru-stress-cf](https://huggingface.co/siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf) | ru | Apache-2.0, see the caveat below | 4.58 GB | ~6 GB | none: only when set explicitly |
+| Voice cloning, default | `qwen3tts-fast` on NVIDIA GPUs, `qwen3tts` on the CPU | [Qwen3-TTS-12Hz-1.7B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base) | zh, en, ja, ko, de, fr, ru, pt, es, it | Apache-2.0 | 4.54 GB | ~6 GB (measured 4.5–5.5 GB) | 8gb, 12gb, 24gb |
+| Voice cloning, smaller fallback | `qwen3tts-fast` / `qwen3tts` | [Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base) | same 10 languages | Apache-2.0 | 2.52 GB | ~4 GB | cpu (runs on every tier) |
+| Russian stress marks (**opt-in**) | `qwen3tts-fast` / `qwen3tts` | [qwen3-tts-12hz-1.7b-ru-stress-cf](https://huggingface.co/siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf) | ru | Apache-2.0, see the caveat below | 4.58 GB | ~6 GB | none: only when set explicitly |
 | Voice cloning for pl, tr and other languages | `chatterbox` | [chatterbox-multilingual](https://huggingface.co/ResembleAI/chatterbox) (Multilingual V3) | ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh | MIT; every file carries an inaudible PerTh watermark | 3.21 GB | ~7 GB (not verified for V3) | 8gb, 12gb, 24gb |
 | ASR for QA (CER of the dub) | `qc` | [faster-whisper-large-v3-turbo](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo) | any | MIT | 1.62 GB | ~2 GB | every tier |
 | Speaker embeddings: voice similarity, clustering | `qc` | [spkrec-ecapa-voxceleb](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) (SpeechBrain ECAPA-TDNN) | any | Apache-2.0 | 0.09 GB | ~0.5 GB | every tier |
 | Pipeline tests only | `dummy` | none (writes a tone of the expected length) | any | MIT | — | — | — |
 
-Each engine has its own venv in `BABELDUB_HOME/envs/<engine>` because the packages conflict: `qwen3tts` and `qc` use torch 2.8.0 (CUDA 12.8 wheels), `chatterbox` uses torch 2.6.0 (CUDA 12.4 wheels) and another transformers version. Approximate venv sizes: `qwen3tts` 4.0 GB, `chatterbox` 3.5 GB, `qc` 5.0 GB. On GPU tiers `qc` also gets `nvidia-cublas-cu12` and `nvidia-cudnn-cu12==9.*` for faster-whisper.
+Each engine has its own venv in `BABELDUB_HOME/envs/<engine>` because the packages conflict: `qwen3tts`, `qwen3tts-fast` and `qc` use torch 2.8.0 (CUDA 12.8 wheels), `chatterbox` uses torch 2.6.0 (CUDA 12.4 wheels) and another transformers version. `qwen3tts-fast` is `faster-qwen3-tts` 0.5.4 (it pulls `qwen-tts-hf`) with `transformers==5.15.1` pinned: 5.20.2 breaks the codec (`'MimiConfig' object has no attribute 'rope_theta'`). It runs the same model folders as `qwen3tts`. Approximate venv sizes: `qwen3tts` 4.0 GB, `qwen3tts-fast` 4.0 GB, `chatterbox` 3.5 GB, `qc` 5.0 GB. On GPU tiers `qc` also gets `nvidia-cublas-cu12` and `nvidia-cudnn-cu12==9.*` for faster-whisper.
+
+**`qwen3tts-fast` is the default TTS engine** for the 10 Qwen3-TTS languages (`init` writes `tts.engine=qwen3tts-fast`). It needs CUDA: on the `cpu` tier `setup` installs the official `qwen3tts` instead, and `synth` falls back to `qwen3tts` with a note in `notes` when the device is the CPU or the `qwen3tts-fast` env is missing. `tts.engine=qwen3tts` always uses the official package. Takes made by one of the two count as done for the other (same models, same output for the same seed).
 
 The VRAM column is the catalog estimate. The Chatterbox figure (6–7 GB) is a community number for the original English Chatterbox of 2025 and has not been verified for Multilingual V3. On Windows the desktop also takes part of the video memory.
 
 ## Measured on an RTX 3060 Ti (8 GB)
 
-BabelDub's own measurements with the official `qwen-tts` package and Qwen3-TTS-12Hz-1.7B-Base:
+BabelDub's own measurements with Qwen3-TTS-12Hz-1.7B-Base on Low-Budget Repairs lines:
 
-| Mode | RTF |
-|---|---|
-| one line per call | ≈ 4.5 |
-| batches of 3–4 lines | ≈ 1.4–2.1 |
-| batch of 4 lines (`tts.batch_size`, default 4) | ≈ 1.4, peak VRAM ≈ 5.5 GB |
+| Engine (runtime) | Mode | RTF | Peak VRAM |
+|---|---|---|---|
+| `qwen3tts-fast` (`faster-qwen3-tts` 0.5.4, CUDA graphs) | one line per call (it does not batch) | ≈ 0.52 | ≈ 4.5–4.7 GB |
+| `qwen3tts` (official `qwen-tts`) | one line per call | ≈ 3.7–4.5 | ≈ 4.3 GB |
+| `qwen3tts` | batches of 3–4 lines (`tts.batch_size`, default 4) | ≈ 1.2–2.1 | ≈ 5.5 GB |
 
-Peak VRAM (`vram_peak_gb`) across these runs was 4.3–5.5 GB, so the default model and batch fit an 8 GB card. RTF here is generation time divided by the duration of the generated audio (lower is faster; 1.0 is real time). `vram_peak_gb` is PyTorch's peak allocated memory; the process also needs some memory for the CUDA context. Batching wins because generation is dominated by per-step overhead, not by batch width. `synth` prints `rtf` and `vram_peak_gb` for your own GPU, so check them on the pilot.
+The two runtimes give identical audio for the same seed, and the same quality (Whisper CER 0.0 and 0.074 on the same test lines). `qwen3tts-fast` loads in ~15 s including the CUDA-graph warm-up, once per `synth` run. Batches with the official package can be dragged to the token cap by one runaway line (VRAM 7.8 of 8 GB and RTF ~4 in one such batch on this card); the per-line cap and the runaway guard of `synth` limit that. RTF here is generation time divided by the duration of the generated audio (lower is faster; 1.0 is real time). `vram_peak_gb` is PyTorch's peak allocated memory; the process also needs some memory for the CUDA context. `synth` prints `rtf` and `vram_peak_gb` for your own GPU, so check them on the pilot.
 
 Not measured yet: Qwen3-TTS 0.6B, Chatterbox Multilingual V3 and the `qc` worker (faster-whisper large-v3-turbo + ECAPA) on this card. The research estimate for faster-whisper large-v3-turbo in fp16 is about 1.5–2 GB.
 
 Speed notes:
 
-- The official `qwen-tts` package is slow. The `faster-qwen3-tts` accelerator (CUDA Graphs) reaches 1.83× real time for 1.7B and 2.26× for 0.6B on an RTX 4060 under Windows (the accelerator author's numbers). It is a candidate, not part of v0.1: it needs a different transformers version and cannot share the venv.
+- The official `qwen-tts` package is slow; `qwen3tts-fast` (the `faster-qwen3-tts` accelerator with CUDA Graphs) is about 7× faster per line on an RTX 3060 Ti (table above; the accelerator author reports 1.83× real time for 1.7B and 2.26× for 0.6B on an RTX 4060 under Windows). It needs a different transformers version, so it has its own venv.
 - FlashAttention 2 is not shipped for Windows; the workers use `sdpa`.
 - Quality reported by the Qwen3-TTS authors (MiniMax Multilingual set): Russian WER 3.21 and SIM 0.792 for 1.7B, 4.46 and 0.781 for 0.6B. These are the model authors' numbers, not an independent measurement.
 
@@ -52,12 +54,12 @@ Speed notes:
 
 `doctor` picks the tier from the VRAM of the largest NVIDIA GPU (`tier_for_vram`): no CUDA GPU or under 5.5 GB → `cpu`; under 11 GB → `8gb`; under 20 GB → `12gb`; otherwise `24gb`. Override it with `tts.tier` or `setup --tier`.
 
-`babeldub setup` without flags installs the project's TTS engine and `qc`, the models marked as default for the tier and the target language, and vgmstream. Chatterbox is installed only when it is the project's engine (for example, for Polish or Turkish) or when you ask for it with `--engines chatterbox`.
+`babeldub setup` without flags installs the project's TTS engine and `qc`, the models marked as default for the tier and the target language, and vgmstream. On the `cpu` tier the CUDA-only `qwen3tts-fast` is replaced by `qwen3tts` (an explicit `--engines qwen3tts-fast` is `blocked` there). Chatterbox is installed only when it is the project's engine (for example, for Polish or Turkish) or when you ask for it with `--engines chatterbox`.
 
 | Tier | Installed by default | What to expect |
 |---|---|---|
-| `cpu` | Qwen3-TTS 0.6B-Base, faster-whisper large-v3-turbo, ECAPA | Works, but many times slower than real time: warn the user that a whole game can take hours (not measured). A small GPU in this tier still gets CUDA torch, and every model runs on it |
-| `8gb` (the main scenario, e.g. RTX 3060 Ti) | Qwen3-TTS 1.7B-Base (or Chatterbox V3 for its languages), faster-whisper, ECAPA | One model on the GPU at a time; on `CUDA out of memory` switch to 0.6B (`babeldub set tts.model=Qwen3-TTS-12Hz-0.6B-Base`) |
+| `cpu` | `qwen3tts` with Qwen3-TTS 0.6B-Base, faster-whisper large-v3-turbo, ECAPA | Works, but many times slower than real time: warn the user that a whole game can take hours (not measured). A small GPU in this tier still gets CUDA torch, and every model runs on it |
+| `8gb` (the main scenario, e.g. RTX 3060 Ti) | `qwen3tts-fast` with Qwen3-TTS 1.7B-Base (or Chatterbox V3 for its languages), faster-whisper, ECAPA | One model on the GPU at a time; on `CUDA out of memory` switch to 0.6B (`babeldub set tts.model=Qwen3-TTS-12Hz-0.6B-Base`) |
 | `12gb` | the same | Headroom; a second engine for comparison (VoxCPM2) is a candidate |
 | `24gb` (16–24 GB and more) | the same | Candidates: VoxCPM2, FireRedTTS3, MOSS-TTS with a duration parameter |
 
@@ -65,8 +67,8 @@ Speed notes:
 
 | Target language | Engine | Note |
 |---|---|---|
-| ru | `qwen3tts` (1.7B-Base) | `ru-stress-cf` only when set explicitly (see below) |
-| en, de, fr, es, pt, it, zh, ja, ko | `qwen3tts` | Apache-2.0 |
+| ru | `qwen3tts-fast` (1.7B-Base; `qwen3tts` without CUDA) | `ru-stress-cf` only when set explicitly (see below) |
+| en, de, fr, es, pt, it, zh, ja, ko | `qwen3tts-fast` (`qwen3tts` without CUDA) | Apache-2.0 weights, MIT runtime |
 | pl, tr, and ar, da, el, fi, he, hi, ms, nl, no, sv, sw | `chatterbox` | MIT; tell the user about the watermark. When the reference is in another language than the target, the worker sets `cfg_weight=0` itself (upstream advice) |
 | uk and other languages | none in v0.1 | `babeldub init` returns code 3; there is no permissively licensed engine for them yet (see the candidates) |
 
@@ -107,8 +109,9 @@ There is no ready speech-to-speech translation that keeps the voice for Russian 
 
 ```text
 babeldub doctor                         GPU, VRAM, driver, tier, installed envs and models
-babeldub setup [--engines qwen3tts,qc] [--tier 8gb] [--lang ru] [--dry-run]
+babeldub setup [--engines qwen3tts-fast,qc] [--tier 8gb] [--lang ru] [--dry-run]
 babeldub models list [--engine qwen3tts]
+babeldub set tts.engine=qwen3tts         force the official qwen-tts package (also on a GPU)
 babeldub models fetch <name> [--accept-license <name>]
 babeldub set compute.device=auto        auto | cuda | cpu
 babeldub set tts.engine=chatterbox

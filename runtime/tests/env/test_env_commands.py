@@ -43,12 +43,14 @@ def test_doctor_without_envs_asks_for_setup(bd, machine):
     code, out = bd("doctor")
     assert code == 3 and out["ok"]
     assert out["gpu"]["name"] == GPU["name"] and out["tier"] == "8gb"
-    assert {"env:qwen3tts", "env:qc", "model:Qwen3-TTS-12Hz-1.7B-Base"} <= set(out["to_install"])
+    # with a GPU the default TTS engine is the CUDA-graph runtime of the same Qwen3-TTS models
+    assert {"env:qwen3tts-fast", "env:qc", "model:Qwen3-TTS-12Hz-1.7B-Base"} <= set(out["to_install"])
+    assert "env:qwen3tts" not in out["to_install"]
     assert out["next"].startswith("babeldub setup")
 
 
 def test_doctor_all_ready(bd, machine, home):
-    machine["envs"] = {"qwen3tts": {"status": "ok"}, "qc": {"status": "ok"}}
+    machine["envs"] = {"qwen3tts-fast": {"status": "ok"}, "qc": {"status": "ok"}}
     cat = load_catalog()
     for name in ("Qwen3-TTS-12Hz-1.7B-Base", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"):
         folder = model_dir(cat.model(name))
@@ -64,6 +66,7 @@ def test_doctor_cpu_without_gpu(bd, machine):
     code, out = bd("doctor")
     assert out["tier"] == "cpu" and out["gpu"] is None
     assert "model:Qwen3-TTS-12Hz-0.6B-Base" in out["to_install"]
+    assert "env:qwen3tts" in out["to_install"] and "env:qwen3tts-fast" not in out["to_install"]  # CUDA only
     assert any("no NVIDIA GPU" in w for w in out["warnings"])
 
 
@@ -71,7 +74,8 @@ def test_setup_dry_run_plan(bd, machine, home):
     code, out = bd("setup", "--dry-run")
     assert code == 0 and out["dry_run"]
     planned = {(i["kind"], i["name"]): i for i in out["planned"]}
-    assert ("engine", "qwen3tts") in planned and ("engine", "qc") in planned
+    assert ("engine", "qwen3tts-fast") in planned and ("engine", "qc") in planned
+    assert ("engine", "qwen3tts") not in planned
     assert ("model", "Qwen3-TTS-12Hz-1.7B-Base") in planned
     assert ("model", "qwen3-tts-12hz-1.7b-ru-stress-cf") not in planned  # language unknown without a project
     assert planned[("model", "Qwen3-TTS-12Hz-1.7B-Base")]["license"] == "Apache-2.0"
@@ -101,6 +105,16 @@ def test_setup_polish_project_picks_chatterbox(bd, machine, tmp_path):
     code, out = bd("setup", "--dry-run", "--tier", "12gb")
     names = [i["name"] for i in out["planned"]]
     assert "chatterbox" in names and "chatterbox-multilingual" in names and "qwen3tts" not in names
+
+
+def test_setup_never_installs_the_cuda_only_engine_on_the_cpu_tier(bd, machine):
+    code, out = bd("setup", "--dry-run", "--tier", "cpu")
+    engines = {i["name"]: i for i in out["planned"] if i["kind"] == "engine"}
+    assert set(engines) == {"qwen3tts", "qc"} and "Qwen3-TTS-12Hz-0.6B-Base" in [i["name"] for i in out["planned"]]
+    code, out = bd("setup", "--dry-run", "--tier", "cpu", "--engines", "qwen3tts-fast", "--models", "none")
+    (item,) = out["planned"]
+    assert code == 3 and item["action"] == "blocked" and "CUDA only" in item["reason"]
+    assert out["blocked"] == ["qwen3tts-fast"]
 
 
 def test_setup_only_tools(bd, machine, monkeypatch):

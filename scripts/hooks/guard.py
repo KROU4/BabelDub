@@ -964,7 +964,7 @@ def session_summary(home: Path) -> list[str]:
         f"Project folder: {root}",
         f"Game folder (read-only until `babeldub install`): {project.get('game_dir', '?')}",
         "Stages: " + " · ".join(marks),
-        f"Voice: {tts.get('engine', 'qwen3tts')}, ref_strategy={tts.get('ref_strategy', 'auto')} — dubbed in the "
+        f"Voice: {tts.get('engine', 'qwen3tts-fast')}, ref_strategy={tts.get('ref_strategy', 'auto')} — dubbed in the "
         "original hero's voice (the original line is the voice prompt).",
         f"Next step: {next_step(progress)}.",
         "Continue with the babeldub-localize skill and talk to the user in their language; "
