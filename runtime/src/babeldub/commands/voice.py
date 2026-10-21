@@ -1239,7 +1239,9 @@ def _post_line(
     except ValueError as exc:  # silent synthesis
         raise BabelDubError(str(exc)) from exc
     fixed = bool(line.get("fixed_length"))
-    over = not fit.fits if fixed else fit.ratio > settings["max_duration_ratio"]
+    # the same limits as QA's duration check
+    over = (fit.ratio > 1.0 + settings["fixed_length_tolerance"] or not fit.fits) if fixed \
+        else fit.ratio > settings["max_duration_ratio"]
     out_path = project.path(layout.POST_DIR, f"{_line_uid(line)}.wav")
     write_wav(out_path, fit.audio, fit.sr, subtype="PCM_16")
     frames = fit.audio.shape[0]
@@ -1263,6 +1265,7 @@ def post_settings(project: Project) -> dict[str, float]:
         "tempo_min": float(project.setting("post", "tempo_min", 0.93)),
         "tempo_max": float(project.setting("post", "tempo_max", 1.2)),
         "tolerance": float(project.setting("post", "tolerance", 0.03)),
+        "fixed_length_tolerance": float(project.setting("post", "fixed_length_tolerance", 0.03)),
         "true_peak_db": float(project.setting("post", "true_peak_db", -1.0)),
         "max_duration_ratio": float(project.setting("qa", "max_duration_ratio", 1.35)),
     }
