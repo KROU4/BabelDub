@@ -138,6 +138,7 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     assert len(list((root / layout.VC_DIR / "Zbyszek" / "dataset").glob("*.wav"))) == 3
     calls = (applio / "calls.log").read_text(encoding="utf-8").splitlines()
     assert [c.split()[0] for c in calls] == ["preprocess", "extract", "train", "index"]
+    assert not (applio / "logs" / meta["applio_name"]).exists()  # training leftovers are removed
     assert "--sample-rate 40000" in calls[0] and "--f0-method rmvpe" in calls[1] and "--total-epoch 2" in calls[2]
     code, out = run(capsys, root, "vc", "train", "--chars", "Zbyszek")
     assert out["skipped"] == ["Zbyszek"] and out["trained"] == []

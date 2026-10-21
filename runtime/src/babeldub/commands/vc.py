@@ -235,6 +235,7 @@ def _train_one(project: Project, python: Path, applio: Path, cid: str, data: lis
         "files": len(data), "minutes": round(sum(float((ln.get("audio") or {}).get("dur_s") or 0) for ln, _ in data) / 60, 2),
         "source_pth": pth.name, "source_index": index.name, "trained": now_iso(), "log": project.rel(log),
     })
+    shutil.rmtree(work, ignore_errors=True)  # ~1.4 GB of G/D checkpoints, only useful to resume training
     return {"char_id": cid}
 
 
