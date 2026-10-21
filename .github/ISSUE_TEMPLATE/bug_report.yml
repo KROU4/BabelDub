@@ -1,0 +1,114 @@
+name: Ошибка
+description: Что-то работает не так, как описано в документации
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что сообщаете об ошибке. **Не прикладывайте файлы игры** (банки, архивы, аудио реплик, таблицы текстов): их нельзя распространять. Хватит вывода команд и путей.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Кратко опишите проблему и что вы ожидали увидеть.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      description: Команды или запрос агенту, после которых появляется ошибка.
+      placeholder: |
+        1. babeldub init "D:/Games/MyGame" --lang ru
+        2. babeldub scan
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Вывод команды
+      description: JSON, который напечатала команда `babeldub`, и код выхода. Пути с именем пользователя можно заменить на `<user>`.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия BabelDub
+      description: Вывод `babeldub --version`
+      placeholder: babeldub 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: Хост агента
+      options:
+        - Claude Code
+        - Codex CLI / ChatGPT
+        - Gemini CLI
+        - Antigravity
+        - Cursor
+        - GitHub Copilot
+        - OpenCode
+        - Веб-чат (claude.ai, ChatGPT)
+        - Без агента (только CLI)
+        - Другой
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Стадия
+      options:
+        - doctor / setup (окружение, модели)
+        - init / status
+        - scan / extract / link (разбор игры)
+        - cast (персонажи, референсы)
+        - translate / batch (перевод)
+        - synth / post (озвучка)
+        - qa (проверка качества)
+        - build / verify (сборка)
+        - install / uninstall / reapply (установка и откат)
+        - скиллы, агенты, хуки, установка плагина
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Окружение
+      description: Вывод `babeldub doctor --pretty` (ОС, GPU, VRAM, драйвер, найденные инструменты).
+      render: json
+
+  - type: input
+    id: game
+    attributes:
+      label: Игра и движок
+      description: Название, магазин и версия игры, движок и аудио-middleware, если известны.
+      placeholder: Low-Budget Repairs (Steam, build 1.0.3), Unity + FMOD
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи
+      description: Последние строки из `<проект>/logs/` или stderr. Без содержимого файлов игры.
+      render: text
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: Я не прикладываю файлы игры, аудио реплик или синтезированные голоса актёров.
+          required: true
+        - label: Я проверил, что такой ошибки ещё нет в issues.
+          required: true

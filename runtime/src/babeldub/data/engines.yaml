@@ -1,0 +1,336 @@
+# Engine, middleware, text-system and anti-cheat signatures for `babeldub scan` (recon/detect.py).
+#
+# Each entry has `signals`; a matched signal adds its weight `w` (default 1) to the entry score.
+# An entry is reported when its score reaches `min_score` (default 2). The engine with the
+# highest score wins; middleware, text systems and anti-cheat are reported when they reach it.
+#
+# Signal kinds (all matching is case-insensitive):
+#   file:  exact file name anywhere in the bounded walk           {file: UnityPlayer.dll}
+#   name:  glob on the file name                                   {name: "fmod*.dll"}
+#   dir:   exact directory name (or glob)                          {dir: renpy}
+#   path:  glob on the POSIX relpath, '*' stays inside one folder {path: "*_Data/globalgamemanagers"}
+#   dirpath: same as path, for directories                         {dirpath: "game/tl"}
+#   ext:   file extension present                                  {ext: .bank}
+#   magic: first bytes of files matching a name glob               {magic: {name: "*.pck", ascii: GDPC}}
+#   tail:  last bytes of files matching a name glob                {tail: {name: "*.exe", ascii: GDPC}}
+#
+# recon_ref -> skills/babeldub-recon/references/<recon_ref>.md   (engines/*, audio/*, text/*)
+# pack_ref  -> skills/babeldub-pack/references/formats/<pack_ref>.md
+# `{field}` in a ref is filled from detected info (e.g. Unity backend: mono | il2cpp).
+
+version: 1
+
+engines:
+  unity:
+    name: Unity
+    min_score: 4
+    recon_ref: engines/unity
+    pack_ref: unity-addressables
+    signals:
+      - {path: "*_data/globalgamemanagers", w: 4}
+      - {path: "*_data/data.unity3d", w: 4}
+      - {file: unityplayer.dll, w: 4}
+      - {file: unityplayer.so, w: 4}
+      - {path: "*_data/il2cpp_data/metadata/global-metadata.dat", w: 2}
+      - {path: "*_data/managed/assembly-csharp.dll", w: 2}
+      - {path: "*_data/managed/unityengine.dll", w: 2}
+      - {file: gameassembly.dll, w: 1}
+      - {file: unitycrashhandler64.exe, w: 1}
+  unreal:
+    name: Unreal Engine 4/5
+    min_score: 3
+    recon_ref: engines/unreal
+    pack_ref: unreal
+    signals:
+      - {path: "*/content/paks/*.pak", w: 3}
+      - {ext: .utoc, w: 2}
+      - {ext: .ucas, w: 2}
+      - {name: "*-win64-shipping.exe", w: 3}
+      - {name: "*-wingdk-shipping.exe", w: 3}
+      - {name: "*-shipping.exe", w: 1}
+      - {dir: engine, w: 1}
+      - {dirpath: "engine/binaries", w: 2}
+      - {dirpath: "*/binaries/win64", w: 1}
+      - {ext: .uasset, w: 2}
+      - {ext: .locres, w: 1}
+  godot:
+    name: Godot
+    min_score: 3
+    recon_ref: engines/godot
+    pack_ref: godot
+    signals:
+      - {magic: {name: "*.pck", ascii: GDPC}, w: 4}
+      - {tail: {name: "*.exe", ascii: GDPC}, w: 4}
+      - {tail: {name: "*.x86_64", ascii: GDPC}, w: 4}
+      - {file: project.godot, w: 3}
+      - {file: project.binary, w: 3}
+      - {dir: .godot, w: 2}
+  renpy:
+    name: "Ren'Py"
+    min_score: 3
+    recon_ref: engines/renpy
+    pack_ref: renpy
+    signals:
+      - {dir: renpy, w: 2}
+      - {path: "renpy/__init__.py", w: 2}
+      - {path: "renpy/__init__.pyc", w: 2}
+      - {path: "game/*.rpa", w: 3}
+      - {ext: .rpyc, w: 2}
+      - {ext: .rpy, w: 1}
+      - {ext: .rpa, w: 1}
+      - {path: "game/script_version.txt", w: 1}
+      - {dirpath: "lib/py*", w: 1}
+  rpgmaker:
+    name: RPG Maker
+    min_score: 3
+    recon_ref: engines/rpgmaker
+    signals:
+      - {path: "www/js/rpg_core.js", w: 4}
+      - {path: "js/rmmz_core.js", w: 4}
+      - {path: "js/rpg_core.js", w: 3}
+      - {path: "www/data/system.json", w: 2}
+      - {path: "data/system.json", w: 1}
+      - {file: game.rgss3a, w: 4}
+      - {file: game.rgss2a, w: 4}
+      - {file: game.rgssad, w: 4}
+      - {name: "rgss*.dll", w: 3}
+      - {ext: .rpgmvo, w: 2}
+      - {ext: .rpgmvp, w: 1}
+      - {ext: .ogg_, w: 1}
+  gamemaker:
+    name: GameMaker
+    min_score: 3
+    recon_ref: engines/gamemaker
+    signals:
+      - {file: data.win, w: 4}
+      - {file: game.unx, w: 4}
+      - {file: game.ios, w: 4}
+      - {name: "audiogroup*.dat", w: 2}
+      - {file: options.ini, w: 1}
+  source:
+    name: Source
+    min_score: 3
+    recon_ref: engines/source
+    signals:
+      - {file: gameinfo.txt, w: 3}
+      - {name: "*_dir.vpk", w: 2}
+      - {file: hl2.exe, w: 2}
+      - {path: "bin/engine.dll", w: 2}
+      - {path: "*/resource/closecaption_*.dat", w: 1}
+  source2:
+    name: Source 2
+    min_score: 3
+    recon_ref: engines/source
+    signals:
+      - {file: gameinfo.gi, w: 4}
+      - {path: "game/bin/win64/*.exe", w: 1}
+      - {ext: .vpk, w: 1}
+  bethesda:
+    name: Bethesda Creation Engine
+    min_score: 3
+    recon_ref: engines/bethesda
+    signals:
+      - {path: "data/*.esm", w: 3}
+      - {path: "data/*.bsa", w: 2}
+      - {path: "data/*.ba2", w: 2}
+      - {dirpath: "data/sound/voice", w: 2}
+      - {ext: .fuz, w: 1}
+      - {dirpath: "data/strings", w: 1}
+  cryengine:
+    name: CryEngine
+    min_score: 3
+    recon_ref: engines/other
+    signals:
+      - {file: crysystem.dll, w: 4}
+      - {name: "cryrender*.dll", w: 2}
+      - {path: "engine/shaders.pak", w: 2}
+      - {path: "engine/engine.pak", w: 2}
+      - {dir: gamesdk, w: 1}
+      - {file: system.cfg, w: 1}
+  xna:
+    name: XNA / FNA / MonoGame
+    min_score: 3
+    recon_ref: engines/other
+    signals:
+      - {path: "content/*.xnb", w: 3}
+      - {ext: .xnb, w: 2}
+      - {ext: .xwb, w: 2}
+      - {ext: .xsb, w: 1}
+      - {ext: .xgs, w: 1}
+      - {file: monogame.framework.dll, w: 3}
+      - {file: fna.dll, w: 3}
+      - {name: "microsoft.xna.framework*.dll", w: 3}
+  electron:
+    name: Electron / NW.js / HTML5
+    min_score: 3
+    recon_ref: engines/other
+    signals:
+      - {path: "resources/app.asar", w: 4}
+      - {path: "resources/app/package.json", w: 3}
+      - {file: nw.dll, w: 2}
+      - {file: package.nw, w: 3}
+      - {file: libcef.dll, w: 1}
+      - {path: "www/index.html", w: 1}
+  love2d:
+    name: LÖVE (Love2D)
+    min_score: 3
+    recon_ref: engines/other
+    signals:
+      - {file: love.dll, w: 3}
+      - {ext: .love, w: 3}
+      - {file: main.lua, w: 1}
+      - {file: lua51.dll, w: 1}
+  telltale:
+    name: Telltale Tool
+    min_score: 3
+    recon_ref: engines/other
+    signals:
+      - {ext: .ttarch2, w: 4}
+      - {ext: .ttarch, w: 4}
+
+middleware:
+  fmod:
+    name: FMOD Studio
+    min_score: 2
+    recon_ref: audio/fmod
+    pack_ref: fmod
+    version_from: ["fmodstudio.dll", "fmodstudio64.dll", "fmod.dll", "fmod64.dll", "fmodstudiol.dll"]
+    signals:
+      - {ext: .bank, w: 2}
+      - {name: "*.strings.bank", w: 2}
+      - {ext: .fsb, w: 2}
+      - {name: "fmod*.dll", w: 2}
+      - {name: "libfmod*.so", w: 2}
+      - {dir: fmod, w: 1}
+  wwise:
+    name: Audiokinetic Wwise
+    min_score: 2
+    recon_ref: audio/wwise
+    pack_ref: wwise
+    version_from: ["aksoundengine.dll", "aksoundengine64.dll", "aksoundengineplugin.dll"]
+    signals:
+      - {ext: .bnk, w: 2}
+      - {ext: .wem, w: 2}
+      - {magic: {name: "*.pck", ascii: AKPK}, w: 3}
+      - {name: "aksoundengine*.dll", w: 3}
+      - {name: "libaksoundengine*.so", w: 3}
+      - {dir: generatedsoundbanks, w: 2}
+      - {file: soundbanksinfo.xml, w: 2}
+      - {file: soundbanksinfo.json, w: 2}
+  criware:
+    name: CRIWARE (ADX2 / Sofdec)
+    min_score: 2
+    recon_ref: audio/criware
+    signals:
+      - {ext: .acb, w: 2}
+      - {ext: .awb, w: 2}
+      - {ext: .cpk, w: 2}
+      - {ext: .usm, w: 1}
+      - {name: "cri_*.dll", w: 2}
+      - {name: "criware*.dll", w: 2}
+      - {name: "cri_ware_unity.dll", w: 2}
+  bink:
+    name: RAD Bink Video
+    min_score: 2
+    recon_ref: audio/video
+    signals:
+      - {ext: .bk2, w: 2}
+      - {ext: .bik, w: 2}
+      - {name: "bink2*.dll", w: 2}
+      - {name: "binkw*.dll", w: 2}
+
+text_systems:
+  unity-localization:
+    name: Unity Localization (Addressables)
+    min_score: 2
+    recon_ref: text/unity-localization
+    pack_ref: unity-addressables
+    signals:
+      - {name: "localization-string-tables-*", w: 2}
+      - {name: "localization-assets-shared*", w: 2}
+      - {name: "localization-locales*", w: 1}
+  unreal-locres:
+    name: Unreal .locres
+    min_score: 1
+    recon_ref: text/unreal-locres
+    pack_ref: unreal
+    signals:
+      - {ext: .locres, w: 1}
+  renpy-tl:
+    name: "Ren'Py translations (game/tl)"
+    min_score: 1
+    recon_ref: text/renpy
+    pack_ref: renpy
+    signals:
+      - {dirpath: "game/tl", w: 1}
+  source-closecaption:
+    name: Source closecaption
+    min_score: 1
+    recon_ref: engines/source
+    signals:
+      - {name: "closecaption_*.txt", w: 1}
+      - {name: "closecaption_*.dat", w: 1}
+  bethesda-strings:
+    name: Bethesda .STRINGS
+    min_score: 1
+    recon_ref: engines/bethesda
+    signals:
+      - {ext: .strings, w: 1}
+      - {ext: .dlstrings, w: 1}
+      - {ext: .ilstrings, w: 1}
+  gettext:
+    name: gettext .po/.mo
+    min_score: 1
+    recon_ref: text/generic
+    signals:
+      - {ext: .po, w: 1}
+      - {ext: .mo, w: 1}
+  godot-translation:
+    name: Godot translations
+    min_score: 1
+    recon_ref: text/godot
+    pack_ref: godot
+    signals:
+      - {ext: .translation, w: 1}
+
+anticheat:
+  easyanticheat:
+    name: Easy Anti-Cheat
+    min_score: 1
+    signals:
+      - {dir: easyanticheat, w: 1}
+      - {dir: "easyanticheat_eos*", w: 1}
+      - {name: "easyanticheat*.exe", w: 1}
+      - {name: "easyanticheat*.sys", w: 1}
+      - {name: "start_protected_game.exe", w: 1}
+  battleye:
+    name: BattlEye
+    min_score: 1
+    signals:
+      - {dir: battleye, w: 1}
+      - {name: "beservice*.exe", w: 1}
+      - {name: "beclient*.dll", w: 1}
+  vanguard:
+    name: Riot Vanguard
+    min_score: 1
+    signals:
+      - {file: vgk.sys, w: 1}
+      - {file: vgc.exe, w: 1}
+  gameguard:
+    name: nProtect GameGuard
+    min_score: 1
+    signals:
+      - {dir: gameguard, w: 1}
+      - {file: gameguard.des, w: 1}
+  xigncode:
+    name: XIGNCODE3
+    min_score: 1
+    signals:
+      - {dir: xigncode, w: 1}
+      - {name: "x3.xem", w: 1}
+  kernel-driver:
+    name: kernel driver next to the game (*.sys)
+    min_score: 1
+    signals:
+      - {path: "*.sys", w: 1}
+      - {path: "*/*.sys", w: 1}

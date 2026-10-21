@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  UV_PYTHON: "3.12"
+
+jobs:
+  test:
+    name: Tests and checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: runtime/uv.lock
+
+      - name: Install the runtime with dev tools
+        run: uv sync --project runtime --locked --extra dev
+
+      - name: Ruff
+        run: |
+          uv run --project runtime ruff check runtime
+          uv run --project runtime ruff check --config runtime/pyproject.toml scripts
+
+      - name: Pytest (runtime)
+        run: uv run --project runtime pytest runtime/tests -q
+
+      - name: Pytest (scripts and hooks)
+        run: uv run --project runtime pytest scripts -q
+
+      - name: Validate skills, manifests and repository hygiene
+        run: uv run --project runtime python scripts/validate_skills.py
+
+      - name: Versions are in sync
+        run: uv run --project runtime python scripts/bump_version.py --check
+
+      - name: Claude agents are generated from roles
+        run: uv run --project runtime python scripts/gen_agents.py --check
+
+      - name: Release archives build
+        run: uv run --project runtime python scripts/build_release.py --out "$RUNNER_TEMP/babeldub-dist"
+
+  plugin-validate:
+    name: claude plugin validate --strict, skills-ref
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Agent Skills reference validator (skills-ref)
+        run: |
+          for dir in skills/*/; do
+            uvx --from "git+https://github.com/agentskills/agentskills@69ef37e9424c0a7ea9dd2293b559e43ec8176379#subdirectory=skills-ref" \
+              skills-ref validate "$dir"
+          done
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # `claude plugin validate` works offline and needs no login or API key (checked with an empty
+      # CLAUDE_CONFIG_DIR), so this job is blocking.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin and marketplace
+        run: |
+          claude --version
+          claude plugin validate . --strict

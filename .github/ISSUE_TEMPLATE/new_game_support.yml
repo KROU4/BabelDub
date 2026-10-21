@@ -1,0 +1,100 @@
+name: Поддержка новой игры или движка
+description: BabelDub не находит озвучку или тексты, не умеет собрать формат или игра работает не до конца
+title: "[game] "
+labels: ["game-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите игру так, чтобы её формат можно было разобрать **без пересылки файлов игры**. Нам нужны названия, размеры и структура файлов, вывод `babeldub scan`, но не сами банки и архивы.
+
+  - type: input
+    id: game
+    attributes:
+      label: Игра
+      description: Название, магазин, ссылка на страницу и версия (номер сборки).
+      placeholder: My Game (Steam, https://store.steampowered.com/app/..., build 1.2.0)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Движок
+      options:
+        - Unity (Mono)
+        - Unity (IL2CPP)
+        - Unreal Engine 4
+        - Unreal Engine 5
+        - Godot
+        - Ren'Py
+        - RPG Maker
+        - GameMaker
+        - Creation Engine (Bethesda)
+        - Source / Source 2
+        - Собственный движок
+        - Не знаю
+    validations:
+      required: true
+
+  - type: dropdown
+    id: middleware
+    attributes:
+      label: Аудио-middleware
+      options:
+        - FMOD (.bank)
+        - Wwise (.bnk, .wem, .pck)
+        - Встроенный звук движка
+        - Отдельные аудиофайлы (.ogg, .wav, .mp3)
+        - Не знаю
+    validations:
+      required: true
+
+  - type: textarea
+    id: scan
+    attributes:
+      label: Вывод `babeldub scan`
+      description: JSON сводки и при желании `inventory/report.md` из папки проекта.
+      render: json
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Структура файлов игры
+      description: |
+        Список папок и крупных файлов с размерами (без содержимого). Например:
+        Windows: `Get-ChildItem -Recurse "D:\Games\MyGame" -Include *.bank,*.pck,*.pak,*.assets,*.bundle | Select-Object FullName,Length`
+        Linux: `find ~/Games/MyGame -size +1M -printf '%s %p\n'`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: languages
+    attributes:
+      label: Языки
+      description: На каких языках в игре есть озвучка и тексты; есть ли официальный перевод на нужный вам язык.
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Целевой язык
+      placeholder: ru
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Что уже известно
+      description: Ссылки на моддинг-инструменты и вики, существующие фан-переводы, особенности (катсцены в видео, липсинк, античит).
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: У меня легальная копия игры, локализация нужна для личного использования или некоммерческого фан-перевода.
+          required: true
+        - label: Я не прикладываю файлы игры, аудио реплик и извлечённые тексты.
+          required: true

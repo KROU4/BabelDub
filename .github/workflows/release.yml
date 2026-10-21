@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+  UV_PYTHON: "3.12"
+
+jobs:
+  release:
+    name: Build and publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the runtime with dev tools
+        run: uv sync --project runtime --locked --extra dev
+
+      - name: Tag matches the version in every manifest
+        run: uv run --project runtime python scripts/bump_version.py --check --expect "${GITHUB_REF_NAME#v}"
+
+      - name: Lint and tests
+        run: |
+          uv run --project runtime ruff check runtime
+          uv run --project runtime ruff check --config runtime/pyproject.toml scripts
+          uv run --project runtime pytest runtime/tests -q
+          uv run --project runtime pytest scripts -q
+
+      - name: Validate skills, manifests and generated agents
+        run: |
+          uv run --project runtime python scripts/validate_skills.py
+          uv run --project runtime python scripts/gen_agents.py --check
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: claude plugin validate --strict
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate . --strict
+
+      - name: Build release archives
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          uv run --project runtime python scripts/build_release.py --out dist
+          cat dist/SHA256SUMS
+
+      - name: Pre-release?
+        id: kind
+        run: |
+          if [[ "${GITHUB_REF_NAME#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Gemini CLI installs from the latest release: with 2+ assets and no darwin/linux/win32 prefix
+      # it takes the source tarball of the tag, which contains gemini-extension.json.
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: BabelDub ${{ github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
+          prerelease: ${{ steps.kind.outputs.prerelease }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/babeldub-plugin-*.zip
+            dist/babeldub-skills-*.zip
+            dist/babeldub-kit-*.zip
+            dist/SHA256SUMS

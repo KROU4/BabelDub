@@ -1,0 +1,42 @@
+{
+  "name": "babeldub",
+  "version": "0.1.0",
+  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local voice-cloning TTS, repack into native engine formats.",
+  "author": {
+    "name": "KROU4",
+    "url": "https://github.com/KROU4"
+  },
+  "homepage": "https://github.com/KROU4/BabelDub",
+  "repository": "https://github.com/KROU4/BabelDub",
+  "license": "MIT",
+  "keywords": [
+    "localization",
+    "dubbing",
+    "voice-cloning",
+    "tts",
+    "translation",
+    "game-modding"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "BabelDub",
+    "shortDescription": "Dub games into your language in the original characters' voices",
+    "longDescription": "BabelDub localizes a game from its folder: it finds voice-over and text tables, translates them and re-voices every line with local voice-cloning models so each character keeps the same timbre, emotion and delivery in the new language. The result is repacked into the engine's native formats and installed with a backup and one-command rollback. Voice work needs a local NVIDIA GPU; in cloud chats only text translation is available.",
+    "developerName": "KROU4",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/KROU4/BabelDub",
+    "defaultPrompt": [
+      "Localize the game in D:\\Games\\MyGame into Russian with dubbing in the original voices",
+      "Check my environment for BabelDub voice cloning",
+      "Roll back the BabelDub localization of my game"
+    ],
+    "brandColor": "#7C5CFF",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.png"
+  }
+}

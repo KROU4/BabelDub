@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 620" width="1280" height="620" role="img" aria-labelledby="t">
+  <title id="t">Конвейер BabelDub: разведка, извлечение, кастинг, перевод, озвучка, контроль, сборка</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17143A"/>
+      <stop offset="1" stop-color="#0A0920"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFC24B"/>
+      <stop offset="0.5" stop-color="#FF5C8A"/>
+      <stop offset="1" stop-color="#9B7BFF"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8E86BC"/>
+    </marker>
+    <style>
+      .card { fill: #FFFFFF; fill-opacity: 0.06; stroke: #FFFFFF; stroke-opacity: 0.14; }
+      .num { font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 18px; fill: #0A0920; }
+      .title { font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 27px; fill: #FFFFFF; }
+      .sub { font-family: 'Segoe UI', sans-serif; font-weight: 400; font-size: 18px; fill: #C9C2EC; }
+      .cmd { font-family: Consolas, 'Cascadia Mono', monospace; font-weight: 600; font-size: 17px; fill: #FFD27A; }
+      .icon { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      .flow { fill: none; stroke: #8E86BC; stroke-width: 3; stroke-dasharray: 2 8; stroke-linecap: round; }
+      .head { font-family: 'Segoe UI', sans-serif; font-weight: 700; font-size: 24px; fill: #ECE8FF; }
+      .note { font-family: 'Segoe UI', sans-serif; font-weight: 400; font-size: 17px; fill: #8E86BC; }
+    </style>
+  </defs>
+  <rect width="1280" height="620" fill="url(#bg)"/>
+  <text x="30" y="52" class="head">Конвейер BabelDub</text>
+  <text x="292" y="52" class="note">агенты принимают решения · CLI делает массовую работу · папка игры меняется только при установке</text>
+
+  <!-- row 1 -->
+  <g transform="translate(30 80)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#FFC24B"/><text x="34" y="40" text-anchor="middle" class="num">1</text>
+    <g class="icon" stroke="#FFC24B" transform="translate(222 20)"><circle cx="20" cy="20" r="15"/><path d="M31 31 L44 44"/></g>
+    <text x="24" y="100" class="title">Разведка</text>
+    <text x="24" y="130" class="sub">движок, аудио-мидлварь,</text>
+    <text x="24" y="154" class="sub">где голос и где тексты</text>
+    <text x="24" y="188" class="cmd">babeldub scan</text>
+  </g>
+  <g transform="translate(340 80)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#FFAE5E"/><text x="34" y="40" text-anchor="middle" class="num">2</text>
+    <g class="icon" stroke="#FFAE5E" transform="translate(214 18)"><path d="M4 26 h6 M14 14 v24 M22 6 v40 M30 16 v20 M38 10 v32 M46 22 v8"/></g>
+    <text x="24" y="100" class="title">Извлечение</text>
+    <text x="24" y="130" class="sub">реплики в WAV, тексты,</text>
+    <text x="24" y="154" class="sub">связь «аудио ↔ субтитр»</text>
+    <text x="24" y="188" class="cmd">extract · link</text>
+  </g>
+  <g transform="translate(650 80)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#FF8C78"/><text x="34" y="40" text-anchor="middle" class="num">3</text>
+    <g class="icon" stroke="#FF8C78" transform="translate(212 16)"><circle cx="16" cy="14" r="8"/><path d="M2 42 a14 14 0 0 1 28 0"/><circle cx="40" cy="18" r="7"/><path d="M30 42 a12 12 0 0 1 24 -2"/></g>
+    <text x="24" y="100" class="title">Кастинг</text>
+    <text x="24" y="130" class="sub">персонажи, главные роли,</text>
+    <text x="24" y="154" class="sub">эталоны голоса героя</text>
+    <text x="24" y="188" class="cmd">cast</text>
+  </g>
+  <g transform="translate(960 80)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#FF6E86"/><text x="34" y="40" text-anchor="middle" class="num">4</text>
+    <text x="206" y="56" font-family="Segoe UI, sans-serif" font-weight="700" font-size="30" fill="#FF6E86">A→Я</text>
+    <text x="24" y="100" class="title">Перевод</text>
+    <text x="24" y="130" class="sub">глоссарий, стиль героя,</text>
+    <text x="24" y="154" class="sub">длина под оригинал</text>
+    <text x="24" y="188" class="cmd">translate · batch</text>
+  </g>
+
+  <!-- row 2 -->
+  <g transform="translate(185 350)">
+    <rect class="card" width="290" height="210" rx="22" style="stroke:#FF5C8A;stroke-opacity:.55"/>
+    <circle cx="34" cy="34" r="16" fill="#FF5C8A"/><text x="34" y="40" text-anchor="middle" class="num">5</text>
+    <g class="icon" stroke="#FF5C8A" transform="translate(214 14)"><rect x="12" y="2" width="16" height="28" rx="8"/><path d="M4 22 a16 16 0 0 0 32 0 M20 38 v8 M40 12 a10 10 0 0 1 0 16 M46 6 a18 18 0 0 1 0 28"/></g>
+    <text x="24" y="100" class="title">Озвучка</text>
+    <text x="24" y="130" class="sub">голос оригинального героя:</text>
+    <text x="24" y="154" class="sub">тембр + эмоция реплики</text>
+    <text x="24" y="188" class="cmd">synth · post</text>
+  </g>
+  <g transform="translate(495 350)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#C46CF0"/><text x="34" y="40" text-anchor="middle" class="num">6</text>
+    <g class="icon" stroke="#C46CF0" transform="translate(220 18)"><circle cx="20" cy="20" r="18"/><path d="M11 21 l6 6 l12 -13"/></g>
+    <text x="24" y="100" class="title">Контроль</text>
+    <text x="24" y="130" class="sub">распознавание, сходство</text>
+    <text x="24" y="154" class="sub">голоса, длительность</text>
+    <text x="24" y="188" class="cmd">qa · decide</text>
+  </g>
+  <g transform="translate(805 350)">
+    <rect class="card" width="290" height="210" rx="22"/>
+    <circle cx="34" cy="34" r="16" fill="#9B7BFF"/><text x="34" y="40" text-anchor="middle" class="num">7</text>
+    <g class="icon" stroke="#9B7BFF" transform="translate(206 18)"><path d="M10 10 h40 a10 10 0 0 1 10 10 l2 14 a6 6 0 0 1 -10 4 l-6 -6 h-32 l-6 6 a6 6 0 0 1 -10 -4 l2 -14 a10 10 0 0 1 10 -10 z"/><path d="M18 18 v8 M14 22 h8"/><circle cx="44" cy="20" r="1.5"/><circle cx="48" cy="26" r="1.5"/></g>
+    <text x="24" y="100" class="title">Сборка</text>
+    <text x="24" y="130" class="sub">нативные файлы движка,</text>
+    <text x="24" y="154" class="sub">бэкап и откат одной командой</text>
+    <text x="24" y="188" class="cmd">build · install</text>
+  </g>
+
+  <!-- flow -->
+  <path class="flow" d="M322 185 H338" marker-end="url(#arrow)"/>
+  <path class="flow" d="M632 185 H648" marker-end="url(#arrow)"/>
+  <path class="flow" d="M942 185 H958" marker-end="url(#arrow)"/>
+  <path class="flow" d="M1105 292 C1105 330 330 312 330 346" marker-end="url(#arrow)"/>
+  <path class="flow" d="M477 455 H493" marker-end="url(#arrow)"/>
+  <path class="flow" d="M787 455 H803" marker-end="url(#arrow)"/>
+  <!-- QA loop back to voice -->
+  <path class="flow" d="M640 562 C640 592 330 592 330 564" marker-end="url(#arrow)" style="stroke:#C46CF0"/>
+  <text x="392" y="604" class="note" style="font-size:16px;fill:#C46CF0">брак → перегенерация / сокращение текста</text>
+
+  <!-- user gates -->
+  <g transform="translate(1116 372)" font-family="Segoe UI, sans-serif">
+    <text x="0" y="0" font-size="19" font-weight="700" fill="#ECE8FF">Вы отвечаете</text>
+    <text x="0" y="26" font-size="19" font-weight="700" fill="#ECE8FF">на 2 вопроса:</text>
+    <text x="0" y="60" font-size="18" fill="#FFD27A">• язык</text>
+    <text x="0" y="88" font-size="18" fill="#FFD27A">• персонажи</text>
+    <text x="0" y="124" font-size="16" fill="#8E86BC">остальное —</text>
+    <text x="0" y="146" font-size="16" fill="#8E86BC">автоматически</text>
+  </g>
+</svg>

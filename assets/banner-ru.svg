@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-labelledby="t">
+  <title id="t">BabelDub — нейроперевод и нейроозвучка игр силами ИИ-агентов</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B1640"/>
+      <stop offset="1" stop-color="#08071A"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.24" cy="0.3" r="0.45">
+      <stop offset="0" stop-color="#FFB547" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#FFB547" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.85" cy="0.9" r="0.5">
+      <stop offset="0" stop-color="#7C5CFF" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#7C5CFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="tower" gradientUnits="userSpaceOnUse" x1="0" y1="434" x2="0" y2="158">
+      <stop offset="0" stop-color="#7C5CFF"/>
+      <stop offset="0.55" stop-color="#FF5C8A"/>
+      <stop offset="1" stop-color="#FFC24B"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFC24B"/>
+      <stop offset="0.5" stop-color="#FF5C8A"/>
+      <stop offset="1" stop-color="#9B7BFF"/>
+    </linearGradient>
+    <mask id="door">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M240 434 v-12 a16 16 0 0 1 32 0 v12 z" fill="#000"/>
+    </mask>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <rect width="1280" height="640" fill="url(#glow2)"/>
+
+  <!-- confusion of tongues: scattered glyphs -->
+  <g font-family="Segoe UI, Yu Gothic, Malgun Gothic, Microsoft YaHei, sans-serif" font-weight="700" fill="#FFFFFF">
+    <text x="70" y="120" font-size="44" opacity="0.07">Aa</text>
+    <text x="520" y="96" font-size="38" opacity="0.08">Яя</text>
+    <text x="1150" y="110" font-size="46" opacity="0.08">あ</text>
+    <text x="1190" y="622" font-size="40" opacity="0.07">한</text>
+    <text x="90" y="590" font-size="42" opacity="0.07">中</text>
+    <text x="1222" y="290" font-size="36" opacity="0.06">ß</text>
+    <text x="470" y="600" font-size="38" opacity="0.07">ñ</text>
+    <text x="700" y="610" font-size="34" opacity="0.06">Ü</text>
+    <text x="900" y="80" font-size="34" opacity="0.06">Ç</text>
+    <text x="40" y="360" font-size="34" opacity="0.06">Ω</text>
+    <text x="1210" y="470" font-size="34" opacity="0.06">ł</text>
+  </g>
+
+  <!-- mark -->
+  <g transform="translate(70 70) scale(0.98)">
+    <g fill="url(#tower)" mask="url(#door)">
+      <rect x="76"  y="398" width="360" height="36" rx="18"/>
+      <rect x="106" y="350" width="300" height="36" rx="18"/>
+      <rect x="134" y="302" width="244" height="36" rx="18"/>
+      <rect x="160" y="254" width="192" height="36" rx="18"/>
+      <rect x="184" y="206" width="144" height="36" rx="18"/>
+      <rect x="206" y="158" width="100" height="36" rx="18"/>
+    </g>
+    <g fill="#08071A" opacity="0.35">
+      <rect x="148" y="398" width="6" height="36"/><rect x="220" y="398" width="6" height="36"/>
+      <rect x="286" y="398" width="6" height="36"/><rect x="358" y="398" width="6" height="36"/>
+      <rect x="178" y="350" width="6" height="36"/><rect x="254" y="350" width="6" height="36"/><rect x="328" y="350" width="6" height="36"/>
+      <rect x="214" y="302" width="6" height="36"/><rect x="292" y="302" width="6" height="36"/>
+      <rect x="253" y="254" width="6" height="36"/>
+    </g>
+    <circle cx="256" cy="112" r="20" fill="#FFC24B"/>
+    <g fill="none" stroke="#FFC24B" stroke-linecap="round" stroke-width="14">
+      <path d="M212 76 a62 62 0 0 0 0 72" opacity="0.95"/>
+      <path d="M300 76 a62 62 0 0 1 0 72" opacity="0.95"/>
+      <path d="M178 52 a104 104 0 0 0 0 120" opacity="0.55"/>
+      <path d="M334 52 a104 104 0 0 1 0 120" opacity="0.55"/>
+    </g>
+  </g>
+
+  <!-- wordmark -->
+  <g font-family="Segoe UI, sans-serif">
+    <text x="610" y="272" font-size="128" font-weight="700" fill="#FFFFFF" letter-spacing="-2">Babel<tspan fill="url(#word)">Dub</tspan></text>
+    <text x="614" y="340" font-size="34" font-weight="600" fill="#ECE8FF">Нейроперевод и нейроозвучка игр</text>
+    <text x="614" y="384" font-size="34" font-weight="400" fill="#B9B2E0">силами ИИ-агентов — на любой язык</text>
+  </g>
+
+  <!-- chips -->
+  <g font-family="Segoe UI, sans-serif" font-size="22" font-weight="600">
+    <g transform="translate(614 432)">
+      <rect width="176" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.08" stroke="#FFC24B" stroke-opacity="0.6"/>
+      <text x="88" y="29" text-anchor="middle" fill="#FFD27A">Claude Code</text>
+    </g>
+    <g transform="translate(804 432)">
+      <rect width="112" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.08" stroke="#FF5C8A" stroke-opacity="0.6"/>
+      <text x="56" y="29" text-anchor="middle" fill="#FF9DB8">Codex</text>
+    </g>
+    <g transform="translate(930 432)">
+      <rect width="160" height="44" rx="22" fill="#FFFFFF" fill-opacity="0.08" stroke="#9B7BFF" stroke-opacity="0.6"/>
+      <text x="80" y="29" text-anchor="middle" fill="#C8B8FF">Gemini CLI</text>
+    </g>
+    <text x="614" y="530" font-size="22" font-weight="400" fill="#8E86BC">Unity · Unreal · Godot · Ren'Py · FMOD · Wwise · …</text>
+    <text x="614" y="566" font-size="22" font-weight="400" fill="#8E86BC">Локальные нейросети · клонирование голоса · нативная сборка</text>
+  </g>
+</svg>

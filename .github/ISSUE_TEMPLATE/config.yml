@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость безопасности
+    url: https://github.com/KROU4/BabelDub/security/advisories/new
+    about: Сообщайте приватно через GitHub Security Advisories, не в открытых issues (см. SECURITY.md).
+  - name: Установка в Claude Code, Codex, Gemini и другие хосты
+    url: https://github.com/KROU4/BabelDub/blob/main/docs/HOSTS.md
+    about: Команды установки и ограничения каждого хоста.
+  - name: Правила использования
+    url: https://github.com/KROU4/BabelDub/blob/main/docs/LEGAL.md
+    about: EULA игр, голоса актёров, лицензии моделей.

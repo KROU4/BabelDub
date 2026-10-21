@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+
+# Build output
+dist/
+*.zip
+
+# Localization workspaces created by the pipeline (contain game assets — never commit)
+babeldub-work/
+.babeldub/
+*.wav
+*.bank
+*.fsb
+*.wem
+*.bnk
+*.pck
+*.pak
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.omc/

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "babeldub",
+  "version": "0.1.0",
+  "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local voice-cloning TTS, repack into native engine formats.",
+  "author": {
+    "name": "KROU4",
+    "url": "https://github.com/KROU4"
+  },
+  "homepage": "https://github.com/KROU4/BabelDub",
+  "repository": "https://github.com/KROU4/BabelDub",
+  "license": "MIT",
+  "keywords": [
+    "localization",
+    "dubbing",
+    "voice-cloning",
+    "tts",
+    "translation",
+    "game-modding"
+  ]
+}

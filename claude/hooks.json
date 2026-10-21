@@ -1,0 +1,31 @@
+{
+  "description": "BabelDub: keeps registered game folders read-only outside `babeldub install|uninstall|reapply` and prints the active project summary at session start. Exec form via uv (a BabelDub prerequisite); without uv the hooks fail to start, which Claude Code treats as a non-blocking error.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--quiet", "--script", "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard.py", "pre"],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-project", "--quiet", "--script", "${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard.py", "session"],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

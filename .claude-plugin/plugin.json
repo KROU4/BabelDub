@@ -1,0 +1,34 @@
+{
+  "name": "babeldub",
+  "displayName": "BabelDub",
+  "version": "0.1.0",
+  "description": "AI localization and dubbing of any game: finds voice-over and text, translates it and re-voices every line in the original character's own voice (same timbre, emotion and delivery, new language) with local voice-cloning TTS, then repacks the assets into the engine's native formats.",
+  "author": {
+    "name": "KROU4",
+    "url": "https://github.com/KROU4"
+  },
+  "homepage": "https://github.com/KROU4/BabelDub",
+  "repository": "https://github.com/KROU4/BabelDub",
+  "license": "MIT",
+  "keywords": [
+    "localization",
+    "dubbing",
+    "voice-cloning",
+    "tts",
+    "translation",
+    "game-modding",
+    "unity",
+    "fmod",
+    "agent-skills"
+  ],
+  "agents": [
+    "./claude/agents/babeldub-caster.md",
+    "./claude/agents/babeldub-lexicon.md",
+    "./claude/agents/babeldub-packer.md",
+    "./claude/agents/babeldub-qa.md",
+    "./claude/agents/babeldub-scout.md",
+    "./claude/agents/babeldub-translator.md",
+    "./claude/agents/babeldub-voice.md"
+  ],
+  "hooks": "./claude/hooks.json"
+}

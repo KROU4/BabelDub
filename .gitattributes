@@ -1,0 +1,36 @@
+# Normalise text to LF in the repository and in checkouts (plugins are installed on Linux and macOS too)
+* text=auto eol=lf
+
+*.py     text eol=lf diff=python
+*.sh     text eol=lf
+*.md     text eol=lf diff=markdown
+*.json   text eol=lf
+*.jsonl  text eol=lf
+*.toml   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.svg    text eol=lf
+uv.lock  text eol=lf linguist-generated=true
+
+# Windows-only scripts keep CRLF
+*.ps1    text eol=crlf
+*.cmd    text eol=crlf
+*.bat    text eol=crlf
+
+# Binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.zip    binary
+*.wav    binary
+*.ogg    binary
+*.mp3    binary
+*.flac   binary
+
+# Release archives are built without dev-only folders
+.github/       export-ignore
+.gitattributes export-ignore
+.editorconfig  export-ignore

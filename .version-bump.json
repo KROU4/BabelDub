@@ -1,0 +1,60 @@
+{
+  "files": [
+    {
+      "path": ".claude-plugin/plugin.json",
+      "kind": "json",
+      "key": "version"
+    },
+    {
+      "path": ".codex-plugin/plugin.json",
+      "kind": "json",
+      "key": "version"
+    },
+    {
+      "path": "plugin.json",
+      "kind": "json",
+      "key": "version"
+    },
+    {
+      "path": "gemini-extension.json",
+      "kind": "json",
+      "key": "version"
+    },
+    {
+      "path": "runtime/pyproject.toml",
+      "kind": "regex",
+      "pattern": "(?ms)^\\[project\\]\\s*$.*?^version\\s*=\\s*\"(?P<version>[^\"]+)\""
+    },
+    {
+      "path": "runtime/src/babeldub/__init__.py",
+      "kind": "regex",
+      "pattern": "(?m)^__version__\\s*=\\s*\"(?P<version>[^\"]+)\""
+    },
+    {
+      "path": "runtime/uv.lock",
+      "kind": "regex",
+      "pattern": "(?m)^name = \"babeldub\"\\r?\\nversion = \"(?P<version>[^\"]+)\"",
+      "optional": true
+    },
+    {
+      "path": "skills/*/SKILL.md",
+      "kind": "frontmatter",
+      "key": "metadata.babeldub-cli",
+      "optional": true
+    },
+    {
+      "path": "skills/babeldub-doctor/scripts/bootstrap.py",
+      "kind": "regex",
+      "pattern": "(?m)^FALLBACK_VERSION\\s*=\\s*\"(?P<version>[^\"]+)\"",
+      "optional": true
+    }
+  ],
+  "review": [
+    "skills/**/*.md",
+    "commands/*.md",
+    "claude/agents/*.md",
+    "GEMINI.md",
+    "AGENTS.md",
+    "docs/*.md"
+  ]
+}

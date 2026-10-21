@@ -1,0 +1,149 @@
+# BabelDub model catalog (docs/dev/CONTRACT.md §9). Read by babeldub.envsetup.catalog.
+#
+# BabelDub dubs with the voice of the ORIGINAL character: every engine here is a zero-shot voice
+# cloning engine that takes the original line (ref audio + its source text) as the voice prompt.
+#
+# engines.<name>:
+#   env            venv folder under BABELDUB_HOME/envs (null = runs in the CLI interpreter, no venv)
+#   python         interpreter version for `uv venv --python`
+#   torch          {version, index (CUDA wheels), cpu_index}; torch+torchaudio of that version
+#   packages       installed after torch (pip requirement strings; git+ URLs need git on PATH)
+#   gpu_packages   installed only on GPU tiers
+#   import         modules that must import for the env to count as working
+#   worker         script in babeldub/workers run as `<env python> -u <worker>`
+#   languages      ISO 639-1 codes the engine can speak ("*" = any)
+#   size_gb        approximate download size of the venv (torch wheels dominate)
+# models[]:
+#   name           folder under BABELDUB_HOME/models (aliases: older folder names that are recognised)
+#   repo/include   Hugging Face repo and optional file patterns (only these files are downloaded)
+#   commercial     false = non-commercial weights; such models are opt_in and never installed by default
+#   tiers          hardware tiers the model runs on; auto_tiers: tiers where `setup` installs it by default
+#   size_gb        download size; vram_gb: approximate peak VRAM during inference
+
+engines:
+  qwen3tts:
+    env: qwen3tts
+    python: "3.12"
+    torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    packages: ["qwen-tts", "soundfile", "numpy"]
+    import: [qwen_tts, soundfile]
+    worker: tts_qwen3.py
+    size_gb: 4.0
+    languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
+    license: Apache-2.0
+    notes: "Default engine. In-context cloning: ref_audio + ref_text of the original line carry timbre and emotion."
+  chatterbox:
+    env: chatterbox
+    python: "3.12"
+    torch: {version: "2.6.0", index: "https://download.pytorch.org/whl/cu124", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    # PyPI chatterbox-tts 0.1.7 cannot load Multilingual V3 (no t3_model argument): install from GitHub.
+    packages: ["chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git", "soundfile"]
+    import: [chatterbox.mtl_tts, soundfile]
+    worker: tts_chatterbox.py
+    size_gb: 3.5
+    languages: [ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, "no", pl, pt, ru, sv, sw, tr, zh]
+    license: MIT
+    notes: "Multilingual V3 (pl, tr and 21 more). Every output file carries an inaudible PerTh watermark."
+  qc:
+    env: qc
+    python: "3.12"
+    torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    packages: ["faster-whisper", "speechbrain", "soundfile", "numpy", "jiwer", "num2words"]
+    gpu_packages: ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
+    import: [faster_whisper, speechbrain, soundfile]
+    worker: qc_worker.py
+    size_gb: 5.0
+    languages: ["*"]
+    license: MIT
+    notes: "Quality control: ASR (CER against the dub text) and speaker similarity to the original voice."
+  dummy:
+    env: null
+    worker: tts_dummy.py
+    import: []
+    languages: ["*"]
+    license: MIT
+    notes: "Test engine without a venv or model: writes a tone of the expected length. For pipeline tests only."
+
+models:
+  - name: Qwen3-TTS-12Hz-1.7B-Base
+    repo: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+    engine: qwen3tts
+    role: tts
+    license: Apache-2.0
+    commercial: true
+    size_gb: 4.54
+    vram_gb: 6
+    tiers: [8gb, 12gb, 24gb]
+    auto_tiers: [8gb, 12gb, 24gb]
+    languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
+    notes: "Default voice-cloning model (3 s reference is enough)."
+  - name: Qwen3-TTS-12Hz-0.6B-Base
+    repo: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+    engine: qwen3tts
+    role: tts
+    license: Apache-2.0
+    commercial: true
+    size_gb: 2.52
+    vram_gb: 4
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: [cpu]
+    languages: [zh, en, ja, ko, de, fr, ru, pt, es, it]
+    notes: "Smaller fallback (CPU tier, or when 1.7B runs out of VRAM)."
+  - name: qwen3-tts-12hz-1.7b-ru-stress-cf
+    repo: siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf
+    engine: qwen3tts
+    role: tts
+    license: Apache-2.0
+    commercial: true
+    size_gb: 4.58
+    vram_gb: 6
+    tiers: [8gb, 12gb, 24gb]
+    # not installed or used by default: on the Low-Budget Repairs test lines it kept the original
+    # actor's voice much worse than 1.7B-Base (ECAPA 0.05-0.37 vs 0.37-0.51), and BabelDub dubs in
+    # the original hero's voice; opt in with `babeldub models fetch` + `babeldub set tts.model=...`
+    auto_tiers: []
+    languages: [ru]
+    aliases: [Qwen3-TTS-1.7B-ru-stress-cf, Qwen3-TTS-1.7B-ru-stress]
+    warning: "Weights are Apache-2.0, but part of the stress-training texts comes from a dataset without a declared license (see the model card); check before commercial use."
+    notes: "Russian fine-tune of 1.7B-Base that follows the U+0301 stress mark; keeps the original voice worse than 1.7B-Base, so it is used only when set explicitly in tts.model."
+  - name: faster-whisper-large-v3-turbo
+    repo: dropbox-dash/faster-whisper-large-v3-turbo
+    engine: qc
+    role: asr
+    license: MIT
+    commercial: true
+    size_gb: 1.62
+    vram_gb: 2
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: [cpu, 8gb, 12gb, 24gb]
+    languages: ["*"]
+    notes: "ASR for QA: CER of the dub against its text."
+  - name: spkrec-ecapa-voxceleb
+    repo: speechbrain/spkrec-ecapa-voxceleb
+    engine: qc
+    role: sv
+    license: Apache-2.0
+    commercial: true
+    size_gb: 0.09
+    vram_gb: 0.5
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: [cpu, 8gb, 12gb, 24gb]
+    languages: ["*"]
+    notes: "Speaker embeddings: voice similarity of the dub to the original character, clustering of voices."
+  - name: chatterbox-multilingual
+    repo: ResembleAI/chatterbox
+    include: [ve.pt, t3_mtl23ls_v3.safetensors, s3gen.pt, grapheme_mtl_merged_expanded_v1.json, conds.pt, Cangjie5_TC.json]
+    engine: chatterbox
+    role: tts
+    license: MIT
+    commercial: true
+    size_gb: 3.21
+    vram_gb: 7
+    tiers: [8gb, 12gb, 24gb]
+    auto_tiers: [8gb, 12gb, 24gb]
+    languages: [ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, "no", pl, pt, ru, sv, sw, tr, zh]
+    warning: "Every generated file carries an inaudible PerTh watermark (Resemble AI)."
+    notes: "Multilingual V3 (t3_mtl23ls_v3). With a reference in another language use cfg_weight=0."
+
+# Non-commercial models (e.g. OmniVoice, CC-BY-NC) are not part of v0.1. When one is added it must carry
+# `commercial: false` and `opt_in: true`: setup then installs it only with `--accept-license <name>`.

@@ -1,0 +1,23 @@
+{
+  "name": "babeldub",
+  "owner": {
+    "name": "KROU4",
+    "url": "https://github.com/KROU4"
+  },
+  "description": "BabelDub: AI localization and dubbing of games in the original characters' own voices.",
+  "plugins": [
+    {
+      "name": "babeldub",
+      "source": "./",
+      "description": "Localize a game end to end: extract voice-over and text, translate, re-voice each line in the original character's voice with local voice cloning, repack and install with rollback.",
+      "category": "localization",
+      "tags": [
+        "games",
+        "localization",
+        "dubbing",
+        "voice-cloning",
+        "tts"
+      ]
+    }
+  ]
+}

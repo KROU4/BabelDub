@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "babeldub"
+version = "0.1.0"
+description = "Toolbox CLI behind the BabelDub agent skills: game recon, voice extraction, dubbing pipeline and native repacking"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "KROU4" }]
+keywords = ["localization", "dubbing", "tts", "voice-cloning", "fmod", "unity", "game-modding", "agent-skills"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Topic :: Games/Entertainment",
+]
+dependencies = [
+  "numpy>=1.26",
+  "soundfile>=0.12",
+  "PyYAML>=6.0",
+  "UnityPy>=1.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+babeldub = "babeldub.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/KROU4/BabelDub"
+Issues = "https://github.com/KROU4/BabelDub/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/babeldub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
