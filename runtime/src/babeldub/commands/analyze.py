@@ -185,6 +185,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             up_to_date += 1
         else:
             todo.append((line, path, ident))
+    needed = len(todo)  # new, changed (stale wav or models) or forced lines, before --limit
     if args.limit is not None:
         todo = todo[: max(args.limit, 0)]
 
@@ -262,7 +263,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         payload["warnings"] = warnings
     if errors:
         payload["errors"] = clip(errors)
-    remaining = sum(1 for ln in picked if ln["id"] not in analysis)
+    remaining = max(needed - measured - len(errors), 0)  # lines --limit left out (stale ones included)
     if remaining:
         payload["remaining"] = summary["remaining"] = remaining
     code = EXIT_ATTENTION if errors or remaining else EXIT_OK

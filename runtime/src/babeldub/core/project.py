@@ -62,6 +62,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "install": {"backup": True},
 }
 
+# Settings whose v0.1 default was written into every project.json by `init`: an untouched old default is
+# replaced with the current one once on load (the id is recorded in project.json `migrations`).
+# (id, section, key, v0.1 default, current default)
+SETTING_MIGRATIONS: tuple[tuple[str, str, str, Any, Any], ...] = (
+    ("post.tempo_min.v0.2", "post", "tempo_min", 0.93, 1.0),  # v0.1 slowed short dubs down
+    ("post.tempo_max.v0.2", "post", "tempo_max", 1.2, 1.15),
+)
+
 
 @dataclass
 class Project:
@@ -95,7 +103,31 @@ class Project:
     def load(cls, project_arg: str | None = None) -> Project:
         root = cls.resolve_dir(project_arg)
         data = read_json(root / layout.PROJECT_JSON, default={})
-        return cls(root=root, data=data)
+        project = cls(root=root, data=data)
+        project.migrate()
+        return project
+
+    def migrate(self) -> list[dict[str, Any]]:
+        """Replace untouched v0.1 defaults (SETTING_MIGRATIONS) with the current ones, once per project.
+        Each change is recorded in project.json `migrations` and logged to events.jsonl (stage `project`)."""
+        if not self.data:
+            return []
+        done = {m.get("id") for m in self.data.get("migrations") or [] if isinstance(m, dict)}
+        changed: list[dict[str, Any]] = []
+        for mig_id, section, key, old, new in SETTING_MIGRATIONS:
+            node = self.data.get(section)
+            if mig_id in done or not isinstance(node, dict) or key not in node:
+                continue
+            value = node[key]
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and abs(float(value) - old) < 1e-9:
+                node[key] = new
+                changed.append({"id": mig_id, "setting": f"{section}.{key}", "old": old, "new": new, "ts": now_iso()})
+        if changed:
+            self.data["migrations"] = [*(self.data.get("migrations") or []), *changed]
+            self.save()
+            self.log_event("project", status="migrated", migrations=[
+                {k: m[k] for k in ("setting", "old", "new")} for m in changed])
+        return changed
 
     @classmethod
     def create(cls, root: Path, data: dict[str, Any]) -> Project:

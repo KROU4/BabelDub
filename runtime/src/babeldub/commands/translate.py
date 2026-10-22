@@ -63,7 +63,6 @@ GLOSSARY_SCHEMA = "babeldub.glossary/1"
 BATCH_INDEX = f"{layout.BATCHES_DIR}/index.json"
 GLOSSARY_VIOLATIONS = "translate/glossary_violations.jsonl"
 MISSING_OFFICIAL = "translate/missing_official.txt"
-ANALYSIS = "inventory/analysis.jsonl"  # optional: {id, speech_s?, vad_segments?: [[start_s, end_s], ...]}
 PAUSE_MARK_S = 0.25  # original pauses at least this long are shown as " / " in src_segmented
 STYLE_LIMIT = 8000
 MAX_ERRORS_SHOWN = 20
@@ -91,9 +90,16 @@ RULES = (
 
 
 def dub_lines(project: Project, lines: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """Voiced lines that get a dub: interjections and nonverbal lines (analyze classes) keep the original."""
-    keep = keep_original_ids(project)
+    """Voiced lines that get a dub: interjections and nonverbal lines (analyze classes) keep the original,
+    unless an agent/human decision asks for a dub anyway (the same override synth honours)."""
+    decisions = load_latest(project, layout.DECISIONS)
+    keep = {i for i in keep_original_ids(project) if not _dub_anyway(decisions.get(i))}
     return [ln for ln in voiced_lines(project, lines) if ln["id"] not in keep]
+
+
+def _dub_anyway(decision: dict[str, Any] | None) -> bool:
+    """An agent/human decision that overrides the automatic keep_original of the line's class."""
+    return bool(decision) and decision.get("by") in ("agent", "human")         and decision.get("decision") not in ("keep_original", "skip")
 
 
 def configured_mode(project: Project) -> str:
@@ -164,7 +170,7 @@ class Timing:
 
     def __init__(self, project: Project, lang: str) -> None:
         self.project, self.lang = project, lang
-        self.analysis = load_latest(project, ANALYSIS)
+        self.analysis = load_latest(project, layout.ANALYSIS)
         self.assign = load_latest(project, layout.ASSIGN)
         self.rates = self._char_rates()
         self._speech: dict[str, tuple[float | None, list[tuple[float, float]]]] = {}
@@ -216,6 +222,9 @@ class Timing:
                     segments.append((start, end))
         except (TypeError, ValueError):
             segments = []
+        # the speech span (first to last sound, pauses included), as rate_syl_s is measured over the dub's span;
+        # analysis speech_s (the sum of the segments) only when the row has no segments
+        speech_s: Any = segments[-1][1] - segments[0][0] if segments else row.get("speech_s")
         if not segments:
             path = self._orig_wav(line)
             if path is not None:
@@ -224,7 +233,6 @@ class Timing:
                     segments = speech_segments_s(data, sr, PAUSE_MARK_S)
                 except (RuntimeError, OSError, ValueError):
                     segments = []
-        speech_s = row.get("speech_s")
         if not isinstance(speech_s, (int, float)) or speech_s <= 0:
             speech_s = segments[-1][1] - segments[0][0] if segments else line_dur(line)
         self._speech[line_id] = (float(speech_s) if speech_s is not None else None, segments)

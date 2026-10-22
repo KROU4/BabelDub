@@ -4,7 +4,7 @@ Read this on `over_budget[]` from `batch submit`, for `fixed_length` lines and f
 
 ## 1. Where `budget_syll` comes from
 
-`budget_syll` = the original's **speech span** (`speech_s`: from the first to the last spoken sound, without the file's leading and trailing silence) × the character's pace (`rate_syl_s`), rounded. Both are in every batch row. `rate_syl_s` is measured: the median syllables per second of the character's accepted dubs. Until the character has 3 accepted dubs it is the target language's average for dubbed speech, in syllables per second:
+`budget_syll` = the original's **speech span** (`speech_s`: from the first to the last spoken sound, the pauses between included, without the file's leading and trailing silence; the dubs' pace is measured over their span the same way) × the character's pace (`rate_syl_s`), rounded. Both are in every batch row. `rate_syl_s` is measured: the median syllables per second of the character's accepted dubs. Until the character has 3 accepted dubs it is the target language's average for dubbed speech, in syllables per second:
 
 | Language | Syllables/s | | Language | Syllables/s |
 |---|---|---|---|---|

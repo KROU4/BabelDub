@@ -78,8 +78,10 @@ def test_cast_merges_a_cluster_that_is_a_named_character(project, fake_qc, make_
     # Zbyszek's cutscene lines carry no speaker hint: they cluster by voice, then join him
     cut = [f.add(None, 5.0, text=f"Cutscene {i}.", voice="Zbyszek", kind="cutscene") for i in range(4)]
     f.save()
+    project.mark_stage("analyze", "done")
     root = str(project.root)
     code, out = run(["cast", "--project", root])
+    assert not any("analyze stage" in w for w in out["warnings"])
     assert code == EXIT_OK, out
     assert out["merged"] == 1 and out["merged_into"] == {"zbyszek": ["cluster_01"]}
     assert out["clusters"] == 2  # voices A and B stay clusters (cluster_02, cluster_03)
@@ -132,6 +134,7 @@ def test_cast_without_qc_groups_unknown(project, no_qc, make_lines, run) -> None
     assert code == EXIT_ATTENTION
     assert out["uncertain"] == ["unknown"]
     assert any("qc worker unavailable" in w for w in out["warnings"])
+    assert any("analyze stage is not done" in w for w in out["warnings"])  # a note, not a failure
     chars = {c["char_id"]: c for c in read_jsonl(project.path(layout.CHARACTERS))}
     assert chars["unknown"]["n_lines"] == 5 and chars["unknown"]["tier"] == "minor"
     assert not chars["unknown"]["selected"]

@@ -186,6 +186,7 @@ def test_scan_extract_link(env: dict[str, Any], capsys: pytest.CaptureFixture[st
     code, out = run(["link", "--project", "demo"], capsys)
     assert code == EXIT_OK, out
     assert out["linked"] == 3 and out["unlinked"] == 0 and out["with_official_target"] == 2
+    assert out["next"] == "babeldub analyze"
     lines = {ln["entry"]["key"]: ln for ln in read_jsonl(project.path(layout.LINES))}
     assert (
         lines["e001"]["text"]["src"] == "Hello there." and lines["e001"]["text"]["tgt_official"] == "Привет."
@@ -221,6 +222,7 @@ def test_link_reports_unlinked(env: dict[str, Any], capsys: pytest.CaptureFixtur
     run(["extract", "--project", "demo"], capsys)
     code, out = run(["link", "--project", "demo"], capsys)
     assert code == EXIT_ATTENTION and out["unlinked"] == 3 and out["linked"] == 0
+    assert out["next"].endswith("then `babeldub analyze`") and "v0.1" not in out["next"]
     assert all("no_text" in ln["flags"] for ln in read_jsonl(project.path(layout.LINES)))
     assert project.progress()["link"]["status"] == "attention"
 

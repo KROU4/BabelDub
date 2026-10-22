@@ -194,3 +194,20 @@ def test_keep_original_classes_are_not_translated(bd, project_with_lines, line):
     assert code == 0 and out["lines"] == 1
     _, rows = _in_rows(project.path(layout.BATCHES_DIR, "b0001.in.jsonl"))
     assert [r["id"] for r in rows] == [lines[0]["id"]]
+
+
+def test_dub_anyway_decision_overrides_keep_original(bd, project_with_lines, line):
+    lines = [line(1, src="Okay, let's go."), line(2, src="Hehe..."), line(3, src="Ugh!")]
+    project = project_with_lines(lines)
+    write_jsonl(project.path(layout.ANALYSIS), [
+        {"id": lines[0]["id"], "class": "speech"}, {"id": lines[1]["id"], "class": "interjection"},
+        {"id": lines[2]["id"], "class": "nonverbal"}], schema="babeldub.analysis/1")
+    write_jsonl(project.path(layout.DECISIONS), [
+        {"id": lines[1]["id"], "decision": "retranslate", "by": "human"},  # dub anyway
+        {"id": lines[2]["id"], "decision": "keep_original", "by": "auto"}])
+    code, out = bd("translate", "plan")
+    assert out["need_agent"] == 2 and out["keep_original"] == 1, out
+    code, out = bd("batch", "make")
+    assert code == 0 and out["lines"] == 2
+    _, rows = _in_rows(project.path(layout.BATCHES_DIR, "b0001.in.jsonl"))
+    assert sorted(r["id"] for r in rows) == sorted([lines[0]["id"], lines[1]["id"]])

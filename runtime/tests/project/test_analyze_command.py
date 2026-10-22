@@ -183,3 +183,19 @@ def test_analyze_needs_the_qc_env(bd, project_with_lines, line):
     code, out = bd("analyze")
     assert code == EXIT_ENV and "setup --engines qc" in out["hint"]
     assert "analyze" not in project.progress()
+
+
+def test_analyze_limit_counts_stale_lines_as_remaining(bd, setup):
+    project, lines, fake = setup(
+        [{"index": 1}, {"index": 2}, {"index": 3}], heard={i: "Okay, let's see." for i in range(3)},
+    )
+    assert bd("analyze")[0] == EXIT_OK
+    for ln in lines:  # re-extract: every wav changed, every row is stale (but still there)
+        sf.write(str(project.path(ln["audio"]["wav"])), np.ones(8000, dtype=np.float32) * 0.1, 16000)
+    code, out = bd("analyze", "--limit", "1")
+    assert code == EXIT_ATTENTION and out["analyzed"] == 1 and out["remaining"] == 2, out
+    assert project.progress()["analyze"]["status"] == "attention"
+    assert out["next"].startswith("`babeldub analyze` again")
+    code, out = bd("analyze")
+    assert code == EXIT_OK and out["analyzed"] == 2 and "remaining" not in out
+    assert project.progress()["analyze"]["status"] == "done"

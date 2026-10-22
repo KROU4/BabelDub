@@ -279,6 +279,12 @@ def cmd_cast(args: argparse.Namespace) -> int:
     project.mark_stage("cast", "running")
 
     warnings: list[str] = []
+    if project.progress().get("analyze", {}).get("status") not in ("done", "attention"):
+        # not fatal: casting works without it, but later stages lose what analyze measures
+        warnings.append(
+            "the analyze stage is not done: line classes (interjections keep the original), emotion/arousal "
+            "buckets of the references and the speech-span translation budget are off; run `babeldub analyze`"
+        )
     durations = {line["id"]: line_duration(root, line) for line in lines}
     groups: dict[str, dict[str, Any]] = {}
     unhinted: list[dict[str, Any]] = []

@@ -75,3 +75,25 @@ def test_budget_uses_the_characters_measured_rate(bd, project_with_lines, line, 
     _, rows = _rows(project)
     assert list(rows) == [new["id"]]
     assert rows[new["id"]]["rate_syl_s"] == rate and rows[new["id"]]["budget_syll"] == budget
+
+
+def test_budget_uses_the_vad_span_not_the_sum_of_segments(bd, project_with_lines, line):
+    gappy = line(0, src="Fine, fine.", dur=3.0)
+    project = project_with_lines([gappy])
+    # speech_s is the sum of the segments (1.0 s); the span from the first to the last sound is 2.0 s
+    write_jsonl(project.path(layout.ANALYSIS),
+                [{"id": gappy["id"], "speech_s": 1.0, "vad_segments": [[0.2, 0.7], [1.7, 2.2]]}])
+    code, out = bd("batch", "make")
+    assert code == 0, out
+    _, rows = _rows(project)
+    assert rows[gappy["id"]]["speech_s"] == 2.0 and rows[gappy["id"]]["budget_syll"] == 11
+
+
+def test_budget_falls_back_to_analysis_speech_s_without_segments(bd, project_with_lines, line):
+    plain = line(0, src="Fine.", dur=3.0)
+    project = project_with_lines([plain])
+    write_jsonl(project.path(layout.ANALYSIS), [{"id": plain["id"], "speech_s": 1.2}])
+    code, out = bd("batch", "make")
+    assert code == 0, out
+    _, rows = _rows(project)
+    assert rows[plain["id"]]["speech_s"] == 1.2 and rows[plain["id"]]["budget_syll"] == 7

@@ -54,17 +54,21 @@ def cpu_cores() -> int:
 
 
 def save_every(epochs: int) -> int:
-    """Applio accepts --save-every-epoch in 1..100; use the largest divisor of `epochs` in that range
-    so the final epoch is always saved."""
-    return max(d for d in range(1, min(epochs, 100) + 1) if epochs % d == 0)
+    """Applio accepts --save-every-epoch in 1..100. Use the largest divisor of `epochs` in 10..100 so the
+    final epoch is a save point; without one (a prime count) save every min(epochs, 100) epochs: Applio
+    writes the final weights at the last epoch anyway, and never a checkpoint every epoch (~1.4 GB of G/D)."""
+    divisors = [d for d in range(10, min(epochs, 100) + 1) if epochs % d == 0]
+    return max(divisors) if divisors else max(1, min(epochs, 100))
 
 
 def auto_epochs(minutes: float, base: int = 20) -> int:
     """RVC needs a similar number of optimizer steps regardless of dataset size: small datasets
-    (minor characters, 1-5 min of speech) get more epochs. 30 min -> base, 1.5 min -> ~130, cap 300."""
+    (minor characters, 1-5 min of speech) get more epochs. 30 min -> base, 1.5 min -> ~130, cap 300;
+    above `base` the count is a multiple of 10 (a save point divides it)."""
     if minutes <= 0:
         return base
-    return int(min(300, max(base, round(base * 10.0 / minutes))))
+    epochs = min(300.0, max(float(base), base * 10.0 / minutes))
+    return base if epochs <= base else int(min(300, max(base, round(epochs / 10.0) * 10)))
 
 
 def train_commands(python: Path, name: str, dataset: Path, epochs: int, gpu: str) -> list[list[str]]:
@@ -76,8 +80,8 @@ def train_commands(python: Path, name: str, dataset: Path, epochs: int, gpu: str
         [py, "core.py", "extract", "--model-name", name, "--f0-method", "rmvpe", "--sample-rate", sr,
          "--gpu", gpu, "--cpu-cores", cores],
         [py, "core.py", "train", "--model-name", name, "--sample-rate", sr, "--total-epoch", str(epochs),
-         "--save-every-epoch", str(save_every(epochs)), "--batch-size", "8", "--gpu", gpu, "--pretrained",
-         "--index-algorithm", "Auto"],
+         "--save-every-epoch", str(save_every(epochs)), "--save-only-latest", "--batch-size", "8", "--gpu", gpu,
+         "--pretrained", "--index-algorithm", "Auto"],
         [py, "core.py", "index", "--model-name", name, "--index-algorithm", "Auto"],
     ]
 

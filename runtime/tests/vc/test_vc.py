@@ -210,14 +210,25 @@ def test_save_every_respects_applio_limit_and_saves_final_epoch():
     assert rvc.save_every(20) == 20
     assert rvc.save_every(150) == 75
     assert rvc.save_every(300) == 100
-    assert rvc.save_every(101) == 1
-    for e in (1, 20, 99, 100, 150, 200, 300):
+    for e in (10, 20, 50, 99, 100, 130, 150, 200, 300):
         s = rvc.save_every(e)
-        assert 1 <= s <= 100 and e % s == 0
+        assert 10 <= s <= 100 and e % s == 0
+    # a prime count has no divisor >= 10: never a checkpoint every epoch
+    assert rvc.save_every(101) == 100 and rvc.save_every(127) == 100 and rvc.save_every(7) == 7
 
 
 def test_auto_epochs_scales_for_small_datasets():
     assert rvc.auto_epochs(30.0) == 20
-    assert rvc.auto_epochs(1.5) == 133
+    assert rvc.auto_epochs(1.5) == 130  # 133 rounded to a multiple of 10
     assert rvc.auto_epochs(0.6) == 300
     assert rvc.auto_epochs(0.0) == 20
+    assert rvc.auto_epochs(25.0) == 20  # below the base: the base
+    for minutes in (0.5, 0.79, 1.0, 1.57, 2.2, 3.3, 7.0, 9.0):
+        e = rvc.auto_epochs(minutes)
+        assert e % 10 == 0 and 20 <= e <= 300 and rvc.save_every(e) >= 10
+
+
+def test_train_command_keeps_only_the_latest_checkpoint(tmp_path: Path) -> None:
+    train = rvc.train_commands(tmp_path / "python.exe", "bd_x", tmp_path, 127, "0")[2]
+    assert "--save-only-latest" in train
+    assert train[train.index("--save-every-epoch") + 1] == "100"

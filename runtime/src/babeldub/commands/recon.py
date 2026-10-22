@@ -124,10 +124,10 @@ def cmd_link(args: argparse.Namespace) -> int:
             src_lang=summary["src_lang"],
         )
     summary["next"] = (
-        "babeldub cast"
+        "babeldub analyze"
         if not summary["unlinked"]
-        else "unlinked lines are flagged no_text and keep their original voice (v0.1 has no transcription "
-        "command; see `babeldub query --where flags=no_text`), then `babeldub cast`"
+        else "unlinked lines are flagged no_text and keep their original voice "
+        "(see `babeldub query --where flags=no_text`), then `babeldub analyze`"
     )
     return emit(summary, code)
 
