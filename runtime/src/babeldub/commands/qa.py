@@ -24,6 +24,7 @@ from babeldub.cast.characters import UNKNOWN_ID
 from babeldub.cast.cluster import EMBEDDINGS, MERGE_THRESHOLD, Embedder, EmbeddingStore
 from babeldub.commands.cast import sub_common
 from babeldub.core import layout
+from babeldub.core.ids import uid as uid_of
 from babeldub.core.jsonl import append_jsonl, latest_by, now_iso, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
 from babeldub.core.project import Project
@@ -172,7 +173,10 @@ def cmd_qa(args: argparse.Namespace) -> int:
         raise BabelDubError("post/post.jsonl has no lines", code=EXIT_USAGE, hint="run `babeldub post` first")
     ids = list(post_latest)
     if args.ids:
-        want = [t.strip() for t in args.ids.split(",") if t.strip()]
+        uid_to_id = {r.get("uid"): i for i, r in post_latest.items() if r.get("uid")}
+        uid_to_id.update({uid_of(i): i for i in post_latest})
+        # accept short uids too, like synth/batch --ids do
+        want = [uid_to_id.get(t, t) for t in (t.strip() for t in args.ids.split(",")) if t]
         followers = [t for t in want if t in follows]
         if followers:
             raise BabelDubError("these lines follow another take and are not checked", code=EXIT_USAGE,
