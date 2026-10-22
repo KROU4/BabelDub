@@ -11,6 +11,11 @@ Reason codes written to qa.jsonl:
   identity      dub sounds like another char   -> regen, then keep_original
   peak          peak above the ceiling/clipped -> regen, then keep_original
   duration      longer than allowed            -> shorten (translator agent shortens the text)
+  mos           naturalness (UTMOS22) clearly below the character's originals -> regen, then keep_original
+  flat          F0 range under half of the original's (monotone) -> regen (another seed and arousal
+                bucket), then keep_original
+  timing        fixed_length line: a segment starts more than 80 ms off the original's onset or ends
+                more than 80 ms after the original's end -> regen, then keep_original
 
 Lines flagged `nonverbal` (screams, laughs) skip the voice checks (sim, identity) and CER: a
 scream's embedding and its transcript say nothing about the voice or the words.
@@ -27,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any
 
 DECISIONS = ("accept", "regen", "reref", "shorten", "retranslate", "keep_original", "skip")
-QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak"})
+QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak", "mos", "flat", "timing"})
 BLOCKING_REASONS = frozenset({"missing_file", "no_dub_text", "qc_error"})
 MAX_SHORTEN = 2  # after two shortened texts that still do not fit, the line needs a human
 
@@ -57,6 +62,10 @@ class Thresholds:
     silence_db: float = -50.0
     max_attempts: int = 3
     cross_lang: bool = True
+    mos_drop: float = 1.0  # flag a dub whose MOS is this far below the median MOS of its character's originals
+    min_f0_range_ratio: float = 0.5  # flag a dub whose F0 range is under this share of the original's
+    flat_min_orig_st: float = 3.0  # ... when the original moves at least this many semitones
+    max_onset_s: float = 0.08  # fixed_length: onset/offset deviation allowed per segment
 
     @property
     def sim_ratio(self) -> float:
@@ -84,7 +93,23 @@ class Thresholds:
             silence_db=float(qa.get("silence_db", base.silence_db)),
             max_attempts=int(tts.get("max_attempts", base.max_attempts)),
             cross_lang=is_cross_language(data.get("source_lang"), data.get("target_lang")),
+            mos_drop=float(qa.get("mos_drop", base.mos_drop)),
+            min_f0_range_ratio=float(qa.get("min_f0_range_ratio", base.min_f0_range_ratio)),
+            flat_min_orig_st=float(qa.get("flat_min_orig_st", base.flat_min_orig_st)),
+            max_onset_s=float(qa.get("max_onset_s", base.max_onset_s)),
         )
+
+    def low_mos(self, mos: float | None, orig_median: float | None) -> bool:
+        return mos is not None and orig_median is not None and mos < orig_median - self.mos_drop
+
+    def flat(self, dub_range_st: float | None, orig_range_st: float | None) -> bool:
+        if dub_range_st is None or orig_range_st is None or orig_range_st < self.flat_min_orig_st:
+            return False
+        return dub_range_st < self.min_f0_range_ratio * orig_range_st
+
+    def off_time(self, onsets: list[float] | None, offsets: list[float] | None) -> bool:
+        late_end = any(d > self.max_onset_s for d in offsets or [])
+        return late_end or any(abs(d) > self.max_onset_s for d in onsets or [])
 
 
 def evaluate(
@@ -104,6 +129,9 @@ def evaluate(
     qc_error: bool = False,
     margin: float | None = None,
     nonverbal: bool = False,
+    low_mos: bool = False,
+    flat: bool = False,
+    off_time: bool = False,
 ) -> tuple[str, list[str]]:
     """Apply the thresholds; returns (verdict, reasons)."""
     reasons: list[str] = []
@@ -124,6 +152,12 @@ def evaluate(
             reasons.append("sim")
         if margin is not None and margin < th.min_identity_margin:
             reasons.append("identity")
+        if low_mos:
+            reasons.append("mos")
+        if flat:
+            reasons.append("flat")
+    if off_time and fixed_length:
+        reasons.append("timing")
     limit = 1.0 + th.fixed_length_tolerance if fixed_length else th.max_duration_ratio
     if ratio is not None and ratio > limit:
         reasons.append("duration")

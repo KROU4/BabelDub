@@ -217,6 +217,9 @@ def test_fit_segments_fixed_length_uses_analysis_segments_and_merges() -> None:
     res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 1.0], [1.1, 1.9]])
     assert res.chunk_tempos == [pytest.approx(1.15), 1.0] and res.onset_deltas[0] == pytest.approx(0.0, abs=0.021)
     assert res.onset_deltas[1] == pytest.approx(1.2 / 1.15 - 0.9, abs=0.03) and res.ratio > 1.0 and res.exact
+    # the overrun shows in the offsets: the first chunk ends at its segment, the pushed one late
+    assert res.offset_deltas[0] == pytest.approx(1.2 / 1.15 - 0.8, abs=0.03)
+    assert res.offset_deltas[1] == pytest.approx(0.2 + 1.2 / 1.15 + 0.8 - 1.9, abs=0.03) and res.offset_deltas[1] > 0.08
 
 
 @pytest.mark.parametrize("frames", [47999, 48001, 52357])

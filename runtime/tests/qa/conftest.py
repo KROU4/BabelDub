@@ -38,6 +38,8 @@ class FakeQc:
     def __init__(self) -> None:
         self.vectors: dict[str, np.ndarray] = {}
         self.texts: dict[str, str] = {}
+        self.prosody: dict[str, dict[str, Any]] = {}
+        self.mos: dict[str, float] = {}
         self.fail: set[str] = set()
         self.loads: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
@@ -51,6 +53,8 @@ class FakeQc:
 
     def request(self, msg: dict[str, Any]) -> dict[str, Any]:
         self.requests.append(msg)
+        if "wav" not in msg:  # text ops (spell): numbers stay as they are
+            return {"ok": True, "op": msg["op"], "texts": list(msg.get("texts") or [])}
         k = key(msg["wav"])
         if k in self.fail:
             return {"ok": False, "op": msg["op"], "id": msg.get("id"), "error": "decode error"}
@@ -61,6 +65,10 @@ class FakeQc:
             return {"ok": True, "op": "embed", "id": msg.get("id"), "emb": [float(x) for x in vec]}
         if msg["op"] == "asr":
             return {"ok": True, "op": "asr", "id": msg.get("id"), "text": self.texts.get(k, "")}
+        if msg["op"] == "prosody" and k in self.prosody:
+            return {"ok": True, "op": "prosody", "id": msg.get("id"), **self.prosody[k]}
+        if msg["op"] == "mos" and k in self.mos:
+            return {"ok": True, "op": "mos", "id": msg.get("id"), "mos": self.mos[k]}
         return {"ok": False, "op": msg["op"], "error": "unsupported"}
 
     def close(self) -> None:

@@ -1622,6 +1622,7 @@ def _post_line(
         "measure": fit.measure, "peak_db": _num(fit.peak_db, 2),
         "lead_s": round(fit.lead_s, 4), "trail_s": round(fit.trail_s, 4),
         "pause_cut_s": round(fit.pause_cut_s, 4), "onset_deltas": [round(d, 3) for d in fit.onset_deltas],
+        "offset_deltas": [round(d, 3) for d in fit.offset_deltas],
         "chunk_tempo": {"n": len(fit.chunk_tempos), "min": round(min(fit.chunk_tempos), 4),
                         "max": round(max(fit.chunk_tempos), 4)},
         "sr": fit.sr, "ch": int(fit.audio.shape[1]), "frames": frames, "exact": fit.exact,

@@ -116,6 +116,7 @@ class FitResult:
     peak_db: float
     pause_cut_s: float = 0.0  # internal pause time removed before any speed-up
     onset_deltas: list[float] = field(default_factory=list)  # placed - original onset per segment (s)
+    offset_deltas: list[float] = field(default_factory=list)  # placed - original end per segment (s; < 0 = ends early)
     chunk_tempos: list[float] = field(default_factory=list)  # tempo per placed chunk (one for a plain line)
 
 
@@ -325,6 +326,7 @@ def fit_segments(
     tempos: list[float] = []
     weights: list[int] = []
     deltas: list[float] = []
+    ends: list[float] = []
     methods: list[str] = []
     cut_total = 0
     if fixed_length:
@@ -342,6 +344,7 @@ def fit_segments(
             placements.append((start, audio))
             cursor = start + len(audio)
             deltas.append((start - seg_start) / orig_sr)
+            ends.append((start + len(audio) - seg_end) / orig_sr)
             tempos.append(tempo)
             weights.append(b - a)
             methods.append(used)
@@ -362,6 +365,7 @@ def fit_segments(
         start = o0 if o0 + n <= frames else max(0, frames - n)  # overrun into the trail, then into the lead
         placements.append((start, audio))
         deltas.append((start - o0) / orig_sr)
+        ends.append((start + n - o1) / orig_sr)
         tempos.append(tempo)
         weights.append(len(speech))
         methods.append(used)
@@ -388,7 +392,7 @@ def fit_segments(
         target_s=target / orig_sr, lead_s=first / orig_sr, trail_s=(total - last) / orig_sr, exact=total == frames,
         fits=last <= frames, method=next((m for m in methods if m != "none"), "none"), level_ref=level_ref,
         level_in=level_in, level_out=level_out, measure=measure, peak_db=peak, pause_cut_s=cut_total / orig_sr,
-        onset_deltas=deltas, chunk_tempos=tempos,
+        onset_deltas=deltas, offset_deltas=ends, chunk_tempos=tempos,
     )
 
 

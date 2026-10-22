@@ -250,3 +250,50 @@ def test_gpu_lock_is_held_and_released(dub, fake_qc, run, monkeypatch) -> None:
     assert seen["locked"] is True
     assert not lock_path.exists()
     assert fake_qc.loads[-1]["device"] == "cuda"
+
+
+def test_qa_mos_prosody_timing_and_line_classes(dub, fake_qc, run, home) -> None:
+    from pathlib import Path
+
+    from babeldub.core.jsonl import write_jsonl
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    (home / "models" / "utmos22-strong").mkdir(parents=True)
+    (home / "models" / "utmos22-strong" / "utmos22_strong_step7459_v1.pt").write_bytes(b"x")
+    base = [dub.line("hero", 4.0) for _ in range(3)]  # clean originals: their MOS median is 3.5
+    ids = {name: dub.line("hero", 3.0) for name in ("fine", "unnatural", "flat", "mixed", "short")}
+    ids["cutscene"] = dub.line("hero", 3.0, fixed_length=True)
+    for name, lid in ids.items():
+        dub.translate(lid, "Привет, как дела?")
+        wav = dub.dub(lid, voice="hero", asr="привет как дела")
+        fake_qc.mos[key_of(wav)] = 2.0 if name == "unnatural" else 3.4
+        fake_qc.prosody[key_of(wav)] = {"f0_range_st": 2.0 if name == "flat" else 5.5}
+    for lid in base + list(ids.values()):
+        line = next(x for x in dub.lines if x["id"] == lid)
+        orig = dub.project.path(line["audio"]["wav"])
+        fake_qc.mos[key_of(orig)] = 3.5
+        fake_qc.prosody[key_of(orig)] = {"f0_range_st": 6.0}
+    dub.save()
+    post = read_jsonl(dub.project.path(layout.POST))
+    for row in post:
+        if row["id"] == ids["cutscene"]:
+            row.update(onset_deltas=[0.0, 0.15], offset_deltas=[0.0, 0.02])
+    write_jsonl(dub.project.path(layout.POST), post, schema="babeldub.post/1")
+    write_jsonl(dub.project.path(layout.ANALYSIS), [{"id": ids["mixed"], "class": "mixed"},
+                                                     {"id": ids["short"], "class": "short_word"}],
+                schema="babeldub.analysis/1")
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    dec = latest_by(read_jsonl(dub.project.path(layout.DECISIONS)))
+    assert qa[ids["fine"]]["verdict"] == "pass" and qa[ids["fine"]]["mos"] == 3.4 and qa[ids["fine"]]["orig_mos"] == 3.5
+    assert qa[ids["fine"]]["prosody_sim"] == round(5.5 / 6.0, 4) and qa[ids["fine"]]["orig_f0_range_st"] == 6.0
+    assert qa[ids["unnatural"]]["reasons"] == ["mos"] and dec[ids["unnatural"]]["decision"] == "regen"
+    assert qa[ids["flat"]]["reasons"] == ["flat"] and dec[ids["flat"]]["decision"] == "regen"
+    assert qa[ids["cutscene"]]["reasons"] == ["timing"]
+    assert dec[ids["mixed"]]["decision"] == "accept" and dec[ids["mixed"]]["attention"] is True
+    assert qa[ids["mixed"]]["class"] == "mixed" and ids["mixed"] in out["attention"]
+    assert out["mos_median"] == 3.4
+    mos_base = json.loads(dub.project.path("qa/mos_baseline.json").read_text(encoding="utf-8"))
+    assert mos_base["hero"] == {"median": 3.5, "n": 8}

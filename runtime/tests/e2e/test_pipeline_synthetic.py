@@ -422,7 +422,7 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     code, out = bd("qa")
     assert code == EXIT_OK, out
     assert out["checked"] == 4 and out["pass"] == 4 and out["accept"] == 4 and out["cer_median"] == 0.0, out
-    assert {r["op"] for r in fake.requests} == {"asr", "embed"}
+    assert {r["op"] for r in fake.requests} == {"asr", "embed", "prosody"}  # no MOS model downloaded
     (root / layout.DECISIONS_AGENT).write_text(
         json.dumps({"id": row["id"], "decision": "accept", "note": "listened: fine"}) + "\n", encoding="utf-8"
     )

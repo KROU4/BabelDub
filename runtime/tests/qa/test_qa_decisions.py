@@ -143,3 +143,18 @@ def test_auto_decide_line_classes() -> None:
     assert auto_decide("fail", ["cer"], 1, TH, line_class="short_word", max_attempts=2).decision == "regen"
     last = auto_decide("fail", ["cer"], 2, TH, line_class="short_word", max_attempts=2)
     assert last.decision == "keep_original" and last.attention
+
+
+def test_mos_flat_and_timing_reasons() -> None:
+    th = Thresholds.from_project({"qa": {"mos_drop": 0.8, "min_f0_range_ratio": 0.6}})
+    assert th.mos_drop == 0.8 and th.min_f0_range_ratio == 0.6 and th.max_onset_s == 0.08
+    assert XLANG.low_mos(2.4, 3.5) and not XLANG.low_mos(2.6, 3.5) and not XLANG.low_mos(None, 3.5)
+    assert XLANG.flat(2.0, 6.0) and not XLANG.flat(4.0, 6.0) and not XLANG.flat(0.5, 2.0)  # a flat original
+    assert XLANG.off_time([0.0, 0.1], [0.0]) and XLANG.off_time([0.0], [0.09])
+    assert not XLANG.off_time([-0.05], [-0.4])  # ending early is fine
+    assert _eval(low_mos=True, flat=True)[1] == ["mos", "flat"]
+    assert _eval(low_mos=True, nonverbal=True)[1] == []
+    assert _eval(off_time=True)[1] == [] and _eval(off_time=True, fixed_length=True, ratio=1.0)[1] == ["timing"]
+    for reason in ("mos", "flat", "timing"):
+        assert auto_decide("fail", [reason], 1, TH).decision == "regen"
+        assert auto_decide("fail", [reason], 3, TH).decision == "keep_original"
