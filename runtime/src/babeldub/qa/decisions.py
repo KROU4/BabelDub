@@ -11,9 +11,10 @@ Reason codes written to qa.jsonl:
   identity      dub sounds like another char   -> regen, then keep_original
   peak          peak above the ceiling/clipped -> regen, then keep_original
   duration      longer than allowed            -> shorten (translator agent shortens the text)
-  mos           naturalness (UTMOS22) clearly below the character's originals -> regen, then keep_original
+  mos           naturalness (UTMOS22) clearly below the character's originals -> regen, then accept with
+                attention when it is the only kind of failure left (SOFT_REASONS), else keep_original
   flat          F0 range under half of the original's (monotone) -> regen (another seed and arousal
-                bucket), then keep_original
+                bucket), then accept with attention when only mos/flat still fail, else keep_original
   timing        fixed_length line: a segment starts more than 80 ms off the original's onset or ends
                 more than 80 ms after the original's end -> regen, then keep_original
 
@@ -34,6 +35,10 @@ from typing import Any
 DECISIONS = ("accept", "regen", "reref", "shorten", "retranslate", "keep_original", "skip")
 QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak", "mos", "flat", "timing"})
 BLOCKING_REASONS = frozenset({"missing_file", "no_dub_text", "qc_error"})
+# judgements of delivery, not of the words or the voice: once the attempts are used up a take that only
+# fails these is still a better dub than the original audio in another language, so it is accepted
+# (with attention) instead of keep_original
+SOFT_REASONS = frozenset({"mos", "flat"})
 MAX_SHORTEN = 2  # after two shortened texts that still do not fit, the line needs a human
 
 
@@ -183,7 +188,8 @@ def auto_decide(
     pass -> accept (a `mixed` line, words with a laugh or groan, is accepted with attention: a person
     listens whether the nonverbal part survived). Quality failures -> regen while attempts remain
     (`max_attempts` overrides th.max_attempts, e.g. 2 for short_word lines), then keep_original with
-    attention. Too long -> shorten (the translator agent rewrites the text), at most MAX_SHORTEN
+    attention, except that a take failing only SOFT_REASONS (mos, flat) is then accepted with attention.
+    Too long -> shorten (the translator agent rewrites the text), at most MAX_SHORTEN
     times, then keep_original with attention.
     """
     limit = th.max_attempts if max_attempts is None else max_attempts
@@ -203,6 +209,9 @@ def auto_decide(
         return AutoDecision("shorten", True, "too long for the original timing: shorten the dub text")
     if too_long:
         return AutoDecision("keep_original", True, f"still too long after {shortened} shortened texts")
+    if quality and set(quality) <= SOFT_REASONS:
+        return AutoDecision("accept", True, f"{','.join(quality)} still failing after {attempt} attempts: the dub "
+                            "is kept (words and voice pass); listen")
     return AutoDecision(
         "keep_original", True, f"{','.join(quality)} still failing after {attempt} attempts: original kept"
     )

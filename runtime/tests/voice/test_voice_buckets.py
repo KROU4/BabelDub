@@ -146,6 +146,10 @@ def test_target_bank_per_bucket(project: Project) -> None:
     kw: dict[str, Any] = dict(post=post, qa=qa, decisions=dec, texts=texts, max_cer=0.15, nonverbal=set(),
                               buckets=buckets)
     assert bootstrap.target_bank(project.root, "Zbyszek", list(post), min_accepted=6, **kw) == {}
+    # a take QA accepted with doubts (only flat/unnatural after the last attempt) is no prompt piece
+    dec[lid(1)] = {"decision": "accept", "attempt": 1, "by": "auto", "attention": True}
+    assert bootstrap.target_bank(project.root, "Zbyszek", list(post), min_accepted=4, **kw) == {}
+    dec[lid(1)] = {"decision": "accept", "attempt": 1}
     bank = bootstrap.target_bank(project.root, "Zbyszek", list(post), min_accepted=3, **kw)
     assert set(bank) == {"calm", "loud"}
     # calm: line 1 ranks first (MOS + prosody), CER 0.5 of line 7 is gated out; 4 s < 5 s adds line 4 (5.5 s)

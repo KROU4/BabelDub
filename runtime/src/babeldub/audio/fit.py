@@ -6,7 +6,8 @@ keeps its tempo and the rest is silence. A dub whose speech does not fit the roo
 speech onset first loses part of its internal pauses (down to max(80 ms, half of each)), then speeds
 up to at most `tempo_max`. A `fixed_length` line (cutscene) is split into chunks that are matched to
 the original's speech segments (monotone DP over |log(dub/orig)| with a merge penalty) and each chunk starts where its
-segment starts, sped up only to fit that segment. The result has exactly the original's number of
+segment starts, sped up only to fit that segment; a chunk group that would end early instead gets
+longer pauses (each up to twice its length, +0.4 s at most), never slower speech. The result has exactly the original's number of
 samples at its rate and channel count, loudness matched to the original speech. A dub that still does
 not fit is never cut: the file then runs longer. `fit_to_original` is the older bounded-tempo fit
 (it may slow down to `tempo_min`), kept for callers that want it.
@@ -34,6 +35,8 @@ PAUSE_MIN_S = 0.08  # a shortened pause keeps at least this much ...
 PAUSE_KEEP = 0.5  # ... and at least this share of its length
 MAX_MERGE = 8  # chunks/segments one DP group may merge on each side
 MERGE_PENALTY = 0.1  # DP cost per merged chunk/segment (about a 10 % length mismatch)
+PAUSE_GROW = 1.0  # fixed_length: a pause of a short dub may grow by up to this share of its length ...
+PAUSE_GROW_MAX_S = 0.4  # ... and by at most this many seconds
 
 
 def _active_frames(data: np.ndarray, sr: int, threshold_db: float) -> tuple[np.ndarray, int, int] | None:
@@ -118,6 +121,7 @@ class FitResult:
     onset_deltas: list[float] = field(default_factory=list)  # placed - original onset per segment (s)
     offset_deltas: list[float] = field(default_factory=list)  # placed - original end per segment (s; < 0 = ends early)
     chunk_tempos: list[float] = field(default_factory=list)  # tempo per placed chunk (one for a plain line)
+    pause_add_s: float = 0.0  # fixed_length: silence added to the pauses of a dub that would end early
 
 
 Stretcher = Callable[[Path, Path, float], str]
@@ -255,6 +259,35 @@ def _shorten_pauses(speech: np.ndarray, chunks: Sequence[tuple[int, int]], sr: i
     return np.concatenate(joined).astype(np.float32), removed
 
 
+def _widen_pauses(speech: np.ndarray, chunks: Sequence[tuple[int, int]], sr: int, need: int) -> tuple[np.ndarray, int]:
+    """Add up to `need` samples of silence to the pauses between `chunks` (relative to `speech`), every
+    pause by the same share of what it may gain (up to PAUSE_GROW x its length, at most PAUSE_GROW_MAX_S).
+    Speech itself is untouched. The silence goes into the middle of a pause; the joins get short fades.
+    Returns (audio, samples added)."""
+    gaps = [(chunks[n][1], chunks[n + 1][0]) for n in range(len(chunks) - 1)]
+    cap = int(PAUSE_GROW_MAX_S * sr)
+    growable = [max(0, min(cap, int(PAUSE_GROW * (e - s)))) for s, e in gaps]
+    total = sum(growable)
+    if need <= 0 or total <= 0:
+        return speech, 0
+    share = min(1.0, need / total)
+    pieces: list[np.ndarray] = []
+    pos = added = 0
+    for (s, e), can in zip(gaps, growable, strict=True):
+        grow = int(round(can * share))
+        if grow <= 0:
+            continue
+        mid = s + (e - s) // 2
+        pieces += [speech[pos:mid], np.zeros(grow, dtype=np.float32)]
+        pos = mid
+        added += grow
+    pieces.append(speech[pos:])
+    last = len(pieces) - 1
+    joined = [p if not p.any() else fade(p, sr, JOIN_FADE_MS, fade_in=n > 0, fade_out=n < last)
+              for n, p in enumerate(pieces)]
+    return np.concatenate(joined).astype(np.float32), added
+
+
 def _compress(
     speech: np.ndarray, chunks: Sequence[tuple[int, int]], sr: int, room: int, *, tempo_max: float,
     tolerance: float, stretcher: Stretcher,
@@ -328,7 +361,7 @@ def fit_segments(
     deltas: list[float] = []
     ends: list[float] = []
     methods: list[str] = []
-    cut_total = 0
+    cut_total = added_total = 0
     if fixed_length:
         segs = _segments(orig_segments, mono_orig, orig_sr, frames)
         target = max(1, segs[-1][1] - segs[0][0])
@@ -341,6 +374,11 @@ def fit_segments(
                 tempo_max=tempo_max, tolerance=tolerance, stretcher=stretcher,
             )
             start = max(seg_start, cursor)  # a chunk that still overruns pushes the next one later
+            short = (seg_end - start) - len(audio)
+            if cut == 0 and used == "none" and short > tolerance * (seg_end - seg_start):
+                # a short dub ends early: lengthen its own pauses toward the segment end (speech kept as is)
+                audio, grown = _widen_pauses(audio, [(s - a, e - a) for s, e in chunks[i0:i1]], orig_sr, short)
+                added_total += grown
             placements.append((start, audio))
             cursor = start + len(audio)
             deltas.append((start - seg_start) / orig_sr)
@@ -392,7 +430,7 @@ def fit_segments(
         target_s=target / orig_sr, lead_s=first / orig_sr, trail_s=(total - last) / orig_sr, exact=total == frames,
         fits=last <= frames, method=next((m for m in methods if m != "none"), "none"), level_ref=level_ref,
         level_in=level_in, level_out=level_out, measure=measure, peak_db=peak, pause_cut_s=cut_total / orig_sr,
-        onset_deltas=deltas, offset_deltas=ends, chunk_tempos=tempos,
+        onset_deltas=deltas, offset_deltas=ends, chunk_tempos=tempos, pause_add_s=added_total / orig_sr,
     )
 
 

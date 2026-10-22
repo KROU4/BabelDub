@@ -80,6 +80,7 @@ POST_SCHEMA = "babeldub.post/1"
 DECISIONS_SCHEMA = "babeldub.decisions/1"
 ANALYSIS = "inventory/analysis.jsonl"  # optional: {id, vad_segments: [[start_s, end_s], ...], ...}
 SHORT_WORD_BEST_OF = 6  # tts.short_word_best_of: candidates of a short_word line ("Freeze!")
+FIXED_LENGTH_BEST_OF = 5  # tts.fixed_length_best_of: candidates of a fixed_length (cutscene) line
 SHORT_WORD_ATTEMPTS = 2  # tts.short_word_attempts: one regen, then the original is kept
 
 # Fallback when data/models.yaml or babeldub.envsetup is unavailable.
@@ -746,6 +747,8 @@ def _plan_synth(
     keep_classes = keep_original_classes(project)
     short_best_of = max(1, int(tts.get("short_word_best_of", SHORT_WORD_BEST_OF) or SHORT_WORD_BEST_OF))
     short_attempts = max(1, int(tts.get("short_word_attempts", SHORT_WORD_ATTEMPTS) or SHORT_WORD_ATTEMPTS))
+    fixed_best_of = max(1, int(tts.get("fixed_length_best_of", FIXED_LENGTH_BEST_OF) or FIXED_LENGTH_BEST_OF))
+    best_of_on = int(getattr(args, "best_of", None) or tts.get("best_of", 1) or 1) > 1  # best-of at all (not a 1-take run)
     want_chars = {c.lower() for c in _csv(args.chars)}
     want_ids = set(_csv(args.ids))
     follows = follower_map(lines_all.values())
@@ -875,7 +878,9 @@ def _plan_synth(
         bucket: str | None = None
         avoid_bucket = _avoid_bucket(reason, latest_ok, qa_latest.get(line_id))
         boot = states.get(char_id)
-        orig = _orig_wav(project, line) if cls == "short_word" and prefer is None else None
+        # a short word's first take uses the line itself; its regen goes through the character's own
+        # (bootstrap) reference, whose pronunciation of the target language is steadier
+        orig = _orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen" else None
         if orig is not None:  # a short word: the line itself carries the delivery, no target-language prompt
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             src = str((line.get("text") or {}).get("src") or "")
@@ -913,6 +918,8 @@ def _plan_synth(
         job.bucket = bucket
         if cls == "short_word":
             job.best_of_min = short_best_of
+        elif line.get("fixed_length") and best_of_on:  # cutscene timing: more takes to find one of its length
+            job.best_of_min = fixed_best_of
         if ref.mode == "line" and engine.name != PREMIUM:  # VoxCPM2 takes the line as timbre only
             char_ref = _char_ref(project, refs_by_char.get(char_id, []), ref.lang, avoid, prepare)
             _check_icl(job, None if prefer == "line" or cls == "short_word" else char_ref)
@@ -1499,7 +1506,8 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
         if not ranked:
             continue  # stays unscored: the next `synth score` tries again
         target = float(info.get("target_speech_s") or row.get("dur_s") or 0.0)
-        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=str(row.get("char_id")) in rvc)
+        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=str(row.get("char_id")) in rvc,
+                             fixed_length=bool(line.get("fixed_length")))
         win_path = _abs(project, win.wav)
         assert win_path is not None
         win_path.replace(out)
@@ -1621,7 +1629,7 @@ def _post_line(
         "lufs_in": _num(fit.level_in, 2), "lufs_out": _num(fit.level_out, 2), "level_ref": _num(fit.level_ref, 2),
         "measure": fit.measure, "peak_db": _num(fit.peak_db, 2),
         "lead_s": round(fit.lead_s, 4), "trail_s": round(fit.trail_s, 4),
-        "pause_cut_s": round(fit.pause_cut_s, 4), "onset_deltas": [round(d, 3) for d in fit.onset_deltas],
+        "pause_cut_s": round(fit.pause_cut_s, 4), "pause_add_s": round(fit.pause_add_s, 4), "onset_deltas": [round(d, 3) for d in fit.onset_deltas],
         "offset_deltas": [round(d, 3) for d in fit.offset_deltas],
         "chunk_tempo": {"n": len(fit.chunk_tempos), "min": round(min(fit.chunk_tempos), 4),
                         "max": round(max(fit.chunk_tempos), 4)},

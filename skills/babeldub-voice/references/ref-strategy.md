@@ -56,7 +56,7 @@ To rebuild the prompts (for example after retraining the RVC model), delete `syn
 ### 2.3 Line classes and short words
 
 - **Interjections and nonverbal lines** ("Hehe…", "Hmm.", a groan, `[laughs]`) are not translated or voiced: a cloned laugh sounds fake, the original is better. `synth` reports `skipped.keep_original` and writes an automatic `keep_original` decision. To dub one anyway, write an agent/human decision other than `keep_original` for it and translate it with `batch make --ids`.
-- **Short words** ("Freeze!", "Yes, Chief!": less than 1.2 s of speech) carry almost no timbre in a long reference and lose their punch: the line itself is the reference (VoxCPM2: `reference_wav_path` = the original line, no target-language prompt), 6 candidates (`tts.short_word_best_of`), one regen at most (`tts.short_word_attempts` = 2), then the original is kept.
+- **Short words** ("Freeze!", "Yes, Chief!": less than 1.2 s of speech) carry almost no timbre in a long reference and lose their punch: the line itself is the reference (VoxCPM2: `reference_wav_path` = the original line, no target-language prompt), 6 candidates (`tts.short_word_best_of`), one regen at most (`tts.short_word_attempts` = 2), voiced through the character's own reference instead of the line (steadier pronunciation), then the original is kept.
 - **Mixed lines** (words with a laugh or groan) are voiced; QA accepts them with attention so a person listens whether the nonverbal part survived.
 
 ## 3. Why the original line as a prompt carries the emotion

@@ -127,6 +127,34 @@ def test_short_word_uses_the_line_and_more_candidates(project: Project, capsys: 
     assert out["done"] == 0 and out["skipped"].get("done", 0) == 1  # its text is done
 
 
+def test_short_word_regen_leaves_the_line_reference(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth", "--ids", lid(4))
+    first = results(project)[lid(4)]
+    assert "short_word" in first["ref_reason"]
+    append_jsonl(project.path(layout.DECISIONS), [{"id": lid(4), "decision": "regen", "attempt": 1, "by": "auto"}])
+    code, out = run(capsys, project.root, "synth", "--ids", lid(4), "--attempt-next")
+    assert code == EXIT_OK and out["done"] == 1, out
+    row = results(project)[lid(4)]
+    assert row["attempt"] == 2 and "short_word" not in str(row.get("ref_reason") or "")
+    assert row["best_of"]["n"] == voice.SHORT_WORD_BEST_OF  # still a short word: more candidates
+
+
+def test_fixed_length_line_gets_more_candidates(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    project.data["tts"]["best_of"] = 2
+    project.save()
+    lines = read_jsonl(project.path(layout.LINES))
+    write_jsonl(project.path(layout.LINES), [{**ln, "fixed_length": ln["id"] == lid(1)} for ln in lines if "id" in ln],
+                schema="babeldub.lines/1")
+    code, out = run(capsys, project.root, "synth", "--ids", f"{lid(1)},{lid(5)}")
+    assert code == EXIT_OK, out
+    rows = results(project)
+    assert rows[lid(1)]["best_of"]["n"] == voice.FIXED_LENGTH_BEST_OF
+    assert rows[lid(5)]["best_of"]["n"] == 2
+    # a one-take run (best_of 1) stays one take, cutscene or not
+    code, out = run(capsys, project.root, "synth", "--ids", lid(1), "--force", "--best-of", "1")
+    assert "best_of" not in results(project)[lid(1)]
+
+
 def test_short_word_bootstrap_has_no_target_prompt(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     project.data["tts"].update(ref_strategy="bootstrap", best_of=2)
     project.save()

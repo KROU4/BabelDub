@@ -33,6 +33,7 @@ from babeldub import cli
 from babeldub.adapters.fmod import fsb5 as F
 from babeldub.adapters.unity import adapter as ul
 from babeldub.adapters.unity.adapter import SHARED_TABLE, STRING_TABLE, BundleProbe, TableObject
+from babeldub.commands import voice
 from babeldub.core import layout
 from babeldub.core.jsonl import latest_by, read_json, read_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_ENV, EXIT_OK, EXIT_USAGE
@@ -403,8 +404,9 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     for lid, post in latest_by(read_jsonl(root / layout.POST)).items():
         info = sf.info(str(root / post["wav"]))
         assert (info.samplerate, info.channels) == (lines[lid]["audio"]["sr"], lines[lid]["audio"]["ch"])
-    for res in latest_by(read_jsonl(root / layout.SYNTH_RESULTS)).values():
-        assert res["best_of"]["n"] == 2 and res["best_of"]["usable"] == 2
+    for lid, res in latest_by(read_jsonl(root / layout.SYNTH_RESULTS)).items():
+        n = voice.FIXED_LENGTH_BEST_OF if lines[lid]["fixed_length"] else 2  # a cutscene line gets more takes
+        assert res["best_of"]["n"] == n and res["best_of"]["usable"] == n
 
     # vc: no character has an RVC model here, every line passes through unchanged
     code, out = bd("vc")

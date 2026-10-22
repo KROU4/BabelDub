@@ -68,7 +68,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     monkeypatch.setenv("BABELDUB_HOME", str(home))
     root = home / "projects" / "test-game"
     proj = Project.create(root, {"slug": "test-game", "game_name": "Test", "game_dir": str(tmp_path / "game"),
-                                 "target_lang": "ru", "source_lang": "en", "tts": {"engine": "dummy"}})
+                                 "target_lang": "ru", "source_lang": "en",
+                                 # the cutscene line gets as many candidates as the rest, so it can share a batch
+                                 "tts": {"engine": "dummy", "fixed_length_best_of": 3}})
     sr = 48000
     lines, translations, refs = [], [], []
     for n, (suffix, kind, speaker, src, secs, ch, fixed, dub) in enumerate(LINES):

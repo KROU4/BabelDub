@@ -222,6 +222,34 @@ def test_fit_segments_fixed_length_uses_analysis_segments_and_merges() -> None:
     assert res.offset_deltas[1] == pytest.approx(0.2 + 1.2 / 1.15 + 0.8 - 1.9, abs=0.03) and res.offset_deltas[1] > 0.08
 
 
+def test_fit_segments_fixed_length_short_dub_gets_longer_pauses_not_slower_speech() -> None:
+    sr = 24000
+    orig = cutscene(sr)
+    # one original segment 0.2-3.5 s; the dub speaks 2.2 s with two 0.2 s pauses: 1.1 s short
+    dub = words(sr, [("w", 0.8), ("p", 0.2), ("w", 0.6), ("p", 0.2), ("w", 0.4)])
+    calls: list[float] = []
+    res = fit_seg(dub, sr, orig, sr, calls, fixed_length=True, orig_segments=[[0.2, 3.5]])
+    assert calls == [] and res.chunk_tempos == [1.0] and res.exact  # never slowed
+    assert res.pause_add_s == pytest.approx(0.4, abs=0.01)  # each pause at most doubles
+    placed = fit.speech_chunks(res.audio[:, 0], sr)
+    assert [round((e - s) / sr, 1) for s, e in placed] == [0.8, 0.6, 0.4]  # speech untouched
+    assert [round((placed[n + 1][0] - placed[n][1]) / sr, 1) for n in range(2)] == [0.4, 0.4]
+    assert res.offset_deltas[0] == pytest.approx(-0.7, abs=0.03)  # was -1.1 without the longer pauses
+    # a dub that is only a little short gets just what it needs, shared by the pauses
+    dub = words(sr, [("w", 1.4), ("p", 0.3), ("w", 0.6), ("p", 0.3), ("w", 0.5)])
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 3.5]])
+    assert res.pause_add_s == pytest.approx(0.2, abs=0.01) and res.offset_deltas[0] == pytest.approx(0.0, abs=0.03)
+    # one breath, no pause: nothing to widen; a long pause grows by 0.4 s at most
+    res = fit_seg(words(sr, [("w", 2.0)]), sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 3.5]])
+    assert res.pause_add_s == 0.0 and res.offset_deltas[0] == pytest.approx(-1.3, abs=0.03)
+    res = fit_seg(words(sr, [("w", 0.8), ("p", 1.0), ("w", 0.5)]), sr, orig, sr, [], fixed_length=True,
+                  orig_segments=[[0.2, 3.5]])
+    assert res.pause_add_s == pytest.approx(0.4, abs=0.01)
+    # plain lines keep their pauses: the rest of the file is silence
+    res = fit_seg(words(sr, [("w", 0.8), ("p", 0.2), ("w", 0.6)]), sr, orig, sr, [])
+    assert res.pause_add_s == 0.0
+
+
 @pytest.mark.parametrize("frames", [47999, 48001, 52357])
 def test_fit_segments_keeps_exact_sample_count(frames: int) -> None:
     sr, o_sr = 22050, 48000

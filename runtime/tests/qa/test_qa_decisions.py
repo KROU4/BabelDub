@@ -157,4 +157,11 @@ def test_mos_flat_and_timing_reasons() -> None:
     assert _eval(off_time=True)[1] == [] and _eval(off_time=True, fixed_length=True, ratio=1.0)[1] == ["timing"]
     for reason in ("mos", "flat", "timing"):
         assert auto_decide("fail", [reason], 1, TH).decision == "regen"
-        assert auto_decide("fail", [reason], 3, TH).decision == "keep_original"
+    # out of attempts: a take that only sounds flat/unnatural is still a dub (accepted, a person listens);
+    # wrong words, a wrong voice or bad timing keep the original
+    for reasons in (["mos"], ["flat"], ["mos", "flat"]):
+        last = auto_decide("fail", reasons, 3, TH)
+        assert last.decision == "accept" and last.attention
+    for reasons in (["timing"], ["flat", "cer"], ["mos", "sim"]):
+        assert auto_decide("fail", reasons, 3, TH).decision == "keep_original"
+    assert auto_decide("fail", ["mos"], 2, TH, line_class="short_word", max_attempts=2).decision == "accept"

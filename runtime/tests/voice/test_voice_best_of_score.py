@@ -178,6 +178,10 @@ def test_rank_gates_and_weights() -> None:
     cands = [cand(1, speech_s=9.0), cand(2, speech_s=8.0)]
     assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 2
     assert rank.length_fit(2.0, 2.0) == 1.0 and rank.length_fit(2.5, 2.0) == pytest.approx(0.0)
+    # a fixed_length (cutscene) line weighs the length more than the expressiveness
+    cands = [cand(1, prosody_sim=1.0, speech_s=1.7), cand(2, prosody_sim=0.5, speech_s=2.0)]
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 1
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15, fixed_length=True).seed == 2
 
 
 def test_prosody_metrics_and_number_cer(monkeypatch: pytest.MonkeyPatch) -> None:

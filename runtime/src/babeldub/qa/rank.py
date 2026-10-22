@@ -9,6 +9,8 @@ passes, all are ranked. Then the score:
   0.20 x length fit      (1 at the original's speech length, 0 at the x1.25 gate)
   0.20 x voice SIM       (ECAPA cosine to the original; 0.05 when an RVC model sets the timbre later)
 
+A fixed_length (cutscene) line weighs the length fit 0.35 and expressiveness 0.20, since a take that
+ends early or late cannot be timed without slowing or squeezing it.
 A metric that could not be measured counts as 0.5. CER is only a gate, never a score.
 """
 
@@ -19,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 W_EXPRESSIVE, W_MOS, W_LENGTH, W_SIM, W_SIM_RVC = 0.35, 0.25, 0.20, 0.20, 0.05
+W_EXPRESSIVE_FIXED, W_LENGTH_FIXED = 0.20, 0.35  # fixed_length lines: timing matters more
 CER_SLACK = 0.05
 LEN_GATE = math.log(1.25)
 NEUTRAL = 0.5
@@ -68,7 +71,8 @@ def _relative(values: list[float | None], min_span: float) -> list[float]:
     return [NEUTRAL if v is None else (v - lo) / span for v in values]
 
 
-def rank(cands: list[Candidate], *, target_s: float, max_cer: float, rvc: bool = False) -> Candidate:
+def rank(cands: list[Candidate], *, target_s: float, max_cer: float, rvc: bool = False,
+         fixed_length: bool = False) -> Candidate:
     """Score every candidate in place and return the winner (needs at least one candidate)."""
     cers = [c.cer for c in cands if c.cer is not None]
     cer_cap = max(max_cer, min(cers) + CER_SLACK) if cers else math.inf
@@ -78,6 +82,7 @@ def rank(cands: list[Candidate], *, target_s: float, max_cer: float, rvc: bool =
     pool = [c for c in cands if c.passed] or cands
     mos_n = _relative([c.mos for c in pool], MOS_MIN_SPAN)
     w_sim = W_SIM_RVC if rvc else W_SIM
+    w_expr, w_len = (W_EXPRESSIVE_FIXED, W_LENGTH_FIXED) if fixed_length else (W_EXPRESSIVE, W_LENGTH)
     for c, mos in zip(pool, mos_n, strict=True):
         expressive = [v for v in (_clip01(c.prosody_sim), _clip01(c.emo_cos)) if v is not None]
         sim = _clip01(c.sim)
@@ -87,8 +92,8 @@ def rank(cands: list[Candidate], *, target_s: float, max_cer: float, rvc: bool =
             "length": length_fit(c.speech_s, target_s),
             "sim": NEUTRAL if sim is None else sim,
         }
-        c.score = (W_EXPRESSIVE * c.parts["expressive"] + W_MOS * c.parts["mos"]
-                   + W_LENGTH * c.parts["length"] + w_sim * c.parts["sim"])
+        c.score = (w_expr * c.parts["expressive"] + W_MOS * c.parts["mos"]
+                   + w_len * c.parts["length"] + w_sim * c.parts["sim"])
     def distance(c: Candidate) -> float:
         return abs(math.log(c.speech_s / target_s)) if c.speech_s > 0 and target_s > 0 else math.inf
 

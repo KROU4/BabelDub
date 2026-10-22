@@ -64,7 +64,7 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 | `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
 | `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
+CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag — except a take that fails only `mos`/`flat` (delivery, not the words or the voice), which is then `accept` with a flag: listen to it; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
 
 ## Thresholds
 

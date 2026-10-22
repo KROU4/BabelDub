@@ -25,6 +25,8 @@ Work towards 0.2.0: the dubbing pipeline v0.2 (analysis of the originals, line c
 
 ### Changed
 
+- **Evaluation on the 38-line test set (lab v0.2) tuned the defaults:** QA accepts with attention a last take that fails only `mos`/`flat` instead of keeping the original (`qa.decisions.SOFT_REASONS`); a `short_word` regen uses the character's own reference instead of the line; a `fixed_length` line that would end early gets longer pauses (`pause_add_s`, never slower speech), `tts.fixed_length_best_of` = 5 candidates and a heavier length weight in the scored best-of.
+
 - **`post` fits every dub exactly and never slows speech down:** a dub that does not fit first loses part of its pauses, then speeds up to `post.tempo_max` (1.15, pitch kept; `post.tempo_min` 1.0); `fixed_length` lines are placed chunk by chunk on the original's speech segments; the rest is silence, the speech at the original's speech start, exactly the original's sample count, rate and channels, loudness of the original speech; a dub that does not fit is never cut (`not_exact[]`). `post.max_stretch` is gone.
 - **`translation.mode=auto` resolves to `adapt`** when the game has official target-language texts: the translator turns them into spoken dub text (numbers as words, Latin names transliterated, colloquial, length budget) and the official text stays the subtitle; `official` is chosen only explicitly.
 - **U+0301 stress marks are stripped** from dub texts for every model except an explicit stress model: VoxCPM2 and Qwen3-TTS Base voice them as extra sounds (with `tts.stress=on`, VoxCPM2 gets a capital vowel instead).

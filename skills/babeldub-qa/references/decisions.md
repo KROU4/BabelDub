@@ -28,7 +28,7 @@ Go from top to bottom; the first matching rule decides:
 1. **No speech in substance** (the line is laughter, a cough, a sigh, music; `dub_text` is an interjection and the model produced garbage) → `keep_original`.
 2. **The line does not need dubbing** (a duplicate of another line that `link` did not flag, a service entry, a test string) → `skip`. Lines flagged `alt_take`/`duplicate` never reach QA: they follow their leader, and the build gives them the leader's accepted dub (`babeldub query --where follows!=null`); decide the leader only.
 3. **Service reason** (`missing_file`, `qc_error`, `no_dub_text`) → do not decide: fix the cause (`post`, rerun `qa`, translation).
-4. **Attempts exhausted** (`attempt` ≥ `tts.max_attempts`) and the defect is not about length → `keep_original`; in `note`, say what did not help.
+4. **Attempts exhausted** (`attempt` ≥ `tts.max_attempts`) and the defect is not about length → `keep_original`; in `note`, say what did not help. The CLI itself accepts (with attention) a last take that fails only `mos`/`flat`: change it to `keep_original` only when the take is clearly worse than hearing the original language.
 5. **The voice "drifted"** (`sim` < `sim_threshold`):
    - `sim_line` low, `sim_char` normal, the prompt was `line` → `reref`;
    - both low, first attempt → `regen`;

@@ -229,6 +229,8 @@ def target_bank(
         attempt = row.get("attempt")
         if dec.get("decision") != "accept" or dec.get("attempt") not in (None, attempt):
             continue
+        if dec.get("by") == "auto" and dec.get("attention"):  # accepted with doubts (flat/unnatural, mixed)
+            continue
         if q.get("attempt") != attempt or q.get("wav") != row.get("wav") or q.get("cer") is None:
             continue
         cer = float(q["cer"])
