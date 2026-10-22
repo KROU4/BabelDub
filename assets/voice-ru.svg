@@ -14,7 +14,7 @@
   <rect width="1280" height="480" fill="url(#bg)"/>
   <g font-family="Segoe UI, sans-serif">
     <text x="40" y="54" font-size="26" font-weight="700" fill="#ECE8FF">Дубляж голосом оригинального героя</text>
-    <text x="40" y="84" font-size="18" fill="#8E86BC">оригинальная реплика служит голосовым промптом: модель переносит тембр, эмоцию и подачу именно этой фразы</text>
+    <text x="40" y="84" font-size="18" fill="#8E86BC">промпт — записи самого героя, подобранные под энергию реплики: тот же тембр, эмоция и подача</text>
 
     <!-- original -->
     <rect x="40" y="120" width="400" height="250" rx="24" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFC24B" stroke-opacity="0.55"/>
@@ -80,9 +80,9 @@
     <text x="640" y="284" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">клон</text>
     <text x="640" y="306" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">голоса</text>
     <text x="640" y="376" font-size="16" fill="#8E86BC" text-anchor="middle">локальная модель</text>
-    <text x="640" y="398" font-size="16" fill="#8E86BC" text-anchor="middle">(Qwen3-TTS и др.)</text>
+    <text x="640" y="398" font-size="16" fill="#8E86BC" text-anchor="middle">VoxCPM2 + RVC</text>
     <path d="M444 290 H576" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-    <text x="452" y="276" font-size="14" fill="#B9B2E0">аудио + текст</text>
+    <text x="452" y="276" font-size="14" fill="#B9B2E0">эталон «крик»</text>
     <path d="M702 290 H834" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
 
     <!-- dub -->
@@ -139,6 +139,6 @@
 
     <!-- qa -->
     <rect x="40" y="410" width="1200" height="48" rx="24" fill="#FFFFFF" fill-opacity="0.05"/>
-    <text x="640" y="441" font-size="18" fill="#C9C2EC" text-anchor="middle">контроль: <tspan fill="#FFD27A">сходство голоса с оригиналом</tspan> · <tspan fill="#FFD27A">распознавание текста</tspan> · <tspan fill="#FFD27A">длительность</tspan> → брак уходит на перегенерацию</text>
+    <text x="640" y="441" font-size="18" fill="#C9C2EC" text-anchor="middle">контроль: <tspan fill="#FFD27A">голос</tspan> · <tspan fill="#FFD27A">слова · естественность · подача</tspan> · <tspan fill="#FFD27A">тайминг</tspan> → брак уходит на перегенерацию</text>
   </g>
 </svg>

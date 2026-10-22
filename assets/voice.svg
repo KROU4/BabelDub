@@ -14,7 +14,7 @@
   <rect width="1280" height="480" fill="url(#bg)"/>
   <g font-family="Segoe UI, sans-serif">
     <text x="40" y="54" font-size="26" font-weight="700" fill="#ECE8FF">Dub with the original hero’s voice</text>
-    <text x="40" y="84" font-size="18" fill="#8E86BC">the original line is the voice prompt: the model carries over the timbre, emotion and delivery of that exact line</text>
+    <text x="40" y="84" font-size="18" fill="#8E86BC">the hero’s own recordings, picked to match the line’s energy, are the voice prompt: same timbre, emotion and delivery</text>
 
     <!-- original -->
     <rect x="40" y="120" width="400" height="250" rx="24" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFC24B" stroke-opacity="0.55"/>
@@ -80,9 +80,9 @@
     <text x="640" y="284" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">voice</text>
     <text x="640" y="306" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">clone</text>
     <text x="640" y="376" font-size="16" fill="#8E86BC" text-anchor="middle">local model</text>
-    <text x="640" y="398" font-size="16" fill="#8E86BC" text-anchor="middle">(Qwen3-TTS etc.)</text>
+    <text x="640" y="398" font-size="16" fill="#8E86BC" text-anchor="middle">VoxCPM2 + RVC</text>
     <path d="M444 290 H576" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-    <text x="452" y="276" font-size="14" fill="#B9B2E0">audio + text</text>
+    <text x="452" y="276" font-size="14" fill="#B9B2E0">loud reference</text>
     <path d="M702 290 H834" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
 
     <!-- dub -->
@@ -139,6 +139,6 @@
 
     <!-- qa -->
     <rect x="40" y="410" width="1200" height="48" rx="24" fill="#FFFFFF" fill-opacity="0.05"/>
-    <text x="640" y="441" font-size="18" fill="#C9C2EC" text-anchor="middle">QA: <tspan fill="#FFD27A">voice similarity to the original</tspan> · <tspan fill="#FFD27A">speech recognition check</tspan> · <tspan fill="#FFD27A">duration</tspan> → rejects are regenerated</text>
+    <text x="640" y="441" font-size="18" fill="#C9C2EC" text-anchor="middle">QA: <tspan fill="#FFD27A">voice</tspan> · <tspan fill="#FFD27A">words · naturalness · delivery</tspan> · <tspan fill="#FFD27A">timing</tspan> → rejects are regenerated</text>
   </g>
 </svg>
