@@ -41,7 +41,8 @@ from babeldub.audio.fit import fit_segments, length_score, speech_span
 from babeldub.audio.io import probe, read_audio, write_wav
 from babeldub.audio.stretch import METHODS as STRETCH_METHODS
 from babeldub.audio.stretch import time_stretch
-from babeldub.cast.bootstrap import Prompt, long_reference, phase1_ids, target_prompt
+from babeldub.cast.bootstrap import Prompt, long_references, phase1_ids, target_bank
+from babeldub.cast.refs import Arousal, emotion_banks, line_arousal
 from babeldub.core import layout
 from babeldub.core.compute import device_warning, resolve_device
 from babeldub.core.ids import uid as make_uid
@@ -462,6 +463,7 @@ class Job:
     prompt: Prompt | None = None  # bootstrap-tgt: target-language continuation prompt (wav + exact text)
     target_speech: float | None = None  # speech span of the original (best-of picks the closest)
     line_class: str | None = None  # analyze class of the original (speech, short_word, mixed, ...)
+    bucket: str | None = None  # arousal bucket of the bootstrap reference/prompt (calm, animated, loud, soft)
     best_of_min: int = 1  # at least this many candidates (short_word lines: tts.short_word_best_of)
 
     @property
@@ -604,10 +606,30 @@ def ref_max_s(engine: str) -> float:
 @dataclass
 class _Bootstrap:
     """Per-character state of tts.ref_strategy=bootstrap while planning a synth run."""
-    long_ref: Prompt | None
-    tgt: Prompt | None
+    long_refs: dict[str, Prompt]  # arousal bucket -> long original timbre reference (calm always)
+    bank: dict[str, Prompt]  # arousal bucket -> target-language prompt (empty until enough accepted dubs)
     phase1: list[str]
     phase1_done: bool
+    arousal: dict[str, Arousal] = field(default_factory=dict)  # line id -> where its original sits
+
+    @property
+    def long_ref(self) -> Prompt | None:
+        return self.long_refs.get("calm")
+
+    def pick(self, line_id: str, avoid: str | None = None) -> tuple[str, Prompt, Prompt | None]:
+        """(bucket, long reference, target prompt or None) nearest to the line's original; `avoid` skips
+        a bucket when another one is available (a regen after a flat or unnatural take)."""
+        arousal = self.arousal.get(line_id) or Arousal(None, None)
+
+        def nearest(pool: dict[str, Prompt]) -> str:
+            order = arousal.ranked(pool)
+            if avoid in order and len(order) > 1:
+                order.remove(avoid)
+            return order[0]
+
+        long_bucket = nearest(self.long_refs)
+        bucket = nearest(self.bank) if self.bank else long_bucket
+        return bucket, self.long_refs[long_bucket], self.bank.get(bucket)
 
 
 def _bootstrap_states(
@@ -619,7 +641,10 @@ def _bootstrap_states(
     history: dict[str, list[dict[str, Any]]],
     follows: dict[str, str],
     refs_by_char: dict[str, list[dict[str, Any]]],
+    analysis: dict[str, dict[str, Any]] | None = None,
+    skip: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, _Bootstrap]:
+    analysis = analysis or {}
     tts = project.data.get("tts", {})
     k = int(tts.get("bootstrap_lines", 4) or 4)
     need = int(tts.get("bootstrap_min_accepted", 3) or 3)
@@ -630,12 +655,15 @@ def _bootstrap_states(
     by_char: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for lid, cid in char_of.items():
         line = lines_all[lid]
-        if lid in follows or not str((translations.get(lid) or {}).get("dub_text") or "").strip():
+        if lid in follows or lid in skip or not str((translations.get(lid) or {}).get("dub_text") or "").strip():
             continue
         by_char[cid].append(line)
     states: dict[str, _Bootstrap] = {}
     for cid, lines in by_char.items():
-        long_ref = long_reference(project.root, cid, lines, refs_by_char.get(cid, [])) if cid != "unknown" else None
+        all_lines = [lines_all[lid] for lid, c in char_of.items() if c == cid and lid not in follows]
+        arousal = line_arousal(all_lines, analysis)
+        long_refs = long_references(project.root, cid, all_lines, refs_by_char.get(cid, []),
+                                    emotion_banks(all_lines, analysis)) if cid != "unknown" else {}
         texts: dict[str, str] = {}
         for line in lines:
             row = post.get(line["id"])
@@ -643,8 +671,9 @@ def _bootstrap_states(
                 if row and res.get("status") == "ok" and res.get("attempt") == row.get("attempt"):
                     texts[line["id"]] = str(res.get("text") or "")
         nonverbal = {ln["id"] for ln in lines if "nonverbal" in (ln.get("flags") or [])}
-        tgt = target_prompt(project.root, cid, [ln["id"] for ln in lines], post=post, qa=qa, decisions=decisions,
-                            texts=texts, min_accepted=need, max_cer=max_cer, nonverbal=nonverbal) if long_ref else None
+        bank = target_bank(project.root, cid, [ln["id"] for ln in lines], post=post, qa=qa, decisions=decisions,
+                           texts=texts, min_accepted=need, max_cer=max_cer, nonverbal=nonverbal,
+                           buckets={lid: a.bucket for lid, a in arousal.items()}) if long_refs else {}
         first = phase1_ids(lines, k)
 
         def settled(lid: str) -> bool:
@@ -656,11 +685,21 @@ def _bootstrap_states(
             rows = history.get(lid, [])
             return not any(r.get("status") == "ok" for r in rows) and len(rows) >= max_attempts
 
-        states[cid] = _Bootstrap(long_ref, tgt, first, all(settled(lid) for lid in first))
+        states[cid] = _Bootstrap(long_refs, bank, first, all(settled(lid) for lid in first), arousal)
     return states
 
 
 # ---- synth --------------------------------------------------------------------------------
+REBUCKET_REASONS = frozenset({"flat", "mos"})  # QA reasons a regen answers with another arousal bucket
+
+
+def _avoid_bucket(reason: str, latest_ok: dict[str, Any] | None, qa_row: dict[str, Any] | None) -> str | None:
+    """The bucket of a flat or unnatural take that QA sent back: its regen tries the next nearest one."""
+    if reason != "regen" or not latest_ok or not qa_row or qa_row.get("attempt") != latest_ok.get("attempt"):
+        return None
+    return latest_ok.get("bucket") if REBUCKET_REASONS.intersection(qa_row.get("reasons") or []) else None
+
+
 def _overridden(decision: dict[str, Any] | None) -> bool:
     """An agent/human asked for a dub of a line whose class would keep the original."""
     return bool(decision) and decision.get("by") in ("agent", "human")         and decision.get("decision") not in ("keep_original", "skip")
@@ -687,6 +726,7 @@ def _plan_synth(
     cast_done = bool(characters) and bool(assign)
     refs_by_char = _char_refs(read_jsonl(project.path(layout.REFS)), project)
     decisions = latest_by(read_jsonl(project.path(layout.DECISIONS)))
+    qa_latest = latest_by(read_jsonl(project.path(layout.QA)))
     history: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in read_jsonl(project.path(layout.SYNTH_RESULTS)):
         if "id" in row:
@@ -699,7 +739,8 @@ def _plan_synth(
     yo = str(tts.get("yo") or "keep")
     mode = stress_mode(project, engine, catalog)
     prepare = _text_preparer("acute" if accent is not None else mode, pronounce_map(project))
-    classes = line_classes(load_analysis(project))
+    analysis = load_analysis(project)
+    classes = line_classes(analysis)
     keep_classes = keep_original_classes(project)
     short_best_of = max(1, int(tts.get("short_word_best_of", SHORT_WORD_BEST_OF) or SHORT_WORD_BEST_OF))
     short_attempts = max(1, int(tts.get("short_word_attempts", SHORT_WORD_ATTEMPTS) or SHORT_WORD_ATTEMPTS))
@@ -743,7 +784,8 @@ def _plan_synth(
         chars = {cid for _, _, cid in picked}
         voiced = {lid: char_of(lid, ln) for lid, ln in lines_all.items() if ln.get("kind") in VOICED_KINDS}
         states = _bootstrap_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars},
-                                   translations, decisions, history, follows, refs_by_char)
+                                   translations, decisions, history, follows, refs_by_char, analysis,
+                                   {lid for lid, c in classes.items() if c in keep_classes})
 
     accent_map: dict[str, str] = {}
     if accent is not None:
@@ -828,6 +870,8 @@ def _plan_synth(
 
         prompt: Prompt | None = None
         ref_reason: str | None = None
+        bucket: str | None = None
+        avoid_bucket = _avoid_bucket(reason, latest_ok, qa_latest.get(line_id))
         boot = states.get(char_id)
         orig = _orig_wav(project, line) if cls == "short_word" and prefer is None else None
         if orig is not None:  # a short word: the line itself carries the delivery, no target-language prompt
@@ -838,11 +882,12 @@ def _plan_synth(
             ref_reason = "short_word: the line itself is the voice reference"
         elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
-            if boot.tgt is not None:
-                ref = Ref("bootstrap-tgt", boot.long_ref.ref_id, boot.long_ref.wav, "", src_lang, boot.long_ref.dur_s)
-                prompt = boot.tgt
+            bucket, long_ref, tgt = boot.pick(line_id, avoid_bucket)
+            if tgt is not None:
+                ref = Ref("bootstrap-tgt", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+                prompt = tgt
             elif line_id in boot.phase1 or boot.phase1_done:
-                ref = Ref("bootstrap-src", boot.long_ref.ref_id, boot.long_ref.wav, "", src_lang, boot.long_ref.dur_s)
+                ref = Ref("bootstrap-src", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
                 if line_id not in boot.phase1:
                     ref_reason = "fewer accepted first lines than tts.bootstrap_min_accepted: no target-language prompt"
             else:
@@ -863,6 +908,7 @@ def _plan_synth(
                   (char_id, str(line.get("scene") or ""), int(line.get("order") or 0), line_id))
         job.prompt, job.ref_reason = prompt, ref_reason
         job.line_class = cls
+        job.bucket = bucket
         if cls == "short_word":
             job.best_of_min = short_best_of
         if ref.mode == "line" and engine.name != PREMIUM:  # VoxCPM2 takes the line as timbre only
@@ -1151,6 +1197,10 @@ class _SynthRun:
         if job.prompt is not None:
             row["prompt_id"] = job.prompt.ref_id
             row["prompt_wav"] = project.rel(job.prompt.wav)
+        if job.bucket:
+            row["bucket"] = job.bucket
+        if job.line_class:
+            row["class"] = job.line_class
         if job.ref_reason:
             row["ref_reason"] = job.ref_reason
         if job.src_rate is not None:

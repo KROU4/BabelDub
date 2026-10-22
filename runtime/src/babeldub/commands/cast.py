@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from babeldub.analysis.store import load_analysis
 from babeldub.cast.characters import (
     POLICIES,
     UNKNOWN_ID,
@@ -43,7 +44,7 @@ from babeldub.cast.cluster import (
     cluster_voices,
     merge_targets,
 )
-from babeldub.cast.refs import candidate_pool, install_refs, rank_candidates, ref_rows
+from babeldub.cast.refs import candidate_pool, install_refs, line_arousal, rank_candidates, ref_rows
 from babeldub.core import layout
 from babeldub.core.jsonl import latest_by, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
@@ -172,6 +173,7 @@ def _pick_refs(
     no_ref: list[str] = []
     relaxed: dict[str, str] = {}
     default_lang = project.data.get("source_lang")
+    analysis = load_analysis(project)
     for c in targets:
         cid = c["char_id"]
         pool, relax = candidate_pool(project.root, lines_by_char.get(cid, []), params["min_ref_s"], params["max_ref_s"])
@@ -190,7 +192,8 @@ def _pick_refs(
         if relax:
             relaxed[cid] = relax
         install_refs(project.root, cid, chosen, force=force)
-        rows.extend(ref_rows(cid, chosen, default_lang))
+        arousal = line_arousal(lines_by_char.get(cid, []), analysis)
+        rows.extend(ref_rows(cid, chosen, default_lang, {lid: a.bucket for lid, a in arousal.items()}))
     return rows, no_ref, relaxed
 
 

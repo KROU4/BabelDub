@@ -132,13 +132,15 @@ def test_bootstrap_phases(project: Project, capsys: pytest.CaptureFixture[str]) 
     # phase 2: a frozen target-language prompt from the accepted lines (lowest CER first)
     code, out = run(capsys, project.root, "synth")
     assert code == EXIT_OK and out["done"] == 3 and out["by_ref"] == {"bootstrap-tgt": 3}, out
-    meta = read_json(project.path(layout.SYNTH_PROMPTS_DIR, "Zbyszek", "tgt.json"))
-    assert meta["lines"] == [first[0], first[2], first[1]]
+    bank = read_json(project.path(layout.SYNTH_PROMPTS_DIR, "Zbyszek", "tgt.json"))["bank"]
+    assert list(bank) == ["calm"]  # no analysis: every line is calm
+    meta = bank["calm"]
+    assert meta["lines"] == [first[0]]  # lowest CER first; a ~5 s piece is a whole 5-10 s prompt
     texts = {lid: r["text"] for lid, r in results(project).items()}
     assert meta["text"] == " ".join(texts[lid] for lid in meta["lines"])
     for n in range(5, N_LINES + 1):
         row = results(project)[line_id(n)]
-        assert row["ref_mode"] == "bootstrap-tgt" and row["prompt_id"] == meta["ref_id"]
+        assert row["ref_mode"] == "bootstrap-tgt" and row["prompt_id"] == meta["ref_id"] and row["bucket"] == "calm"
         assert row["ref_wav"] == long_ref  # the timbre still comes from the original actor
     assert project.progress()["synth"]["bootstrap_wait"] == 0
     # the regenerated phase-1 line now gets the prompt too

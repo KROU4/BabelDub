@@ -4,12 +4,20 @@ A reference is an original game line (3-12 s by default) with a known source tex
 music bed / non-verbal / alternative-take flags, with a normal level (not clipped, not silent).
 When speaker embeddings are available, lines closest to the character's centroid win: they
 carry the most typical timbre of the hero.
+
+Arousal buckets (emotion_banks): every analyzed line of a character falls into calm, animated,
+loud or soft by its prosody relative to the character's own medians (inventory/analysis.jsonl:
+active RMS, F0 range in semitones, syllable rate). A line goes to the nearest bucket prototype in
+a (loudness, liveliness) plane: loudness = dRMS / 6 dB, liveliness = dF0range / 4 st + drate / 25 %.
+An emotion label (opt-in emotion2vec+) moves a line that prosody calls calm: sad -> soft,
+angry -> loud, happy/surprised/fearful -> animated. Without analysis every line is calm.
 """
 
 from __future__ import annotations
 
 import shutil
-from collections.abc import Callable
+import statistics
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +38,12 @@ EMBED_MAX = 24  # candidates embedded to find the most typical timbre
 MAX_CLIP_FRAC = 0.0005
 MIN_PEAK_DB = -40.0
 MIN_ACTIVE_DB = -40.0
+BUCKETS = ("calm", "animated", "loud", "soft")
+# bucket prototypes in the (loudness, liveliness) plane, see the module docstring
+PROTOTYPES = {"calm": (0.0, 0.0), "animated": (0.2, 1.0), "loud": (1.0, 0.6), "soft": (-1.0, -0.3)}
+EMOTION_BUCKET = {"sad": "soft", "angry": "loud", "happy": "animated", "surprised": "animated", "fearful": "animated"}
+LOUD_DB, LIVELY_ST, LIVELY_RATE = 6.0, 4.0, 0.25
+MIN_STATS_LINES = 3  # fewer analyzed lines: no medians, every line is calm
 
 
 @dataclass
@@ -153,7 +167,9 @@ def install_refs(root: Path, char_id: str, chosen: list[RefCandidate], force: bo
             old.unlink()
 
 
-def ref_rows(char_id: str, chosen: list[RefCandidate], default_lang: str | None) -> list[dict[str, Any]]:
+def ref_rows(char_id: str, chosen: list[RefCandidate], default_lang: str | None,
+             buckets: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """refs.jsonl rows; `buckets` ({line id: arousal bucket}) adds `bucket` to each row."""
     rows = []
     for rank, cand in enumerate(chosen):
         text_info = cand.line.get("text") or {}
@@ -173,4 +189,106 @@ def ref_rows(char_id: str, chosen: list[RefCandidate], default_lang: str | None)
                 "active_rms_db": None if cand.levels is None else round(cand.levels.active_rms_db, 1),
             }
         )
+        if buckets is not None:
+            rows[-1]["bucket"] = buckets.get(cand.line_id, "calm")
     return rows
+
+
+# ---- arousal buckets -------------------------------------------------------------------------
+@dataclass
+class ProsodyStats:
+    """A character's medians of the prosody features (None when unknown)."""
+    rms_db: float | None
+    f0_range_st: float | None
+    syl_rate: float | None
+
+
+def _median(values: Iterable[Any]) -> float | None:
+    nums = [float(v) for v in values if isinstance(v, (int, float))]
+    return statistics.median(nums) if nums else None
+
+
+def prosody_stats(rows: Iterable[dict[str, Any]]) -> ProsodyStats | None:
+    """Medians over a character's analysis rows; None with fewer than MIN_STATS_LINES measured lines."""
+    pros = [r.get("prosody") or {} for r in rows]
+    pros = [p for p in pros if isinstance(p.get("rms_db"), (int, float))]
+    if len(pros) < MIN_STATS_LINES:
+        return None
+    return ProsodyStats(_median(p.get("rms_db") for p in pros), _median(p.get("f0_range_st") for p in pros),
+                        _median(p.get("syl_rate") for p in pros))
+
+
+def arousal_vector(prosody: dict[str, Any] | None, stats: ProsodyStats | None) -> tuple[float, float] | None:
+    """(loudness, liveliness) of one line relative to its character, None without data."""
+    if not prosody or stats is None:
+        return None
+
+    def num(key: str) -> float | None:
+        v = prosody.get(key)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    rms, rng, rate = num("rms_db"), num("f0_range_st"), num("syl_rate")
+    if rms is None and rng is None:
+        return None
+    loud = (rms - stats.rms_db) / LOUD_DB if rms is not None and stats.rms_db is not None else 0.0
+    live = (rng - stats.f0_range_st) / LIVELY_ST if rng is not None and stats.f0_range_st is not None else 0.0
+    if rate and stats.syl_rate:
+        live += (rate / stats.syl_rate - 1.0) / LIVELY_RATE
+    return loud, live
+
+
+def ranked_buckets(vec: tuple[float, float] | None, allowed: Iterable[str] = BUCKETS,
+                   emotion: str | None = None) -> list[str]:
+    """Allowed buckets from the nearest to the farthest (calm first without a vector)."""
+    wanted = set(allowed)
+    pool = [b for b in BUCKETS if b in wanted]
+    if not pool:
+        return []
+    if vec is None:
+        return sorted(pool, key=lambda b: b != "calm")
+    order = sorted(pool, key=lambda b: ((vec[0] - PROTOTYPES[b][0]) ** 2 + (vec[1] - PROTOTYPES[b][1]) ** 2,
+                                        BUCKETS.index(b)))
+    moved = EMOTION_BUCKET.get(str(emotion or "").lower())
+    if order[0] == "calm" and moved in order:
+        order.remove(moved)
+        order.insert(0, moved)
+    return order
+
+
+@dataclass
+class Arousal:
+    """Where one line sits: its vector and emotion label (for the nearest of the available buckets)."""
+    vec: tuple[float, float] | None
+    emotion: str | None
+
+    def ranked(self, allowed: Iterable[str] = BUCKETS) -> list[str]:
+        return ranked_buckets(self.vec, allowed, self.emotion)
+
+    @property
+    def bucket(self) -> str:
+        return self.ranked()[0]
+
+
+def line_arousal(lines: Iterable[dict[str, Any]], analysis: dict[str, dict[str, Any]]) -> dict[str, Arousal]:
+    """{line id: Arousal} for the lines of ONE character (their analysis rows give the medians)."""
+    lines = list(lines)
+    stats = prosody_stats(analysis[ln["id"]] for ln in lines if ln["id"] in analysis)
+    out: dict[str, Arousal] = {}
+    for ln in lines:
+        row = analysis.get(ln["id"]) or {}
+        out[ln["id"]] = Arousal(arousal_vector(row.get("prosody"), stats), (row.get("emotion") or {}).get("label"))
+    return out
+
+
+def emotion_banks(lines: Iterable[dict[str, Any]], analysis: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """{bucket: line ids} of the character's clean original lines (no bad flags, class speech or unknown)."""
+    lines = list(lines)
+    arousal = line_arousal(lines, analysis)
+    banks: dict[str, list[str]] = {}
+    for ln in lines:
+        if REF_BAD_FLAGS.intersection(ln.get("flags") or []):
+            continue
+        if (analysis.get(ln["id"]) or {}).get("class") not in (None, "speech"):
+            continue
+        banks.setdefault(arousal[ln["id"]].bucket, []).append(ln["id"])
+    return {b: banks[b] for b in BUCKETS if b in banks}
