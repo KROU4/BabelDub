@@ -2,7 +2,7 @@
 
 BabelDub dubs every line **in the voice of the original character**. All TTS engines in the catalog are zero-shot voice-cloning engines whose voice prompt is made of the character's own original recordings, and an RVC model trained on the character's lines transfers the timbre once more after synthesis. Quality control then checks the dub with speech recognition and speaker similarity.
 
-This page explains which models v0.1 uses for each task and hardware tier, their licenses and what we measured. The source of truth for what is actually installed is `babeldub models list` and `babeldub doctor`; the catalog itself is [`runtime/src/babeldub/data/models.yaml`](../runtime/src/babeldub/data/models.yaml).
+This page explains which models BabelDub uses for each task and hardware tier, their licenses and what we measured. The source of truth for what is actually installed is `babeldub models list` and `babeldub doctor`; the catalog itself is [`runtime/src/babeldub/data/models.yaml`](../runtime/src/babeldub/data/models.yaml).
 
 ## The default dubbing chain
 
@@ -28,11 +28,11 @@ Measured on Low-Budget Repairs with the QA models: VoxCPM2 + RVC CER **0.045** (
 
 - **GPU-first.** When an NVIDIA GPU is present, all neural compute (TTS, RVC, ASR, speaker embeddings, clustering on embeddings) runs on it. The project setting is `compute.device`: `auto` (default: the GPU if there is one) | `cuda` | `cpu`. `babeldub setup` installs CUDA builds of torch whenever it sees a GPU, even a small one; the hardware tier only picks model sizes. Each worker reports the device it actually loaded on, and a command warns when a GPU exists but the worker ended up on the CPU. Light DSP (resampling, loudness) stays on the CPU.
 - **Permissive licenses by default.** The default catalog contains only Apache-2.0 and MIT models and engines.
-- **Non-commercial models only with explicit consent.** Such a model is marked `commercial: false` and `opt_in`; `setup` and `models fetch` install it only after the user has seen the license and agreed (`--accept-license <name>`). v0.1 ships no non-commercial model.
+- **Non-commercial models only with explicit consent.** Such a model is marked `commercial: false` and `opt_in`; `setup` and `models fetch` install it only after the user has seen the license and agreed (`--accept-license <name>`). The catalog has one such model, emotion2vec+ base (below); nothing depends on it.
 - **No weights in BabelDub.** `babeldub setup` downloads them from Hugging Face into `BABELDUB_HOME/models` (default `~/.babeldub`, which is `C:\Users\<user>\.babeldub` on Windows) and shows each license first. RVC models are trained locally and stay in the project folder (`vc/<char_id>/`). The license of every model used ends up in `build/build_manifest.json` (`models[]`) and in the final report.
 - **One model on the GPU at a time.** Training, synthesis, conversion and QA never run at the same time: the CLI holds `state/locks/gpu.lock`, and models load in separate processes in turn.
 
-## Models per task (v0.1 catalog)
+## Models per task
 
 | Task | Engine (env) | Model | Languages | License | Download | VRAM | Installed by default |
 |---|---|---|---|---|---|---|---|
@@ -44,6 +44,11 @@ Measured on Low-Budget Repairs with the QA models: VoxCPM2 + RVC CER **0.045** (
 | Voice cloning for pl, tr and other languages without VoxCPM2 | `chatterbox` | [chatterbox-multilingual](https://huggingface.co/ResembleAI/chatterbox) (Multilingual V3) | ar, da, de, el, en, es, fi, fr, he, hi, it, ja, ko, ms, nl, no, pl, pt, ru, sv, sw, tr, zh | MIT; every file carries an inaudible PerTh watermark | 3.21 GB | ~7 GB (not verified for V3) | when it is the engine for the language |
 | ASR for QA (CER of the dub) | `qc` | [faster-whisper-large-v3-turbo](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo) | any | MIT | 1.62 GB | ~2 GB | every tier |
 | Speaker embeddings: voice similarity, clustering | `qc` | [spkrec-ecapa-voxceleb](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) (SpeechBrain ECAPA-TDNN) | any | Apache-2.0 | 0.09 GB | ~0.5 GB | every tier |
+| Speech segments of the originals (`analyze`) | `qc` | Silero VAD, bundled with faster-whisper | any | MIT | — | CPU | every tier |
+| Pitch and energy (`analyze`, QA `flat`, scored best-of) | `qc` | librosa pyin (no weights) | any | ISC | — | CPU | every tier |
+| Naturalness MOS (scored best-of, QA `mos`) | `qc` | [UTMOS22 strong](https://github.com/sarulab-speech/UTMOS22) via [SpeechMOS](https://github.com/tarepan/SpeechMOS) (checkpoint pinned by sha256) | any | MIT | 0.4 GB | ~1 GB | every tier |
+| Russian homograph stress (**opt-in**, `tts.stress=on`) | `qc` | [RUAccent](https://github.com/Den4ikAI/ruaccent) (`uv pip install ruaccent` in the qc env) | ru | MIT | ~0.3 GB | CPU | none |
+| Speech emotion (**opt-in, non-commercial**) | `qc` | [emotion2vec+ base](https://huggingface.co/emotion2vec/emotion2vec_plus_base) (needs `funasr` in the qc env) | any | FunASR Model License 1.1 | 0.36 GB | ~0.5 GB | none: only with `--accept-license`; without it `analyze` sorts lines by prosody only |
 | Pipeline tests only | `dummy` | none (writes a tone of the expected length) | any | MIT | — | — | — |
 
 Each engine has its own venv in `BABELDUB_HOME/envs/<engine>` because the packages conflict: `voxcpm`, `qwen3tts`, `qwen3tts-fast` and `qc` use torch 2.8.0 (CUDA 12.8 wheels), `applio` torch 2.11.0 (CUDA 12.8), `chatterbox` torch 2.6.0 (CUDA 12.4) and another transformers version. `voxcpm` installs the `voxcpm` package from GitHub. `applio` is a git engine: `setup` fetches the Applio repository into `BABELDUB_HOME/engines/applio` at the pinned commit, installs its `requirements-engine.txt` without the torch lines, and runs `core.py prerequisites --pretraineds-hifigan --models --no-exe`. `qwen3tts-fast` is `faster-qwen3-tts` 0.5.4 with `transformers==5.15.1` pinned: 5.20.2 breaks the codec (`'MimiConfig' object has no attribute 'rope_theta'`). Approximate venv sizes: `voxcpm` 4.5 GB, `applio` 8.5 GB, `qwen3tts` 4.0 GB, `qwen3tts-fast` 4.0 GB, `chatterbox` 3.5 GB, `qc` 5.0 GB. On GPU tiers `qc` also gets `nvidia-cublas-cu12` and `nvidia-cudnn-cu12==9.*` for faster-whisper.
@@ -86,7 +91,7 @@ Not measured yet: Qwen3-TTS 0.6B, Chatterbox Multilingual V3 and the `qc` worker
 | ru, en, de, fr, es, pt, it, zh, ja, ko | `voxcpm` + RVC | `qwen3tts-fast` / `qwen3tts` |
 | pl, tr, ar, da, el, fi, he, hi, ms, nl, no, sv, sw | `voxcpm` + RVC | `chatterbox` (watermark; `cfg_weight=0` when the reference is in another language) |
 | my, id, km, lo, tl, th, vi | `voxcpm` + RVC | none |
-| uk and other languages | none in v0.1 | none: `babeldub init` returns code 3 |
+| uk and other languages | none yet | none: `babeldub init` returns code 3 |
 
 Choose an engine with `babeldub set tts.engine=<engine>` or once with `babeldub synth --engine <engine>`. Choose a model inside the engine with `babeldub set tts.model=<name>`; otherwise `synth` takes the downloaded general (not language-specific) model of the engine for the tier and language, the larger one first.
 
@@ -98,14 +103,17 @@ To try it: `babeldub models fetch qwen3-tts-12hz-1.7b-ru-stress-cf`, then `babel
 
 ## Quality control models
 
-The `qc` worker loads both QA models in one process:
+The `qc` worker serves `analyze`, the scored best-of and QA in one process (one model on the GPU at a time, the others loaded on demand):
 
 - **faster-whisper large-v3-turbo** (with VAD) transcribes the dub; `qa` computes the CER against `dub_text` (`qa.max_cer`, default 0.15).
 - **SpeechBrain ECAPA** compares the dub's voice with the original of this line and with the character's chosen reference. The check is relative to the character's own baseline (the mean pairwise similarity of their originals): `sim ≥ max(ratio · sim_ref, qa.min_sim_abs)`, with ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (cross-language similarity is always lower), `qa.min_sim_ratio` = 0.75 for a same-language dub, and a floor of 0.25. The identity margin compares the dub with the voice centroids of the other characters. The same embeddings cluster unlabelled voices in `cast` and merge a cluster into the named character it sounds like.
+- **UTMOS22** predicts the naturalness of each candidate and dub; QA compares it with the median of the character's own originals (`qa.mos_drop`, default 1.0).
+- **librosa pyin** measures the F0 range and contour of the dub against its original (`prosody_sim`; QA `flat` below `qa.min_f0_range_ratio` = 0.5 of the original's range).
+- **Silero VAD** and Whisper word times give `analyze` the speech segments and pauses that the translation budget and the cutscene fit use.
 
 QA checks each line's final take (after `vc` when the character has an RVC model). Duration (`qa.max_duration_ratio`, default 1.35) and peaks are checked without a model. A line that fails on CER, similarity, identity, peaks or silence gets an automatic `regen` decision until `tts.max_attempts` is reached, then `keep_original`; `synth --attempt-next` re-voices it, and a `reref` decision also switches the voice prompt.
 
-## Candidates for later versions (not in v0.1)
+## Candidates for later versions
 
 | Model | Why it is interesting | Limitation |
 |---|---|---|
@@ -116,7 +124,7 @@ QA checks each line's final take (after `vc` when the character has an RVC model
 | Fish Audio S2-Pro, Higgs TTS 3 | reference-grade quality | non-commercial licenses, ≥ 24 GB, Linux/WSL |
 | MOSS-TTS-Nano-100M | cloning on the CPU (ONNX), 20 languages including ru, pl, tr | lower quality |
 
-Other licenses worth knowing: F5-TTS and its Russian fine-tunes (weights CC-BY-NC), XTTS-v2 (Coqui Public Model License, non-commercial), Seed-VC (GPL-3.0; also rejected in the listening rounds); GigaAM-v3 (Russian ASR), RUAccent and UTMOSv2 are MIT. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+Other licenses worth knowing: F5-TTS and its Russian fine-tunes (weights CC-BY-NC), XTTS-v2 (Coqui Public Model License, non-commercial), Seed-VC (GPL-3.0; also rejected in the listening rounds); GigaAM-v3 (Russian ASR), RUAccent and UTMOS22 are MIT. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
 There is no ready speech-to-speech translation that keeps the voice for Russian (SeamlessExpressive, Hibiki-Zero and Index-Echo-S2ST do not support it), so BabelDub uses a cascade: original text → translation → voice-cloning TTS → RVC.
 

@@ -28,7 +28,7 @@ BabelDub's core principle is **dubbing with the original character's voice**: th
 
 1. **Recon** — engine, audio middleware (FMOD, Wwise, CRIWARE…), where voice and text live, support level.
 2. **Extract** — lines to WAV, texts in every language, audio ↔ subtitle links by engine keys.
-3. **Analyze** — every original line: speech segments and pauses, what is actually said (speech recognition with word times), pitch range, loudness and speaking rate, and a line class (speech, short word, interjection, nonverbal).
+3. **Analyze** — every original line: speech segments and pauses, what is actually said (speech recognition with word times), pitch range, loudness and speaking rate, and a line class (speech, short word, interjection, nonverbal, mixed).
 4. **Cast** — characters from game metadata or voice clustering, main roles, voice references sorted by energy (calm, animated, loud, soft).
 5. **Translate** — translator agents work in scene batches with a glossary, character style, placeholder checks and a length budget from the original's speech span and the character's speaking rate. If the game already ships an official translation, it is adapted for speech (numbers as words, names transliterated, colloquial) and stays the subtitle.
 6. **Voice** — local voice cloning (VoxCPM2 by default) with a prompt matched to the line's energy, several takes scored for delivery, naturalness, length and voice, exact length and loudness of the original without slowing speech down, then RVC timbre transfer per main character.
@@ -111,7 +111,7 @@ Download `babeldub-kit-<version>.zip` from [Releases](https://github.com/KROU4/B
 
 Chosen in blind listening rounds on Low-Budget Repairs (English → Russian): VoxCPM2 + RVC reached a CER of 0.045 (Qwen3-TTS + RVC: 0.050) and a speaker similarity of ~0.65–0.70 to the original actor, whose own lines score 0.77 among themselves.
 
-**v0.2 against v0.1** on a 38-line test set (six characters, short words, cutscenes; the same Russian texts, the same metrics): slowed-down lines 17 → 0, time-stretched lines 74 % → 15 %, UTMOS naturalness 2.64 → 3.14 (the originals score 3.14), speaker similarity 0.544 → 0.606, the gap between the dub's and the original's pitch range 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034. Five of the 38 lines (shouts that could not be voiced recognizably) keep the original. Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
+**v0.2 against v0.1** on a 38-line test set (13 characters: long lines, short words, cutscenes; the same Russian texts, the same metrics): slowed-down lines 17 → 0, time-stretched lines 74 % → 15 %, UTMOS naturalness 2.64 → 3.14 (the originals score 3.14), speaker similarity 0.544 → 0.606, the gap between the dub's and the original's pitch range 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034. Five of the 38 lines (shouts that could not be voiced recognizably) keep the original. Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
 
 ## Responsible use
 

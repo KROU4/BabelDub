@@ -33,7 +33,7 @@ The CLI calls them as separate programs. BabelDub does not vendor them; `babeldu
 
 Weights are not part of BabelDub. A model's license also governs the audio it generates, to the extent its terms say so. Models with non-commercial licenses are not in the default catalog and are enabled only with the user's explicit consent. See [docs/MODELS.md](docs/MODELS.md) for tiers and hardware.
 
-### Catalog of version 0.1
+### Catalog
 
 | Model | Purpose | Weights license | Commercial use |
 |---|---|---|---|
@@ -44,8 +44,12 @@ Weights are not part of BabelDub. A model's license also governs the audio it ge
 | [Chatterbox Multilingual V3](https://huggingface.co/ResembleAI/chatterbox) (Resemble AI) | cloning for pl, tr and other languages | MIT | yes; every file carries an inaudible PerTh watermark |
 | [faster-whisper large-v3-turbo](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo) ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | speech recognition for QA | MIT | yes |
 | [SpeechBrain ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) ([SpeechBrain](https://github.com/speechbrain/speechbrain)) | voice similarity to the original, voice clustering | Apache-2.0 | yes |
+| [UTMOS22 strong](https://github.com/sarulab-speech/UTMOS22) via [SpeechMOS](https://github.com/tarepan/SpeechMOS) | naturalness MOS for the scored best-of and QA | MIT | yes |
+| Silero VAD (bundled with faster-whisper) | speech segments of the originals (`analyze`) | MIT | yes |
+| [RUAccent](https://github.com/Den4ikAI/ruaccent) (opt-in, `tts.stress=on`) | stress marks for Russian homographs | MIT | yes |
+| [emotion2vec+ base](https://huggingface.co/emotion2vec/emotion2vec_plus_base) (opt-in, needs `funasr`) | speech emotion label and embedding in `analyze` | **FunASR Model License 1.1** ("reference and learning purposes", revocable) | not by default: installed only with `--accept-license` |
 
-Environment packages: `voxcpm` (Apache-2.0, installed from GitHub), Applio's `requirements-engine.txt` (installed into the separate `applio` venv; among them `faiss-cpu` (MIT), `librosa` (ISC), `torchcrepe` (MIT), `torchfcpe` (MIT), `transformers` (Apache-2.0), `onnxruntime-gpu` (MIT) and NVIDIA CUDA runtime wheels under NVIDIA's license), `qwen-tts` (Apache-2.0), `faster-qwen3-tts` (MIT) with `qwen-tts-hf` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1). The Applio source is cloned by `babeldub setup` into `BABELDUB_HOME/engines/applio` at a pinned commit; it is not part of BabelDub.
+Environment packages: `voxcpm` (Apache-2.0, installed from GitHub), Applio's `requirements-engine.txt` (installed into the separate `applio` venv; among them `faiss-cpu` (MIT), `librosa` (ISC), `torchcrepe` (MIT), `torchfcpe` (MIT), `transformers` (Apache-2.0), `onnxruntime-gpu` (MIT) and NVIDIA CUDA runtime wheels under NVIDIA's license), `qwen-tts` (Apache-2.0), `faster-qwen3-tts` (MIT) with `qwen-tts-hf` (Apache-2.0), `chatterbox-tts` (MIT), `faster-whisper` (MIT), `speechbrain` (Apache-2.0), `jiwer` (Apache-2.0), `num2words` (LGPL-2.1), `librosa` (ISC), `speechmos` (MIT), opt-in `ruaccent` (MIT) and `funasr` (MIT). The Applio source is cloned by `babeldub setup` into `BABELDUB_HOME/engines/applio` at a pinned commit; it is not part of BabelDub.
 
 ### Models that may appear as options
 
@@ -55,7 +59,7 @@ For reference: the BabelDub research also looked at other models. If any of them
 |---|---|
 | OmniVoice (k2-fsa) | code Apache-2.0, **weights CC-BY-NC** (non-commercial) |
 | FireRedTTS3, Fun-CosyVoice3, MOSS-TTS | Apache-2.0 |
-| GigaAM-v3 (ASR for Russian), RUAccent (stress marks), UTMOSv2 | MIT |
+| GigaAM-v3 (ASR for Russian), UTMOSv2 | MIT |
 | F5-TTS and its Russian fine-tunes | code MIT, **weights CC-BY-NC** |
 | XTTS-v2 | **Coqui Public Model License (non-commercial)** |
 | Fish Audio S2-Pro | **Fish Audio Research License (non-commercial)** |

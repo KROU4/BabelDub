@@ -18,8 +18,8 @@ You decide the fate of the lines that failed the automatic thresholds. The main 
 | `cer` | the recognized dub differs from `dub_text` by more than `qa.max_cer` (0.15) | `regen` while attempts remain, then `keep_original` |
 | `sim` | the voice "drifted" from the hero: `sim` < `sim_threshold` = max(ratio × `sim_ref` (the character's baseline), `qa.min_sim_abs` 0.25); ratio `qa.min_sim_ratio_xlang` (0.45) for a dub in another language than the original audio, `qa.min_sim_ratio` (0.75) for a same-language dub | `regen`, then `keep_original` |
 | `identity` | the dub sounds more like another character (`qa.closest_char`) than its own: `qa.margin` < `qa.min_identity_margin` (−0.05) | `regen`, then `keep_original` |
-| `mos` | naturalness (UTMOS22) clearly below the character's originals: `qa.mos` < `qa.orig_mos` − `qa.mos_drop` (1.0) | `regen` (new seed, next arousal bucket), then `keep_original` |
-| `flat` | monotone: the dub's F0 range < 0.5 × the original's (originals moving ≥ 3 semitones) | `regen` (new seed, next arousal bucket), then `keep_original` |
+| `mos` | naturalness (UTMOS22) clearly below the character's originals: `qa.mos` < `qa.orig_mos` − `qa.mos_drop` (1.0) | `regen` (new seed, next arousal bucket), then `accept` with attention (delivery, not words or voice) |
+| `flat` | monotone: the dub's F0 range < 0.5 × the original's (originals moving ≥ 3 semitones) | `regen` (new seed, next arousal bucket), then `accept` with attention (delivery, not words or voice) |
 | `timing` | `fixed_length` line: a chunk starts more than ±80 ms off its original segment or ends more than 80 ms late | `regen`, then `keep_original` |
 | `peak` | peak above the ceiling, or clipping | `regen`, then `keep_original` |
 | `empty`, `silent` | empty file or silence | `regen`, then `keep_original` |

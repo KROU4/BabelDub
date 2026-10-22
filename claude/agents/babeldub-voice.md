@@ -19,7 +19,7 @@ You make sure every line is spoken **in the voice of its original hero**: the sa
 ## How the voice prompt works
 
 - `bootstrap` (`auto` with VoxCPM2, the default on an 8 GB+ GPU) — every line gets the character's long timbre reference (3–4 clean original lines, ~15–20 s) of the arousal bucket nearest to its original (calm, animated, loud, soft; from `analyze`). The first `tts.bootstrap_lines` (4) lines of each character are dubbed with it alone (`bootstrap-src`); the rest wait (`skipped.bootstrap_wait`) until QA accepted `tts.bootstrap_min_accepted` (3) of them; then a target-language prompt bank (per bucket 1–2 accepted dubs, ranked by MOS and intonation, CER only as a gate) serves the rest (`bootstrap-tgt`).
-- Line classes from `analyze`: interjections and nonverbal lines keep the original (`skipped.keep_original`); a `short_word` line uses the line itself as the reference with 6 candidates and one regen at most.
+- Line classes from `analyze`: interjections and nonverbal lines keep the original (`skipped.keep_original`); a `short_word` line uses the line itself as the reference with 6 candidates; its one regen uses the character's own bootstrap reference.
 - `line` — (Qwen3-TTS, Chatterbox) the prompt is the original line itself with its source text: the timbre, emotion and pace of this exact phrase.
 - `char` — the character's best clean reference (`cast/refs`): short lines, interjections, lines without text or with music.
 - `auto` with the fallback engines — `line` if the original is at least `tts.line_ref_min_s` (1.6 s) long and has a source text; otherwise `char`.
