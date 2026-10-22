@@ -59,8 +59,8 @@ def test_engine_commands_cuda_and_cpu(home, fake_tools, monkeypatch):
     cmds = item.commands
     assert cmds[0][1:3] == ["venv", str(home / "envs" / "qc")] and "--allow-existing" in cmds[0]
     assert "torch==2.8.0" in cmds[1] and cmds[1][-1] == "https://download.pytorch.org/whl/cu128"
-    assert "faster-whisper" in cmds[2]
-    assert cmds[3][-2:] == ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
+    assert any(a.startswith("faster-whisper==") for a in cmds[2])
+    assert [a.split("==")[0] for a in cmds[3][-2:]] == ["nvidia-cublas-cu12", "nvidia-cudnn-cu12"]
     cpu = installer.plan_engine(qc, "cpu").commands
     assert cpu[1][-1] == "https://download.pytorch.org/whl/cpu" and len(cpu) == 3
 
@@ -133,7 +133,8 @@ def test_plan_model_licenses_and_commands(home, fake_tools):
     item = installer.plan_model(chatter)
     cmd = item.commands[0]
     assert cmd[1:6] == ["--from", "huggingface_hub", "hf", "download", "ResembleAI/chatterbox"]
-    assert "t3_mtl23ls_v3.safetensors" in cmd and cmd[-2] == "--local-dir"
+    assert "t3_mtl23ls_v3.safetensors" in cmd and "--local-dir" in cmd
+    assert cmd[cmd.index("--revision") + 1] == chatter.revision
     assert item.warning and item.license == "MIT"
     whisper = cat.model("faster-whisper-large-v3-turbo")
     folder = model_dir(whisper)

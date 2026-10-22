@@ -25,6 +25,7 @@
 # models[]:
 #   name           folder under BABELDUB_HOME/models (aliases: older folder names that are recognised)
 #   repo/include   Hugging Face repo and optional file patterns (only these files are downloaded)
+#   revision       Hugging Face commit the download is pinned to
 #   commercial     false = non-commercial weights; such models are opt_in and never installed by default
 #   tiers          hardware tiers the model runs on; auto_tiers: tiers where `setup` installs it by default
 #   size_gb        download size; vram_gb: approximate peak VRAM during inference
@@ -34,7 +35,8 @@ engines:
     env: voxcpm
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
-    packages: ["voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git", "soundfile", "numpy"]
+    packages: ["voxcpm @ git+https://github.com/OpenBMB/VoxCPM.git@cce58a5b59303c9bd63d12f23afe6a49a4a80c59",
+               "soundfile==0.14.0", "numpy==2.5.4"]
     import: [voxcpm, soundfile]
     worker: tts_voxcpm.py
     size_gb: 4.5
@@ -64,7 +66,7 @@ engines:
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
     # transformers 5.20.x breaks the codec ('MimiConfig' object has no attribute 'rope_theta'): keep the pin
-    packages: ["faster-qwen3-tts==0.5.4", "transformers==5.15.1", "soundfile", "numpy"]
+    packages: ["faster-qwen3-tts==0.5.4", "transformers==5.15.1", "soundfile==0.14.0", "numpy==2.5.4"]
     import: [faster_qwen3_tts, soundfile]
     worker: tts_qwen3_fast.py
     size_gb: 4.0
@@ -78,7 +80,7 @@ engines:
     env: qwen3tts
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
-    packages: ["qwen-tts", "soundfile", "numpy"]
+    packages: ["qwen-tts==0.1.1", "soundfile==0.14.0", "numpy==2.5.4"]
     import: [qwen_tts, soundfile]
     worker: tts_qwen3.py
     size_gb: 4.0
@@ -90,7 +92,8 @@ engines:
     python: "3.12"
     torch: {version: "2.6.0", index: "https://download.pytorch.org/whl/cu124", cpu_index: "https://download.pytorch.org/whl/cpu"}
     # PyPI chatterbox-tts 0.1.7 cannot load Multilingual V3 (no t3_model argument): install from GitHub.
-    packages: ["chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git", "soundfile"]
+    packages: ["chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2",
+               "soundfile==0.14.0"]
     import: [chatterbox.mtl_tts, soundfile]
     worker: tts_chatterbox.py
     size_gb: 3.5
@@ -101,9 +104,10 @@ engines:
     env: qc
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
-    packages: ["faster-whisper", "speechbrain", "soundfile", "numpy", "jiwer", "num2words", "librosa",
+    packages: ["faster-whisper==1.2.1", "speechbrain==1.1.2", "soundfile==0.14.0", "numpy==2.5.4", "jiwer==4.0.0",
+               "num2words==0.5.14", "librosa==1.0.0",
                "speechmos @ git+https://github.com/tarepan/SpeechMOS@ed25eacbfa42b99156c36ebec67a733b5dbb9b79"]
-    gpu_packages: ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
+    gpu_packages: ["nvidia-cublas-cu12==12.9.2.10", "nvidia-cudnn-cu12==9.27.0.42"]
     import: [faster_whisper, speechbrain, soundfile, librosa, speechmos]
     worker: qc_worker.py
     size_gb: 5.2
@@ -122,6 +126,7 @@ engines:
 models:
   - name: VoxCPM2
     repo: openbmb/VoxCPM2
+    revision: 32279effe8c19989596f05d353d1447f51d9e915
     engine: voxcpm
     role: tts
     license: Apache-2.0
@@ -134,6 +139,7 @@ models:
     notes: "Default dubbing model on 8 GB+ GPUs. Low-Budget Repairs (en->ru, with RVC): CER 0.045, ECAPA to the originals ~0.65-0.70; won the blind listening rounds."
   - name: Qwen3-TTS-12Hz-1.7B-Base
     repo: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+    revision: fd4b254389122332181a7c3db7f27e918eec64e3
     engine: qwen3tts
     role: tts
     license: Apache-2.0
@@ -146,6 +152,7 @@ models:
     notes: "Default voice-cloning model (3 s reference is enough)."
   - name: Qwen3-TTS-12Hz-0.6B-Base
     repo: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+    revision: 5d83992436eae1d760afd27aff78a71d676296fc
     engine: qwen3tts
     role: tts
     license: Apache-2.0
@@ -158,6 +165,7 @@ models:
     notes: "Smaller fallback (CPU tier, or when 1.7B runs out of VRAM)."
   - name: qwen3-tts-12hz-1.7b-ru-stress-cf
     repo: siriusfreak/qwen3-tts-12hz-1.7b-ru-stress-cf
+    revision: c16b3af3db3095120efc1ebb73f6522442bcb3b1
     engine: qwen3tts
     role: tts
     license: Apache-2.0
@@ -176,6 +184,7 @@ models:
     notes: "Russian fine-tune of 1.7B-Base that follows the U+0301 stress mark; keeps the original voice worse than 1.7B-Base, so it is used only when set explicitly in tts.model."
   - name: faster-whisper-large-v3-turbo
     repo: dropbox-dash/faster-whisper-large-v3-turbo
+    revision: 0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf
     engine: qc
     role: asr
     license: MIT
@@ -188,6 +197,7 @@ models:
     notes: "ASR for QA: CER of the dub against its text."
   - name: spkrec-ecapa-voxceleb
     repo: speechbrain/spkrec-ecapa-voxceleb
+    revision: 0f99f2d0ebe89ac095bcc5903c4dd8f72b367286
     engine: qc
     role: sv
     license: Apache-2.0
@@ -214,6 +224,7 @@ models:
     notes: "UTMOS22 strong learner (sarulab-speech/UTMOS22, MIT) via SpeechMOS: predicted naturalness MOS for best-of and QA; compare candidates of one line only."
   - name: emotion2vec_plus_base
     repo: emotion2vec/emotion2vec_plus_base
+    revision: b318240bfe67db81a8c572ecb37ce9c3759b81c9
     engine: qc
     role: emotion
     license: FunASR-Model-License-1.1
@@ -228,6 +239,7 @@ models:
     notes: "Speech emotion embedding (768-dim) and label for analyze/QA; without it analyze uses prosody (F0, RMS, syllable rate) only."
   - name: chatterbox-multilingual
     repo: ResembleAI/chatterbox
+    revision: 5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18
     include: [ve.pt, t3_mtl23ls_v3.safetensors, s3gen.pt, grapheme_mtl_merged_expanded_v1.json, conds.pt, Cangjie5_TC.json]
     engine: chatterbox
     role: tts

@@ -84,6 +84,41 @@ def test_relative_write_with_cwd_inside_game_is_blocked() -> None:
     assert guard.check_event(event, [WIN_GAME], windows=True)
 
 
+def test_short_name_target_is_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    game = tmp_path / "Long Game Folder"
+    game.mkdir()
+    short = tmp_path / "LONGGA~1"
+
+    def fake_expand(path: str) -> str:  # stands in for GetLongPathNameW (paths arrive normalized)
+        prefix = os.path.normcase(str(short))
+        return str(game) + path[len(prefix) :] if os.path.normcase(path).startswith(prefix) else path
+
+    monkeypatch.setattr(guard, "expand_short_names", fake_expand)
+    event = {"tool_name": "Write", "tool_input": {"file_path": str(short / "data" / "x.txt")}, "cwd": str(tmp_path)}
+    reason = guard.check_event(event, [str(game)])
+    assert reason and "Long Game Folder" in reason
+    event["tool_input"] = {"file_path": str(tmp_path / "OTHER~1" / "x.txt")}
+    assert guard.check_event(event, [str(game)]) is None
+
+
+def test_symlinked_target_is_resolved(tmp_path: Path) -> None:
+    game = tmp_path / "Some Game"
+    game.mkdir()
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(game, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks are not available")
+    event = {"tool_name": "Edit", "tool_input": {"file_path": str(link / "x.txt")}, "cwd": str(tmp_path)}
+    assert guard.check_event(event, [str(game)])
+
+
+def test_expand_short_names_keeps_missing_tail(tmp_path: Path) -> None:
+    path = str(tmp_path / "missing" / "x.txt")
+    expanded = guard.expand_short_names(path)
+    assert os.path.normcase(os.path.realpath(expanded)) == os.path.normcase(os.path.realpath(path))
+
+
 def test_other_tools_and_empty_registry_are_allowed() -> None:
     event = {"tool_name": "Read", "tool_input": {"file_path": r"G:\Low-Budget Repairs\x"}}
     assert guard.check_event(event, [WIN_GAME], windows=True) is None

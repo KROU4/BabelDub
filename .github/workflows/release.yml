@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   PYTHONUTF8: "1"
@@ -15,13 +15,17 @@ jobs:
   release:
     name: Build and publish ${{ github.ref_name }}
     runs-on: ubuntu-latest
+    # Only this job publishes the GitHub release.
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up uv and Python 3.12
-        uses: astral-sh/setup-uv@v10.3.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           python-version: "3.12"
 
@@ -43,13 +47,13 @@ jobs:
           uv run --project runtime python scripts/validate_skills.py
           uv run --project runtime python scripts/gen_agents.py --check
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
 
       - name: claude plugin validate --strict
         run: |
-          npm install -g @anthropic-ai/claude-code
+          npm install -g @anthropic-ai/claude-code@2.1.302
           claude plugin validate . --strict
 
       - name: Build release archives
@@ -71,7 +75,7 @@ jobs:
       # Gemini CLI installs from the latest release: with 2+ assets and no darwin/linux/win32 prefix
       # it takes the source tarball of the tag, which contains gemini-extension.json.
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           name: BabelDub ${{ github.ref_name }}
           body_path: dist/RELEASE_NOTES.md

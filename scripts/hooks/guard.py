@@ -13,7 +13,9 @@ MultiEdit/NotebookEdit into a registered game folder, or a Bash/PowerShell comma
 moves something there, exits with code 2 and the reason on stderr (Claude Code blocks the tool call and
 shows the reason to the model). `babeldub install|uninstall|reapply` are the only allowed writers.
 
-The shell check is a heuristic (commands are tokenized, not executed); the real protection is the CLI,
+File-tool targets are resolved through symlinks, junctions and Windows 8.3 short names. The shell check
+is only a heuristic (commands are tokenized, not executed, so variables, aliases or generated scripts can
+slip past it); the real protection is the CLI,
 which never writes into the game folder outside install/uninstall/reapply. Any internal error exits 0
 (fail-open), so a broken hook never blocks unrelated work. Set BABELDUB_GUARD=off to disable the check.
 """
@@ -79,6 +81,26 @@ _MSYS_DRIVE = re.compile(r"^/(?:mnt/|cygdrive/)?([a-zA-Z])(?=/|$)")
 _SLASHES = re.compile(r"/{2,}")
 
 
+def expand_short_names(path: str) -> str:
+    """Windows: expand 8.3 short names (PROGRA~1) in the nearest existing parent of a path; else unchanged."""
+    if os.name != "nt" or not path:
+        return path
+    import ctypes
+
+    head, tail = os.path.abspath(path), []
+    while not os.path.exists(head):
+        parent = os.path.dirname(head)
+        if parent == head:
+            return path
+        tail.append(os.path.basename(head))
+        head = parent
+    buf = ctypes.create_unicode_buffer(32768)
+    size = ctypes.windll.kernel32.GetLongPathNameW(head, buf, len(buf))
+    if not size or size >= len(buf):
+        return path
+    return os.path.join(buf.value, *reversed(tail))
+
+
 class PathMatcher:
     """Decides whether a path (or a path-like token from a command) lies inside a registered game folder."""
 
@@ -103,9 +125,16 @@ class PathMatcher:
         if self.windows != (os.name == "nt"):
             return None  # cross-platform unit tests: no filesystem lookups
         try:
-            return os.path.realpath(raw)
+            return os.path.realpath(expand_short_names(raw))
         except (OSError, ValueError):
             return None
+
+    def inside_file(self, target: str) -> str | None:
+        """Game folder containing a file-tool target, also through symlinks, junctions and 8.3 short names."""
+        absolute = self._absolute(target)
+        if not absolute:
+            return None
+        return self.game_of(absolute) or self.game_of(self._absolute(self._realpath(absolute)))
 
     def _absolute(self, raw: str | None) -> str | None:
         """Normalized absolute form of a path, or None if it cannot be resolved."""
@@ -829,7 +858,7 @@ def check_event(event: dict[str, Any], game_dirs: list[str], windows: bool | Non
     if tool in FILE_TOOLS:
         target = tool_input.get(FILE_TOOLS[tool]) or tool_input.get("file_path")
         if isinstance(target, str):
-            game = matcher.inside(target)
+            game = matcher.inside_file(target)
             if game:
                 return _block(f"{tool}", target, game)
         return None

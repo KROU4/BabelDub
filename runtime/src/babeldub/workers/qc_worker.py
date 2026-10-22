@@ -261,7 +261,7 @@ def _get_mos() -> Any:
         if not ckpts:
             raise FileNotFoundError(f"no UTMOS22 checkpoint (*.pt) in {folder}")
         model = UTMOS22Strong()
-        model.load_state_dict(torch.load(str(ckpts[0]), map_location="cpu"))
+        model.load_state_dict(torch.load(str(ckpts[0]), map_location="cpu", weights_only=True))
         model.eval().to(_torch_device())
         _STATE["mos"] = model
         log(f"MOS model loaded from {ckpts[0]}")

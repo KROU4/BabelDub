@@ -26,15 +26,15 @@ def test_shipped_catalog_engines():
     assert set(cat.engines) >= {"qwen3tts", "chatterbox", "qc", "dummy"}
     qwen = cat.engine("qwen3tts")
     assert qwen.torch["version"] == "2.8.0" and qwen.torch["index"].endswith("/cu128")
-    assert "qwen-tts" in qwen.packages and qwen.worker == "tts_qwen3.py"
+    assert any(p.startswith("qwen-tts==") for p in qwen.packages) and qwen.worker == "tts_qwen3.py"
     assert qwen.supports("ru") and not qwen.supports("pl")
     chatter = cat.engine("chatterbox")
     assert chatter.torch["version"] == "2.6.0" and chatter.torch["index"].endswith("/cu124")
     assert any(p.startswith("chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox") for p in chatter.packages)
     assert chatter.needs_git() and chatter.supports("pl") and chatter.supports("tr")
     qc = cat.engine("qc")
-    assert {"faster-whisper", "speechbrain", "soundfile", "numpy"} <= set(qc.packages)
-    assert {"nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"} <= set(qc.gpu_packages)
+    assert {"faster-whisper", "speechbrain", "soundfile", "numpy"} <= {p.split("==")[0] for p in qc.packages}
+    assert {p.split("==")[0] for p in qc.gpu_packages} >= {"nvidia-cublas-cu12", "nvidia-cudnn-cu12"}
     dummy = cat.engine("dummy")
     assert dummy.env is None and dummy.python_path() is None and dummy.supports("xx")
     with pytest.raises(BabelDubError) as err:
