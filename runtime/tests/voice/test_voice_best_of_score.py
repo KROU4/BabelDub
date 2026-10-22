@@ -150,6 +150,72 @@ def test_without_qc_the_provisional_pick_stands_until_synth_score(project: Proje
     assert jobs[0].attempt == 2
 
 
+class CrashingScorer:
+    """A qc session whose scoring dies on the second line of the pass."""
+
+    def __init__(self, crash_on: str | None) -> None:
+        self.crash_on = crash_on
+        self.fake = FakeScoreQc()
+
+    def score(self, key: str, wav: Path, **kw: Any) -> dict[str, Any]:
+        if self.crash_on and key.startswith(self.crash_on):
+            raise RuntimeError("worker died")
+        return self.fake.request({"op": "score", "wav": str(wav), "text": kw.get("text")})
+
+    def spell(self, texts: list[str], lang: str) -> list[str]:
+        return texts
+
+
+def test_score_crash_mid_pass_keeps_finished_lines_consistent(project: Project,
+                                                              capsys: pytest.CaptureFixture[str]) -> None:
+    lid2 = LID.replace("0001", "0002")
+    u2 = make_uid(lid2)
+    lines = read_jsonl(project.path(layout.LINES))
+    wav2 = project.path(layout.ORIG_AUDIO_DIR, f"{u2}.wav")
+    wav2.write_bytes(project.path(lines[0]["audio"]["wav"]).read_bytes())
+    lines.append({**lines[0], "id": lid2, "uid": u2, "audio": {**lines[0]["audio"], "wav": project.rel(wav2)}})
+    write_jsonl(project.path(layout.LINES), lines, schema="babeldub.lines/1")
+    tr = read_jsonl(project.path(layout.TRANSLATIONS))
+    write_jsonl(project.path(layout.TRANSLATIONS), [*tr, {**tr[0], "id": lid2}], schema="babeldub.translations/1")
+    assert run(capsys, project.root, "synth")[1]["score"] == {"scored": 0, "pending": 2}  # no qc env yet
+
+    rows = sorted(voice._pending_scores(project), key=lambda r: r["id"])
+    first, second = rows
+    win_bytes = project.path(first["best_of"]["cands"][1]["wav"]).read_bytes()  # c1 wins
+    with pytest.raises(RuntimeError):
+        voice.score_candidates(project, rows, CrashingScorer(crash_on=second["id"]))
+
+    latest = latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))
+    done = latest[first["id"]]
+    assert done["best_of"]["scored"] is True and done["key"] == voice._sha(first["key"], done["seed"])
+    assert project.path(done["wav"]).read_bytes() == win_bytes  # the row describes the audio on disk
+    assert sorted(p.name for p in project.path(done["wav"]).parent.iterdir()) == ["a1.wav"]
+    left = latest[second["id"]]
+    assert left["best_of"]["scored"] is False and all(project.path(c["wav"]).exists() for c in left["best_of"]["cands"])
+
+    # the next pass scores only the unfinished line
+    out = voice.score_candidates(project, voice._pending_scores(project), CrashingScorer(crash_on=None))
+    assert out["scored"] == 1 and out["pending"] == 0
+    assert latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[second["id"]]["best_of"]["scored"] is True
+
+
+def test_post_redoes_fixed_length_line_when_analysis_segments_change(project: Project, fake_qc: FakeScoreQc,
+                                                                    capsys: pytest.CaptureFixture[str]) -> None:
+    lines = read_jsonl(project.path(layout.LINES))
+    lines[0]["fixed_length"] = True
+    write_jsonl(project.path(layout.LINES), lines, schema="babeldub.lines/1")
+    analysis = project.path(voice.ANALYSIS)
+    write_jsonl(analysis, [{"id": LID, "vad_segments": [[0.1, 2.5]]}], schema="babeldub.analysis/1")
+    assert run(capsys, project.root, "synth")[0] == EXIT_OK
+    assert run(capsys, project.root, "post")[1]["done"] == 1
+    assert latest_by(read_jsonl(project.path(layout.POST)))[LID]["vad_key"] is not None
+    assert run(capsys, project.root, "post")[1]["up_to_date"] == 1
+    # `analyze` re-ran after post: the line is placed again on the new segments
+    write_jsonl(analysis, [{"id": LID, "vad_segments": [[0.3, 2.8]]}], schema="babeldub.analysis/1")
+    out = run(capsys, project.root, "post")[1]
+    assert out["done"] == 1 and out["up_to_date"] == 0
+
+
 def test_best_of_mode_auto_follows_the_qc_env(project: Project) -> None:
     project.data["tts"]["best_of_mode"] = "auto"
     assert voice.best_of_mode(project) == "length"

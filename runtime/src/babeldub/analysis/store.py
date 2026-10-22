@@ -21,7 +21,15 @@ def load_analysis(project: Project) -> dict[str, dict[str, Any]]:
 
 
 def write_analysis(project: Project, rows: dict[str, dict[str, Any]]) -> None:
+    """Rewrite analysis.jsonl and drop `emotion_<uid>` vectors no current row measured (a line re-measured
+    without the emotion model, or gone from the project), so a stale embedding is never read back."""
     write_jsonl(project.path(layout.ANALYSIS), list(rows.values()), schema=ANALYSIS_SCHEMA)
+    npz = project.path(layout.ANALYSIS_NPZ)
+    vectors = load_vectors(npz)
+    keep = {vector_key("emotion", str(r["uid"])) for r in rows.values() if r.get("uid") and r.get("emotion")}
+    pruned = {k: v for k, v in vectors.items() if not k.startswith("emotion_") or k in keep}
+    if len(pruned) != len(vectors):
+        save_vectors(npz, pruned)
 
 
 def load_vectors(path: Path) -> dict[str, np.ndarray]:

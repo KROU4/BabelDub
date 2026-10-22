@@ -217,6 +217,27 @@ def auto_decide(
     )
 
 
+def _attempt_of(row: dict[str, Any]) -> int:
+    try:
+        return int(row.get("attempt") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def qa_is_current(qa_row: dict[str, Any] | None, post_row: dict[str, Any] | None) -> bool:
+    """The QA row checked the audio the post row points to now: same attempt and file, same synth take
+    (`src_key`: `synth score` swaps the winner within an attempt) and the same post/vc pass (`post_ts`).
+    Rows written before these fields count as stale only when the post row is newer than the check."""
+    if not qa_row or not post_row:
+        return False
+    if _attempt_of(qa_row) != _attempt_of(post_row) or qa_row.get("wav") != post_row.get("wav"):
+        return False
+    if "src_key" in qa_row or "post_ts" in qa_row:
+        return qa_row.get("src_key") == post_row.get("src_key") and qa_row.get("post_ts") == post_row.get("ts")
+    post_ts, qa_ts = post_row.get("ts"), qa_row.get("ts")
+    return not (post_ts and qa_ts and str(post_ts) > str(qa_ts))
+
+
 def needs_attention(decision_row: dict[str, Any] | None, verdict: str | None) -> bool:
     """Outstanding item: an auto decision flagged for review, or a failed row without decision."""
     if decision_row is None:

@@ -53,6 +53,7 @@ from babeldub.core.paths import env_python, models_dir
 from babeldub.core.project import Project
 from babeldub.core.takes import follower_map
 from babeldub.qa import rank as best_rank
+from babeldub.qa.decisions import qa_is_current
 from babeldub.text.normalize import acute_to_plus, render_stress
 from babeldub.text.syllables import SYLLABLE_RATE, count_syllables
 from babeldub.workers.client import GpuLock, WorkerClient, WorkerError
@@ -654,7 +655,8 @@ def _bootstrap_states(
     max_attempts = int(tts.get("max_attempts", 3))
     max_cer = float(project.setting("qa", "max_cer", 0.15))
     post = latest_by(read_jsonl(project.path(layout.POST)))
-    qa = latest_by(read_jsonl(project.path(layout.QA)))
+    # only checks of the audio post points to now (a `synth score` swap or a re-post makes a check stale)
+    qa = {lid: r for lid, r in latest_by(read_jsonl(project.path(layout.QA))).items() if qa_is_current(r, post.get(lid))}
     by_char: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for lid, cid in char_of.items():
         line = lines_all[lid]
@@ -1472,16 +1474,17 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
     rvc = set(load_models(project))
     max_cer = float(project.setting("qa", "max_cer", 0.15))
     lang = project.target_lang
-    scored, changed, errors = 0, 0, []
-    new_rows: list[dict[str, Any]] = []
+    scored, changed, done, errors = 0, 0, 0, []
+    results = project.path(layout.SYNTH_RESULTS)
     for row in rows:
         info = dict(row.get("best_of") or {})
         cands = [c for c in info.pop("cands", None) or [] if _exists(project, c.get("wav"))]
         out = _abs(project, row.get("wav"))
         line = lines.get(row["id"])
         if len(cands) < 2 or line is None or out is None:
-            new_rows.append({**row, "best_of": {**info, "scored": True, "note": "fewer than 2 candidates left"},
-                             "ts": now_iso()})
+            append_jsonl(results, [{**row, "best_of": {**info, "scored": True, "note": "fewer than 2 candidates left"},
+                                    "ts": now_iso()}])
+            done += 1
             continue
         orig = _orig_wav(project, line)
         ref = chosen.get(str(row.get("char_id")))
@@ -1510,21 +1513,24 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
                              fixed_length=bool(line.get("fixed_length")))
         win_path = _abs(project, win.wav)
         assert win_path is not None
-        win_path.replace(out)
-        for cand in cands:
-            if cand["wav"] != win.wav:
-                p = _abs(project, cand["wav"])
-                if p is not None:
-                    p.unlink(missing_ok=True)
         changed += int(win.seed != info.get("picked_seed"))
         info.update(scored=True, provisional_seed=info.get("picked_seed"), picked_seed=win.seed,
                     sim_weight=best_rank.W_SIM_RVC if str(row.get("char_id")) in rvc else best_rank.W_SIM,
                     scores=[c.summary() for c in ranked])
-        new_rows.append({**row, "seed": win.seed, "key": _sha(row.get("key"), win.seed), "best_of": info,
-                         "ts": now_iso()})
+        # copy the winner over the take, write its row, only then delete the candidates: a crash at any
+        # point leaves the finished lines consistent and an unfinished one still scorable from all its candidates
+        tmp = out.with_name(out.stem + ".score.tmp" + out.suffix)
+        shutil.copyfile(win_path, tmp)
+        tmp.replace(out)
+        append_jsonl(results, [{**row, "seed": win.seed, "key": _sha(row.get("key"), win.seed), "best_of": info,
+                                "ts": now_iso()}])
+        for cand in cands:
+            p = _abs(project, cand["wav"])
+            if p is not None and p != out:
+                p.unlink(missing_ok=True)
         scored += 1
-    append_jsonl(project.path(layout.SYNTH_RESULTS), new_rows)
-    summary: dict[str, Any] = {"scored": scored, "changed": changed, "pending": len(rows) - len(new_rows)}
+        done += 1
+    summary: dict[str, Any] = {"scored": scored, "changed": changed, "pending": len(rows) - done}
     if errors:
         summary["errors"] = clip(errors, 5)
     return summary
@@ -1635,8 +1641,13 @@ def _post_line(
                         "max": round(max(fit.chunk_tempos), 4)},
         "sr": fit.sr, "ch": int(fit.audio.shape[1]), "frames": frames, "exact": fit.exact,
         "fixed_length": fixed, "over_length": bool(over),
-        "src_wav": res.get("wav"), "src_key": res.get("key"), "ts": now_iso(),
+        "src_wav": res.get("wav"), "src_key": res.get("key"), "vad_key": _vad_key(line, segments), "ts": now_iso(),
     }
+
+
+def _vad_key(line: dict[str, Any], segments: list[list[float]] | None) -> str | None:
+    """Identity of the analysis speech segments a fixed_length line is placed on (None: not used)."""
+    return _sha(segments) if line.get("fixed_length") and segments else None
 
 
 def post_settings(project: Project) -> dict[str, float]:
@@ -1688,7 +1699,8 @@ def cmd_post(args: argparse.Namespace) -> int:
         prev = existing.get(line_id)
         prev_wav = _abs(project, (prev or {}).get("wav"))
         if (not args.force and prev and prev.get("attempt") == res.get("attempt")
-                and prev.get("src_key") == res.get("key") and prev_wav is not None and prev_wav.exists()):
+                and prev.get("src_key") == res.get("key") and prev.get("vad_key") == _vad_key(line, segments.get(line_id))
+                and prev_wav is not None and prev_wav.exists()):
             up_to_date += 1
             continue
         work.append((line, res))

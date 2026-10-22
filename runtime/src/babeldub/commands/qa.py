@@ -57,6 +57,7 @@ from babeldub.qa.decisions import (
     auto_decide,
     evaluate,
     needs_attention,
+    qa_is_current,
     validate_agent_row,
 )
 from babeldub.qa.metrics import audio_levels, cosine, duration_ratio, identity_margin, prosody_similarity
@@ -129,10 +130,6 @@ def _without_followers(post: dict[str, dict[str, Any]], follows: dict[str, str])
     return {lid: row for lid, row in post.items() if lid not in follows}
 
 
-def _is_current(qa_row: dict[str, Any] | None, post_row: dict[str, Any]) -> bool:
-    return bool(qa_row) and _attempt(qa_row) == _attempt(post_row) and qa_row.get("wav") == post_row.get("wav")
-
-
 def _state(
     post_latest: dict[str, dict[str, Any]],
     qa_latest: dict[str, dict[str, Any]],
@@ -144,7 +141,7 @@ def _state(
     decisions: Counter[str] = Counter()
     for lid, post in post_latest.items():
         qa_row = qa_latest.get(lid)
-        if not _is_current(qa_row, post):
+        if not qa_is_current(qa_row, post):
             pending += 1
             continue
         dec = dec_latest.get(lid)
@@ -206,7 +203,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             raise BabelDubError("ids are not in post/post.jsonl", code=EXIT_USAGE, unknown=clip(unknown))
         ids = want
     qa_latest = latest_by(read_jsonl(project.path(layout.QA)))
-    to_check = [i for i in ids if args.force or not _is_current(qa_latest.get(i), post_latest[i])]
+    to_check = [i for i in ids if args.force or not qa_is_current(qa_latest.get(i), post_latest[i])]
     if args.limit is not None:
         to_check = to_check[: max(args.limit, 0)]
     decisions_all = read_jsonl(project.path(layout.DECISIONS))
@@ -264,18 +261,27 @@ def cmd_qa(args: argparse.Namespace) -> int:
 
         mos_base: dict[str, Any] = {} if args.rebaseline else dict(read_json(project.path(MOS_BASELINE), default={}) or {})
 
+        mos_tried: dict[str, float | None] = {}
+
         def orig_mos_of(cid: str) -> float | None:
-            """Median MOS of the character's clean originals (measured once, cached in qa/mos_baseline.json)."""
-            if cid not in mos_base:
+            """Median MOS of the character's clean originals (measured once, cached in qa/mos_baseline.json;
+            a failed measurement is not cached: the next run tries again)."""
+            if (mos_base.get(cid) or {}).get("median") is not None:
+                return mos_base[cid]["median"]
+            if cid not in mos_tried:
                 values: list[float] = []
                 for line_id, path in clean_items(root, char_lines.get(cid, []), MOS_BASELINE_LINES):
                     try:
                         values.append(session.mos(f"orig:{line_id}", path))
                     except QcItemError:
                         continue
-                mos_base[cid] = {"median": round(statistics.median(values), 3) if values else None, "n": len(values)}
+                mos_tried[cid] = round(statistics.median(values), 3) if values else None
+                if values:
+                    mos_base[cid] = {"median": mos_tried[cid], "n": len(values)}
+                else:
+                    mos_base.pop(cid, None)  # an older run may have cached a failed (None) median
                 write_json(project.path(MOS_BASELINE), mos_base)
-            return mos_base[cid].get("median")
+            return mos_tried[cid]
 
         def orig_emb(line_id: str) -> np.ndarray | None:
             line = lines.get(line_id)
@@ -383,6 +389,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "attempt": attempt,
                     "char_id": cid,
                     "wav": post.get("wav"),
+                    "src_key": post.get("src_key"),
+                    "post_ts": post.get("ts"),
                     "asr_text": asr_text,
                     "cer": None if cer_v is None else round(cer_v, 4),
                     "cer_skipped": "nonverbal" if nonverbal else None,
@@ -550,7 +558,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                                    "attention": 0, "cer": [], "sim": []})
         agg["lines"] += 1
         qa_row = qa_latest.get(lid)
-        if not _is_current(qa_row, post):
+        if not qa_is_current(qa_row, post):
             continue
         agg["checked"] += 1
         agg[qa_row["verdict"]] += 1
