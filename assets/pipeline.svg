@@ -52,10 +52,10 @@
     <rect class="card" width="290" height="210" rx="22"/>
     <circle cx="34" cy="34" r="16" fill="#FF8C78"/><text x="34" y="40" text-anchor="middle" class="num">3</text>
     <g class="icon" stroke="#FF8C78" transform="translate(212 16)"><circle cx="16" cy="14" r="8"/><path d="M2 42 a14 14 0 0 1 28 0"/><circle cx="40" cy="18" r="7"/><path d="M30 42 a12 12 0 0 1 24 -2"/></g>
-    <text x="24" y="100" class="title">Cast</text>
-    <text x="24" y="130" class="sub">characters, main roles,</text>
-    <text x="24" y="154" class="sub">voice references</text>
-    <text x="24" y="188" class="cmd">cast</text>
+    <text x="24" y="100" class="title">Analyze · Cast</text>
+    <text x="24" y="130" class="sub">pauses, energy, line class;</text>
+    <text x="24" y="154" class="sub">characters, voice refs</text>
+    <text x="24" y="188" class="cmd">analyze · cast</text>
   </g>
   <g transform="translate(960 80)">
     <rect class="card" width="290" height="210" rx="22"/>
@@ -73,8 +73,8 @@
     <circle cx="34" cy="34" r="16" fill="#FF5C8A"/><text x="34" y="40" text-anchor="middle" class="num">5</text>
     <g class="icon" stroke="#FF5C8A" transform="translate(214 14)"><rect x="12" y="2" width="16" height="28" rx="8"/><path d="M4 22 a16 16 0 0 0 32 0 M20 38 v8 M40 12 a10 10 0 0 1 0 16 M46 6 a18 18 0 0 1 0 28"/></g>
     <text x="24" y="100" class="title">Voice</text>
-    <text x="24" y="130" class="sub">the original hero’s voice:</text>
-    <text x="24" y="154" class="sub">timbre + line emotion</text>
+    <text x="24" y="130" class="sub">hero’s voice, prompt by energy,</text>
+    <text x="24" y="154" class="sub">best take, never slowed</text>
     <text x="24" y="188" class="cmd">synth · post</text>
   </g>
   <g transform="translate(495 350)">
@@ -82,8 +82,8 @@
     <circle cx="34" cy="34" r="16" fill="#C46CF0"/><text x="34" y="40" text-anchor="middle" class="num">6</text>
     <g class="icon" stroke="#C46CF0" transform="translate(220 18)"><circle cx="20" cy="20" r="18"/><path d="M11 21 l6 6 l12 -13"/></g>
     <text x="24" y="100" class="title">QA</text>
-    <text x="24" y="130" class="sub">ASR check, voice</text>
-    <text x="24" y="154" class="sub">similarity, duration</text>
+    <text x="24" y="130" class="sub">ASR, voice, naturalness,</text>
+    <text x="24" y="154" class="sub">delivery, timing</text>
     <text x="24" y="188" class="cmd">qa · decide</text>
   </g>
   <g transform="translate(805 350)">

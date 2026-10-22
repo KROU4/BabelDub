@@ -2,9 +2,11 @@
 
 Read this when checking the references of the main characters, when `no_ref[]` is not empty, and when you see warnings about relaxed rules.
 
-## 1. Why a reference, if the prompt is the line itself
+## 1. What the references are for
 
-The main voice prompt of the dub is the original recording of the same line (`tts.ref_strategy=line`, skill `babeldub-voice`): it carries both the timbre and the emotion of that phrase. The character reference (`char`) is needed where the line cannot serve as a prompt:
+With the default engine VoxCPM2 (`tts.ref_strategy=bootstrap`, skill `babeldub-voice`), every line is voiced from the character's **long reference** of its arousal bucket (calm, animated, loud, soft; `bucket` in `refs.jsonl`): several clean original lines joined into ~15–20 s that carry the timbre. Once QA accepts the character's first dubs, a target-language prompt bank is built from them. So the references decide the timbre of the whole role.
+
+With the fallback engines (Qwen3-TTS, Chatterbox) the prompt is the original line itself (`tts.ref_strategy=line`), and the character reference (`char`) is needed where the line cannot serve as a prompt:
 
 - short lines ("Yes", "Hey!") below `tts.line_ref_min_s` (1.6 s);
 - lines with music or noise under the voice (`has_bed`) and non-verbal lines (`nonverbal`);
@@ -48,11 +50,11 @@ You cannot hear audio. Check by text, flags and numbers:
 3. **Scene and key.** Keys like `_shout`, `_whisper`, `_radio`, `_phone`, `_scream`, and fight or chase scenes are suspicious for a neutral reference.
 4. **Flags** `has_bed` and `nonverbal` must not be on a reference (if the rules were relaxed, they may be; that is a warning).
 
-What to do with a bad reference in v0.1:
+What to do with a bad reference:
 
 - if the character has several references and only the first is bad, record it in `notes`: on `reref`, QA moves on to the next one;
-- if all of them are bad, record it in the character's `notes`, in `warnings` of your answer, and as a line in the report. You can re-run `babeldub cast --refs 3 --min-ref-s 4` with different duration bounds; v0.1 does not let you pick a specific file by hand;
-- if a main character has no good reference at all, keep `tts.ref_strategy=line` for them (the default `auto` already takes `line` for every usable line) and do not switch to `char`.
+- if all of them are bad, record it in the character's `notes`, in `warnings` of your answer, and as a line in the report. You can re-run `babeldub cast --refs 3 --min-ref-s 4` with different duration bounds; the CLI does not let you pick a specific file by hand;
+- if a main character has no good reference at all, say so in the report: with VoxCPM2 the whole role inherits the reference's noise or delivery; with a fallback engine keep `tts.ref_strategy=line` for them and do not switch to `char`.
 
 ## 5. Reference language
 

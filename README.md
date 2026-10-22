@@ -20,7 +20,7 @@
 
 <p align="center"><img src="assets/voice.png" alt="Dub with the original hero's voice" width="100%"></p>
 
-BabelDub's core principle is **dubbing with the original character's voice**: the same timbre, the same emotion, the same delivery — just in your language. The voice prompt is always the character's own original recordings: a long reference of the actor's clean lines gives the timbre, and once the character's first dubbed lines pass QA, they become a prompt in your language so the rest sounds native, not accented. Every line is generated three times and the take closest to the original's length wins; an RVC model trained on each main character's lines then pulls the timbre back to the original actor. QA compares every dub with the original speaker and sends lines whose voice drifted back for regeneration. Lip-sync is not touched: only the audio changes, and each file keeps exactly the original's length.
+BabelDub's core principle is **dubbing with the original character's voice**: the same timbre, the same emotion, the same delivery — just in your language. First the agent listens to every original line: where the speech starts and pauses, what is said, how loud and how animated it is. The voice prompt is always the character's own original recordings, matched to the line's energy (calm, animated, shouting, quiet): a long reference of the actor's clean lines gives the timbre, and once the character's first dubbed lines pass QA, the best of them become prompts in your language so the rest sounds native, not accented. Every line is generated several times, and the take that best keeps the original's delivery, naturalness, length and voice wins; an RVC model trained on each main character's lines then pulls the timbre back to the original actor. Speech is never slowed down to fill time: pauses are shortened or the speech is sped up a little (at most ×1.15), and cutscene lines are placed phrase by phrase on the original's timing. Screams, laughs and interjections keep the original audio. QA compares every dub with the original speaker and sends lines whose voice, words, naturalness or timing drifted back for regeneration. Lip-sync is not touched: only the audio changes, and each file keeps exactly the original's length.
 
 ## How it works
 
@@ -28,11 +28,12 @@ BabelDub's core principle is **dubbing with the original character's voice**: th
 
 1. **Recon** — engine, audio middleware (FMOD, Wwise, CRIWARE…), where voice and text live, support level.
 2. **Extract** — lines to WAV, texts in every language, audio ↔ subtitle links by engine keys.
-3. **Cast** — characters from game metadata or voice clustering, main roles, voice references.
-4. **Translate** — translator agents work in scene batches with a glossary, character style, placeholder checks and a length budget. If the game already ships an official translation, it is adapted for speech (numbers as words, names transliterated, colloquial) and stays the subtitle.
-5. **Voice** — local voice cloning (VoxCPM2 by default), best of three takes, exact length and loudness of the original, then RVC timbre transfer per main character.
-6. **QA** — speech recognition of the dub (CER), speaker similarity, duration; rejects are regenerated or shortened.
-7. **Repack** — native engine containers (for example, FMOD `.bank` files are rebuilt without proprietary tools), installed with a backup and one-command rollback.
+3. **Analyze** — every original line: speech segments and pauses, what is actually said (speech recognition with word times), pitch range, loudness and speaking rate, and a line class (speech, short word, interjection, nonverbal).
+4. **Cast** — characters from game metadata or voice clustering, main roles, voice references sorted by energy (calm, animated, loud, soft).
+5. **Translate** — translator agents work in scene batches with a glossary, character style, placeholder checks and a length budget from the original's speech span and the character's speaking rate. If the game already ships an official translation, it is adapted for speech (numbers as words, names transliterated, colloquial) and stays the subtitle.
+6. **Voice** — local voice cloning (VoxCPM2 by default) with a prompt matched to the line's energy, several takes scored for delivery, naturalness, length and voice, exact length and loudness of the original without slowing speech down, then RVC timbre transfer per main character.
+7. **QA** — speech recognition of the dub (CER), speaker similarity, naturalness (UTMOS), delivery compared with the original, cutscene timing; rejects are regenerated or shortened, and what cannot be fixed keeps the original.
+8. **Repack** — native engine containers (for example, FMOD `.bank` files are rebuilt without proprietary tools), installed with a backup and one-command rollback.
 
 You are asked **exactly two questions**: which language, and which characters to dub (all, the main ones, or a list). Everything else is automatic and summarized in a final report. The agent talks to you in your language.
 
@@ -104,10 +105,13 @@ Download `babeldub-kit-<version>.zip` from [Releases](https://github.com/KROU4/B
 | Voice cloning | VoxCPM2 (2B, 48 kHz, 30 languages incl. English, Russian, Polish, German, French, Spanish, Japanese, Chinese) | Apache-2.0 |
 | Timbre transfer | RVC v2 via Applio, one model per main character trained on its original lines | MIT |
 | Smaller GPUs and CPU | Qwen3-TTS-12Hz (1.7B / 0.6B), Chatterbox Multilingual for Polish, Turkish and more | Apache-2.0, MIT |
-| QA speech recognition | faster-whisper large-v3-turbo | MIT |
+| Speech segments, speech recognition | Silero VAD + faster-whisper large-v3-turbo | MIT |
 | Speaker similarity | SpeechBrain ECAPA | Apache-2.0 |
+| Naturalness | UTMOS22 (SpeechMOS) | MIT |
 
-Chosen in blind listening rounds on Low-Budget Repairs (English → Russian): VoxCPM2 + RVC reached a CER of 0.045 (Qwen3-TTS + RVC: 0.050) and a speaker similarity of ~0.65–0.70 to the original actor, whose own lines score 0.77 among themselves. Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
+Chosen in blind listening rounds on Low-Budget Repairs (English → Russian): VoxCPM2 + RVC reached a CER of 0.045 (Qwen3-TTS + RVC: 0.050) and a speaker similarity of ~0.65–0.70 to the original actor, whose own lines score 0.77 among themselves.
+
+**v0.2 against v0.1** on a 38-line test set (six characters, short words, cutscenes; the same Russian texts, the same metrics): slowed-down lines 17 → 0, time-stretched lines 74 % → 15 %, UTMOS naturalness 2.64 → 3.14 (the originals score 3.14), speaker similarity 0.544 → 0.606, the gap between the dub's and the original's pitch range 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034. Five of the 38 lines (shouts that could not be voiced recognizably) keep the original. Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
 
 ## Responsible use
 
