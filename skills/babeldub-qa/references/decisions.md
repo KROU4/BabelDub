@@ -47,6 +47,8 @@ Go from top to bottom; the first matching rule decides:
    - otherwise → `shorten`; in `note`, give the `ratio` and how many syllables to cut;
    - two shortenings already done → `keep_original`, or `accept` with a `note` if audio in this game is not tied to timing (only for ordinary dialogue, not for `fixed_length`).
 8. **Peaks, clipping, silence** → `regen`.
+8a. **Unnatural or monotone** (`mos`, `flat`) → `regen` (a new seed and the next nearest arousal bucket); on repeat for many lines of one character → the character's prompts are the problem (`failing_chars`, voice role). **Off-time cutscene** (`timing`) → `regen`, then `shorten`.
+8b. **`mixed` line accepted with attention** (words with a laugh or groan) → you cannot hear it: `accept` when `cer` and `sim` are fine and the laugh is not part of the meaning; else `keep_original` with a `note`.
 9. **Everything within thresholds** → `accept`.
 
 ## 3. Examples

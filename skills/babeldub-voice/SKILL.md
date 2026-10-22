@@ -20,8 +20,8 @@ Talk to the user in the user's language. Keep commands, field names and identifi
 Chosen in blind listening rounds on a real game (Low-Budget Repairs, English → Russian) over Qwen3-TTS, Seed-VC and fine-tunes:
 
 1. **TTS: VoxCPM2** (`tts.engine=auto` on an NVIDIA GPU with 8 GB+ and the `voxcpm` env; 30 languages, 48 kHz, Apache-2.0).
-2. **Bootstrap voice prompts** (`tts.ref_strategy=auto` = `bootstrap` for VoxCPM2). Every line gets the character's *long timbre reference*: 3–4 clean original lines (4–7.5 s each) joined into ~15–20 s. The first `tts.bootstrap_lines` (4) lines of each character are dubbed with it alone (`bootstrap-src`). When QA accepted at least `tts.bootstrap_min_accepted` (3) of them, their final audio and exact text become a ~20–26 s *target-language prompt*, and the rest of the character's lines are dubbed with both (`bootstrap-tgt`): the actor's timbre, native pronunciation.
-3. **Best of N** (`tts.best_of=3`): N takes with different seeds; the one whose speech length is closest to the original's wins.
+2. **Bootstrap voice prompts by arousal** (`tts.ref_strategy=auto` = `bootstrap` for VoxCPM2). After `analyze`, each character's lines fall into four buckets by their prosody (calm, animated, loud, soft). Every line gets the *long timbre reference* of its bucket: 3–4 clean original lines (4–7.5 s each) joined into ~15–20 s (calm always exists; another bucket needs ≥ 8 s of clean material). The first `tts.bootstrap_lines` (4) lines of each character are dubbed with it alone (`bootstrap-src`). When QA accepted at least `tts.bootstrap_min_accepted` (3) of them, a *target-language prompt bank* is built: per bucket 1–2 accepted dubs (5–10 s, ranked by MOS and how well their intonation follows the original), and the rest of the character's lines are dubbed with the reference and prompt of the bucket nearest to their original (`bootstrap-tgt`): the actor's timbre, the line's energy, native pronunciation.
+3. **Best of N** (`tts.best_of=3`): N takes with different seeds. With the `qc` env installed (`tts.best_of_mode=auto` → `score`) every take is kept, and after the TTS model is unloaded `synth` scores them (prosody similarity to the original, MOS, length, voice similarity; CER and length as gates) and keeps the best; otherwise the take whose speech length is closest to the original's wins.
 4. **Exact fit** (`post`): never slower (a short dub keeps its tempo, the rest is silence); a long one loses part of its pauses, then speeds up to at most `post.tempo_max` (1.15, pitch kept); cutscene (`fixed_length`) chunks start where the original's segments start; the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness.
 5. **RVC timbre transfer** (`vc`): one RVC v2 model per main character, trained once on its clean original lines (`babeldub vc train`), converts every dub of that character. It works for any target language.
 6. **QA** (Whisper with VAD, ECAPA with cross-language calibration) accepts or sends lines back.
@@ -32,10 +32,11 @@ Measured on Low-Budget Repairs: VoxCPM2 + RVC CER 0.045 (Qwen3-TTS + RVC 0.050),
 
 1. **The timbre comes from the original actor.** The voice prompt is always made of original recordings (the long reference, or for other engines the original line itself with its text), never of a generic voice.
 2. **Delivery follows the original.** For Qwen3-TTS and Chatterbox the default `auto` strategy uses the original line as an ICL prompt (`line`), or the character's best clean reference (`char`) when the line is too short, untranscribed, noisy or nonverbal; ICL needs the exact transcript, so an implausible one switches to the character reference or timbre only (`line-xvec`). Details: [references/ref-strategy.md](references/ref-strategy.md).
-3. **Plain text.** VoxCPM2 and Qwen3-TTS Base turn U+0301 stress marks into extra sounds: the CLI strips them for every model except an explicit stress model (`qwen3-tts-…-ru-stress-cf`).
-4. **Alternative takes and duplicates** (`alt_take`, `duplicate`) are not voiced: they follow their leader, and the build gives them the leader's accepted dub.
-5. **The translation must fit the intonation and length of the original.** With official texts the translator adapts them for speech (`translation.mode=adapt`, the `babeldub-translate` skill).
-6. **QA compares the synthesized voice with the original character** and sends drifted voices back.
+3. **Plain text.** VoxCPM2 and Qwen3-TTS Base turn U+0301 stress marks into extra sounds, and VoxCPM2 reads `+` as "plus": the CLI strips marks for every model except an explicit stress model (`qwen3-tts-…-ru-stress-cf`). The glossary `pronounce` is applied to the dub text. `tts.stress=on` (off by default) marks Russian homographs with RUAccent and sends them in the form the engine reads (VoxCPM2: a CAPITAL stressed vowel).
+4. **What is not words is not dubbed.** `analyze` classes: interjections and nonverbal lines (laughs, groans, "Hmm…") keep the original (`skipped.keep_original`, an automatic `keep_original` decision); short words ("Freeze!") are voiced from the line itself with 6 candidates and one regen at most; `mixed` lines are voiced and flagged for listening.
+5. **Alternative takes and duplicates** (`alt_take`, `duplicate`) are not voiced: they follow their leader, and the build gives them the leader's accepted dub.
+6. **The translation must fit the intonation and length of the original.** With official texts the translator adapts them for speech (`translation.mode=adapt`, the `babeldub-translate` skill).
+7. **QA compares the synthesized voice with the original character** (voice, words, naturalness, intonation range) and sends drifted, unnatural or monotone takes back.
 
 ## Preconditions
 
@@ -70,7 +71,7 @@ babeldub vc train --chars <id1>,<id2>            # ~15 min per character on an 8
 Run the pilot on the main characters before the batch:
 
 ```text
-babeldub synth --chars <id1>,<id2> --dry-run   # plan: by_ref, best_of, skipped
+babeldub synth --chars <id1>,<id2> --dry-run   # plan: by_ref, best_of, best_of_mode, skipped
 babeldub synth --chars <id1>,<id2>             # bootstrap phase 1: the first 4 lines of each
 babeldub post
 babeldub vc
@@ -78,7 +79,7 @@ babeldub qa
 babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.sim,qa.sim_ref,qa.ratio,qa.reasons --limit 30
 ```
 
-- With `bootstrap`, the first `synth` dubs only the first lines of each character (`by_ref: bootstrap-src`) and reports the rest in `skipped.bootstrap_wait`; the next `synth` after QA builds the target-language prompt (`synth/prompts/<char_id>/tgt.json`) and dubs the rest (`bootstrap-tgt`). If fewer than 3 first lines were accepted, the rest goes on with the original reference only (`ref_reason` says so) — look at those lines first.
+- With `bootstrap`, the first `synth` dubs only the first lines of each character (`by_ref: bootstrap-src`) and reports the rest in `skipped.bootstrap_wait`; the next `synth` after QA builds the target-language prompt bank (`synth/prompts/<char_id>/tgt.json`) and dubs the rest (`bootstrap-tgt`, `bucket` in `synth/results.jsonl`). If fewer than 3 first lines were accepted, the rest goes on with the original reference only (`ref_reason` says so) — look at those lines first.
 - Pilot criteria per character: `sim ≥ sim_threshold` (0.45 × `sim_ref` for a dub in another language, never below 0.25), identity `margin ≥ −0.05`, `cer ≤ qa.max_cer` (0.15), `ratio ≤ qa.max_duration_ratio` (1.35).
 - You cannot hear audio. In the report (in the user's language) list 3–5 final files of the main characters (`vc/audio/<uid>.wav`, or `post/audio/<uid>.wav` without a model) to compare with `audio/orig/<uid>.wav`.
 - A problem with a character's references as a whole (every line in the "wrong" voice, a gender switch) is a question for the caster role.
@@ -97,6 +98,8 @@ babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.s
 | `runaway[]` | the take looped and was discarded; the line was retried alone. A line that loops every time is `error: "runaway"`: rerun, then `keep_original` or `retranslate` |
 | `skipped.bootstrap_wait` | expected: run `post`, `vc`, `qa`, then `synth` again |
 | `skipped.follows` / `not_selected` | intended: alt takes reuse their leader; unselected characters keep the original voice |
+| `skipped.keep_original` | intended: interjections and nonverbal lines keep the original (`tts.keep_original_classes`); a human decision other than `keep_original` dubs one anyway |
+| `score.pending` with a note | the qc env is missing or busy: the provisional (length) picks stand; run `babeldub synth score` later, then `post` |
 | `skipped.no_ref` | no reference and no usable original: a question for the caster |
 
 ## Step 5. Post-processing and timbre transfer
@@ -113,7 +116,7 @@ babeldub qa → (qa role) qa/decisions.agent.jsonl → babeldub decide apply
 babeldub synth --attempt-next → babeldub post → babeldub vc → babeldub qa
 ```
 
-- `regen`: a new attempt with new seeds and the same prompt (bootstrap lines then get the target-language prompt when it exists).
+- `regen`: a new attempt with new seeds and the same prompt (bootstrap lines then get the target-language prompt when it exists); after a `flat` or `mos` failure the next nearest arousal bucket is used.
 - `reref`: a new attempt with a different prompt (`line` → `char`, `char` → another reference or the line).
 - `shorten` and `retranslate` go through translation; then a regular `synth` picks up the new text.
 - If more than 20% of a character's lines in a chunk are defective, stop and find the cause (step 1–2, caster role) instead of retrying.
@@ -132,7 +135,7 @@ babeldub synth --attempt-next → babeldub post → babeldub vc → babeldub qa
 - Do not synthesize or convert outside the CLI (own scripts, third-party TTS or RVC): that loses idempotency, attempt accounting and the model licenses in the build manifest.
 - Do not enable models with non-commercial licenses without showing the license and getting an explicit "yes".
 - Do not "improve" the original lines before cloning (denoising, EQ): the prompt must sound like the character in the game.
-- Do not put stress marks into dub texts for VoxCPM2 or Qwen3-TTS Base; do not edit the canon (`synth/results.jsonl`, `post/post.jsonl`) or the game folder.
+- Do not put stress marks into dub texts by hand (use the glossary `pronounce` or `tts.stress=on`); do not edit the canon (`synth/results.jsonl`, `post/post.jsonl`) or the game folder.
 
 ## References
 

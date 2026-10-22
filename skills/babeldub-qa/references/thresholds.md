@@ -17,8 +17,13 @@ Read this when there are suspiciously many or suspiciously few defects, and afte
 | `post.true_peak_db` | −1.0 | peak ceiling; QA allows another 0.5 dB |
 | `qa.silence_db` | −50 | below this the line counts as silence |
 | `tts.max_attempts` | 3 | how many synthesis attempts before `keep_original` |
+| `tts.short_word_attempts` | 2 | attempts of a `short_word` line ("Freeze!") before `keep_original` |
+| `qa.mos_drop` | 1.0 | naturalness: `mos ≥ orig_mos − 1.0` (the median MOS of the character's originals) |
+| `qa.min_f0_range_ratio` | 0.5 | monotony: the dub's F0 range ≥ 0.5 × the original's ... |
+| `qa.flat_min_orig_st` | 3.0 | ... when the original moves at least 3 semitones |
+| `qa.max_onset_s` | 0.08 | `fixed_length`: chunk onset within ±80 ms of the original, end at most 80 ms late |
 
-Lines flagged `nonverbal` (screams, laughs) never fail on similarity, identity or CER (`sim_skipped`, `cer_skipped` in `qa/qa.jsonl`).
+Lines flagged `nonverbal` (screams, laughs) never fail on similarity, identity or CER (`sim_skipped`, `cer_skipped` in `qa/qa.jsonl`), nor on MOS or prosody. The MOS and prosody thresholds are deliberately loose: they compare a dub with its character's own originals and flag only clear outliers; tighten them only after listening.
 
 The CER, length and level values are starting points that nobody has checked on the voices of a particular game. The research BabelDub is built on also proposed stricter targets for Russian (CER up to 0.08 is "good", up to 0.20 is "regenerate"), but those are marked as needing calibration too. The similarity values are calibrated on one real run (below); treat them as a sound default, not as the truth for every engine and language pair.
 

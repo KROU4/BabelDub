@@ -24,7 +24,9 @@ For every **selected** character, `babeldub cast` takes the character's original
 5. **Score:** closeness of the duration to 7 s and a normal speech level (−30 to −8 dB); if the `qc` worker is installed, also closeness to the "centroid" of the character's voice (the most typical lines win). Total: 0.4 × heuristic + 0.6 × similarity to the centroid.
 6. **Relaxing the rules** if nothing qualifies: first duration 1.5–20 s, then no text requirement, then both. In that case `warnings` contains "no ideal reference, rules relaxed (…)".
 
-The best `--refs` (up to 3) candidates are copied to `cast/refs/<char_id>/<uid>.wav` and recorded in `cast/refs.jsonl`: `ref_id`, `char_id`, `line_id`, `wav`, `text`, `lang`, `dur_s`, `score`, `chosen`, `rank`. The top-ranked one is the primary reference (`chosen`).
+The best `--refs` (up to 3) candidates are copied to `cast/refs/<char_id>/<uid>.wav` and recorded in `cast/refs.jsonl`: `ref_id`, `char_id`, `line_id`, `wav`, `text`, `lang`, `dur_s`, `score`, `chosen`, `rank`, `bucket`. The top-ranked one is the primary reference (`chosen`).
+
+`bucket` is the arousal bucket of the reference line (`calm`, `animated`, `loud`, `soft`), from the `analyze` prosody relative to the character's own medians (loudness ±6 dB, pitch range ±4 semitones, speaking rate ±25 %; an opt-in emotion label moves a calm line). It is informational for the caster: the neutral `char` reference should be `calm`. The VoxCPM2 bootstrap does not use `refs.jsonl` buckets directly; it builds a long reference per bucket from all clean lines of the character (skill `babeldub-voice`, `references/ref-strategy.md`), so a character with few loud lines falls back to calm for shouts.
 
 ## 3. What makes a good reference
 

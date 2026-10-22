@@ -18,14 +18,17 @@ You decide the fate of the lines that failed the automatic thresholds. The main 
 | `cer` | the recognized dub differs from `dub_text` by more than `qa.max_cer` (0.15) | `regen` while attempts remain, then `keep_original` |
 | `sim` | the voice "drifted" from the hero: `sim` < `sim_threshold` = max(ratio × `sim_ref` (the character's baseline), `qa.min_sim_abs` 0.25); ratio `qa.min_sim_ratio_xlang` (0.45) for a dub in another language than the original audio, `qa.min_sim_ratio` (0.75) for a same-language dub | `regen`, then `keep_original` |
 | `identity` | the dub sounds more like another character (`qa.closest_char`) than its own: `qa.margin` < `qa.min_identity_margin` (−0.05) | `regen`, then `keep_original` |
+| `mos` | naturalness (UTMOS22) clearly below the character's originals: `qa.mos` < `qa.orig_mos` − `qa.mos_drop` (1.0) | `regen` (new seed, next arousal bucket), then `keep_original` |
+| `flat` | monotone: the dub's F0 range < 0.5 × the original's (originals moving ≥ 3 semitones) | `regen` (new seed, next arousal bucket), then `keep_original` |
+| `timing` | `fixed_length` line: a chunk starts more than ±80 ms off its original segment or ends more than 80 ms late | `regen`, then `keep_original` |
 | `peak` | peak above the ceiling, or clipping | `regen`, then `keep_original` |
 | `empty`, `silent` | empty file or silence | `regen`, then `keep_original` |
 | `duration` | longer than `qa.max_duration_ratio` (1.35) or, for `fixed_length`, longer than the original beyond the tolerance | `shorten` (up to 2 times), then `keep_original` |
 | `missing_file`, `no_dub_text`, `qc_error` | no file after `post`, no translation, worker failure | no decision — needs attention |
 
-Lines flagged `nonverbal` (screams, laughs) never fail on `sim`, `identity` or `cer` (`qa.sim_skipped`, `qa.cer_skipped`).
+Lines flagged `nonverbal` (screams, laughs) never fail on `sim`, `identity`, `cer`, `mos` or `flat` (`qa.sim_skipped`, `qa.cer_skipped`). Interjections and nonverbal lines classed by `analyze` keep the original and never reach QA. A `mixed` line (words with a laugh or groan) that passes is accepted with attention: `accept` it when the laugh is not part of the meaning, else `keep_original`. A `short_word` line gets one regen, then `keep_original`.
 
-`qa` output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `next`. Code 3 — `attention[]` is not empty. The `next` field suggests the next step.
+`qa` output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept`, `attention[]`, `pending`, `cer_median`, `sim_median`, `mos_median`, `prosody_median`, `next`. Code 3 — `attention[]` is not empty. The `next` field suggests the next step.
 
 ## Input
 

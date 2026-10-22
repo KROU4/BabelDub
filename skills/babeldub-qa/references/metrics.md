@@ -4,15 +4,15 @@ Read this the first time you review defects. The metrics are computed by the `qc
 
 ## 1. Fields of `qa/qa.jsonl`
 
-`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `cer_skipped`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `sim_ratio`, `sim_threshold`, `sim_skipped`, `margin`, `closest_char`, `ratio`, `dur_s`, `peak_db`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Inspect them with `babeldub query`; do not read the file whole. In `query` these fields are available with the `qa.` prefix (`--fields id,qa.cer,qa.sim,qa.reasons`), while `verdict` and `decision` use short names in `--where`.
+`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `cer_skipped`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `sim_ratio`, `sim_threshold`, `sim_skipped`, `mos`, `orig_mos`, `prosody_sim`, `f0_range_st`, `orig_f0_range_st`, `contour_corr`, `margin`, `closest_char`, `ratio`, `dur_s`, `peak_db`, `class`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Inspect them with `babeldub query`; do not read the file whole. In `query` these fields are available with the `qa.` prefix (`--fields id,qa.cer,qa.sim,qa.reasons`), while `verdict` and `decision` use short names in `--where`.
 
 ## 2. Intelligibility: `cer`
 
-- **How.** ASR transcribes the dub in the target language (in the v0.1 catalog — faster-whisper large-v3-turbo); CER is the share of character edits between the normalized `dub_text` and the recognized text. Normalization: lower case, no punctuation or markup, «ё» → «е», digits stay digits.
+- **How.** ASR transcribes the dub in the target language (in the v0.1 catalog — faster-whisper large-v3-turbo); CER is the share of character edits between the normalized `dub_text` and the recognized text. Normalization: lower case, no punctuation or markup, «ё» → «е», digits spelled out as words on both sides (num2words, in the CLI or in the qc worker), so «25» heard for «двадцать пять» is no error.
 - **What it catches:** skipped and repeated words, model hallucinations (extra phrases), "swallowed" word endings, wrong readings (Latin script, numbers), a strong accent, silence instead of speech.
 - **Where it goes wrong:**
   - ASR makes mistakes too, especially on short lines («Эй!», «Хм»): one wrong character out of three is already CER 0.33;
-  - numbers: if a digit stayed in `dub_text` and the model spoke it as words, ASR returns words or digits at its own discretion — CER grows without a real defect;
+  - numbers: both sides are spelled out, but an ordinal or a case form («25-го», «двадцать пятого») can still differ from what num2words writes;
   - ASR spells names and invented game words as it hears them («Збышек» → «збышик»);
   - placeholders stay in `dub_text` (the CLI strips them only before synthesis), but they are not in the speech;
   - ASR recognizes interjections and emotional exclamations poorly;
@@ -56,6 +56,22 @@ For Russian, the BabelDub research recommends GigaAM-v3 as more accurate recogni
 ## 5. Lines flagged `nonverbal`
 
 Screams, laughs, groans: their embedding says little about the timbre (the original scream itself may sit far from the character's centroid) and their transcript says nothing about the words. Such lines are measured and recorded, but never fail on `sim`, `identity` or `cer`: the row has `sim_skipped: "nonverbal"` and `cer_skipped: "nonverbal"`. Length, peaks and silence are still checked. If the dub of a scream sounds wrong, that is a listening question: decide `keep_original` when in doubt.
+
+## 5a. Naturalness: `mos`, `orig_mos`
+
+- **How.** UTMOS22 (strong learner, MIT) predicts a 1–5 naturalness score of the dub. It only runs when its checkpoint is downloaded (`babeldub setup --engines qc` fetches it). `orig_mos` is the median score of up to 8 longest clean originals of the same character (`qa/mos_baseline.json`, measured once; `qa --rebaseline` measures again).
+- **Rule.** Reason `mos` when `mos < orig_mos − qa.mos_drop` (1.0). MOS depends on the voice, the language and the recording, so it is compared with the character's own originals and only clear outliers fail: a robotic, buzzing or broken take.
+- **Where it goes wrong:** game recordings with effects (radio, megaphone) score low even when the dub is fine; short lines (< 1 s) score erratically.
+
+## 5b. Intonation: `prosody_sim`, `f0_range_st`, `contour_corr`
+
+- **How.** The qc worker tracks F0 (pyin) on the dub and on the clean original. `f0_range_st` is the 10–90 % pitch range in semitones; `contour_corr` the correlation of the two voiced pitch contours (both resampled to 32 points; null when either is too short or their lengths differ more than twice); `prosody_sim` = 0.6 × range ratio (smaller / larger) + 0.4 × (`contour_corr` + 1) / 2.
+- **Rule.** Reason `flat` when the original moves at least `qa.flat_min_orig_st` (3) semitones and the dub's range is below `qa.min_f0_range_ratio` (0.5) of it: the monotone "machine" read that the v0.2 baseline found in every group (the dub's range narrower than the original's).
+- **Where it goes wrong:** creaky or whispered originals have little voiced pitch; a different sentence structure in the translation moves the stresses, so a low `contour_corr` alone is no defect (it never fails a line).
+
+## 5c. Timing of `fixed_length` lines
+
+`post` places each chunk of a cutscene line on its original segment and records `onset_deltas` and `offset_deltas` (seconds). Reason `timing` when a chunk starts more than `qa.max_onset_s` (80 ms) off its segment or ends more than 80 ms after it. Ending early is fine. Usually the translation is too long for one segment: `shorten` after a failed `regen`.
 
 ## 6. Length: `ratio`
 

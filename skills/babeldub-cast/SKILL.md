@@ -27,7 +27,7 @@ babeldub cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12]
 3. **The `unknown` group** holds lines without a speaker that could not be compared (no `qc` worker, or the file could not be read). It is not one voice: it is not ranked and never dubbed as a character.
 4. **Tiers** (`tier`): `main`, `secondary`, `minor`, by minutes of speech (`references/tiers.md`).
 5. **Selection** by `cast.policy`: `main` (default), `all` or `list`.
-6. **References** for the selected characters: up to `--refs` clean original lines of 3–12 s with known text (`cast/refs.jsonl`, copies in `cast/refs/<char_id>/`). Selection rules: `references/ref-selection.md`.
+6. **References** for the selected characters: up to `--refs` clean original lines of 3–12 s with known text (`cast/refs.jsonl`, copies in `cast/refs/<char_id>/`). Selection rules: `references/ref-selection.md`. After `analyze`, each reference row also carries the line's arousal `bucket` (calm, animated, loud, soft): the voice stage builds one long timbre reference per bucket from the character's clean lines, so a shout is voiced from shouted originals.
 7. **Casting sheet** `cast/casting_sheet.md`: a table of characters, their references and warnings.
 
 Output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters` (left after merging), `merged`, `merged_into{char_id: [cluster_id]}`, `refs`, `warnings[]`, `next`. Exit code 3 means `uncertain[]` or `no_ref[]` is not empty.

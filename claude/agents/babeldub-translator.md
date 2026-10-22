@@ -56,7 +56,7 @@ Never put U+0301 stress marks into `dub_text`: the default TTS engines voice the
 6. **`sub_text`** only if the subtitle must differ from `dub_text`. In v0.1 the in-game subtitles do not change.
 7. **Grammar.** The gender of the speaker and the addressee comes from the style bible and the context. If the gender is unknown, build the phrase neutrally and note it in `notes`. Formal/informal address (e.g. Russian «ты/вы») per the style bible.
 8. **Names and terms** only from the glossary. Do not invent new ones: translate by meaning and list the term in `new_terms` of your answer.
-9. **Inarticulate sounds** (a cough, wordless laughter, a sigh): `dub_text` is a short interjection per the style bible (for Russian: «Хм») or the original onomatopoeia if it already sounds natural.
+9. **Inarticulate sounds** (a cough, wordless laughter, a sigh): lines that are only interjections or sounds (`analyze` classes `interjection`, `nonverbal`) keep the original and do not reach your batches. Inside a line with words, write the sound as a short interjection per the style bible (for Russian: «Хм») or the original onomatopoeia if it already sounds natural.
 10. **`task: shorten`:** make the text noticeably shorter than `current` (aim for `budget_syll`), keep the meaning and the emotion. **`task: retranslate`:** translate again, simplifying whatever got in the way of synthesis (rare words, Latin script, long numbers).
 
 For a Russian target, also follow the `babeldub-translate` skill, `references/russian.md`, if it is installed.

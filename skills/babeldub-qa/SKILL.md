@@ -27,23 +27,26 @@ babeldub report             qa/report.md: per-character totals and the attention
 
 | Metric | How | Default threshold |
 |---|---|---|
-| `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo) against `dub_text`, both texts normalized | `qa.max_cer` = 0.15 |
+| `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo) against `dub_text`, both texts normalized, digits spelled out on both sides | `qa.max_cer` = 0.15 |
 | `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ sim_threshold = max(ratio × sim_ref, qa.min_sim_abs = 0.25)`; ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (the normal case), `qa.min_sim_ratio` = 0.75 for a same-language dub |
 | `sim_ref` — the character's baseline | mean pairwise similarity of the character's own clean originals | — |
 | `margin` — whose voice is it | similarity to the own character's voice centroid minus the best other character's (`closest_char`); needs two characters with centroids | `margin ≥ qa.min_identity_margin` = −0.05, else reason `identity` |
 | `ratio` — length | dub speech / original speech (from `post`) | `qa.max_duration_ratio` = 1.35; for `fixed_length` 1 + `post.fixed_length_tolerance` = 1.03 |
+| `mos` — naturalness | UTMOS22 of the dub against `orig_mos`, the median of the character's own originals (`qa/mos_baseline.json`); only when the UTMOS22 checkpoint is downloaded | reason `mos` when `mos < orig_mos − qa.mos_drop` (1.0): only clear outliers |
+| `prosody_sim` — intonation | 0.6 × F0 range ratio (dub vs original) + 0.4 × F0 contour correlation | reason `flat` when the original moves ≥ 3 semitones and the dub's range is under `qa.min_f0_range_ratio` (0.5) of it |
+| onset/offset (`fixed_length`) | `onset_deltas`/`offset_deltas` of `post` | reason `timing` when a segment starts more than ±80 ms off or ends more than 80 ms late |
 | `peak_db`, clipping | peak and share of clipped samples | peak no higher than `post.true_peak_db` + 0.5 dB |
 | silence | speech loudness | not quieter than −50 dB |
 
-Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`, `identity` or `cer` (`sim_skipped`, `cer_skipped`). Each metric in detail, its weak spots, and why similarity is measured against a baseline — [references/metrics.md](references/metrics.md).
+Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`, `identity` or `cer` (`sim_skipped`, `cer_skipped`) and skip MOS and prosody. Interjections and nonverbal lines classed by `analyze` never reach QA: `synth` keeps their original. `class` in `qa.jsonl` is the analyze class of the original. Each metric in detail, its weak spots, and why similarity is measured against a baseline — [references/metrics.md](references/metrics.md).
 
 ## Workflow
 
-1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `errors[]`, `next`.
+1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `mos_median`, `prosody_median`, `errors[]`, `next`.
 2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `vc` → `qa`, skill `babeldub-voice`); if `next` mentions waiting lines (bootstrap phase 2), run `synth` → `post` → `vc` → `qa`; if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
 3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
 4. **Look at the metrics** of the relevant lines only:
-   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
+   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.mos,qa.orig_mos,qa.prosody_sim,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
    In `query`, QA metrics live under the `qa.` prefix; to compare the text with what was recognized, add `translation.dub_text` and `qa.asr_text`.
 5. **Systemic defects.** If more than 20 % of one character's lines in a chunk fail, do not decide line by line: this is a prompt, reference or attribution problem. Return the character in `failing_chars` (to the orchestrator and to the voice and caster roles).
 6. **Decisions:** write them to `qa/decisions.agent.jsonl` and run `babeldub decide apply`. The decision table is below; details — [references/decisions.md](references/decisions.md).
@@ -54,14 +57,14 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 | Decision | When | What happens next |
 |---|---|---|
 | `accept` | metrics within thresholds, or the deviation is acceptable and explained in `note` | the line goes into the build |
-| `regen` | a random defect (`cer`, peaks, silence, looping) with a sound prompt, attempts remain | a new attempt with a different seed |
+| `regen` | a random defect (`cer`, peaks, silence, looping, `mos`, `flat`, `timing`) with a sound prompt, attempts remain | a new attempt with a different seed (after `mos`/`flat` also the next nearest arousal bucket) |
 | `reref` | the voice "drifted": low `sim`, especially `sim_line`, on shouting, whispering, noise, a radio effect | a new attempt with a different prompt (`line` → `char`) |
 | `shorten` | `ratio` above the limit, `fixed_length` does not fit | the translator shortens the text, then a new synthesis |
 | `retranslate` | `cer` high again while the voice is fine: numbers, Latin script, hard words | the translator fixes the text, then a new synthesis |
 | `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
 | `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-CLI auto-decisions: `pass` → `accept`; a quality failure (`cer`, `sim`, `identity`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
+CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
 
 ## Thresholds
 

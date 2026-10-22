@@ -24,8 +24,8 @@ Read this when translating or adapting into Russian. The rules apply to `dub_tex
 
 ## 4. Stress marks
 
-- **Do not put the stress mark U+0301** (a combining acute: «за́мок») into `dub_text`. The default engines (VoxCPM2, Qwen3-TTS Base) do not read it: they voice it as an extra sound, so the CLI strips every mark before synthesis. Only the opt-in fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` follows it, and it preserves the hero's voice worse (skill `babeldub-voice`).
-- Resolve a likely wrong stress (homographs: замок/замок, мука/мука, дорога/дорога; rare names, foreign words) with wording: a synonym, a different word order, or context that makes the reading obvious. Record the intended reading in the glossary's `pronounce` field for the record.
+- **Do not put the stress mark U+0301** (a combining acute: «за́мок») or `+` into `dub_text`. The default engines (VoxCPM2, Qwen3-TTS Base) do not read it: they voice it as an extra sound (VoxCPM2 reads `+` as «плюс»), so the CLI strips every mark before synthesis. Stress of names and terms goes into the glossary's `pronounce`, which the CLI applies itself; homographs are marked automatically only when the user turns on `tts.stress=on`. Only the opt-in fine-tune `qwen3-tts-12hz-1.7b-ru-stress-cf` follows it, and it preserves the hero's voice worse (skill `babeldub-voice`).
+- Resolve a likely wrong stress (homographs: замок/замок, мука/мука, дорога/дорога; rare names, foreign words) with wording: a synonym, a different word order, or context that makes the reading obvious. Record the intended reading in the glossary's `pronounce` field: for a name or term the CLI applies it to the dub text.
 
 ## 5. Numbers, dates, units
 
