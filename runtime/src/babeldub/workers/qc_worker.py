@@ -22,6 +22,7 @@ answer per command on stdout; all logs go to stderr.
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
   {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody]}
       -> {"cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
+  {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
   {"op": "accent", "texts": [...], "homographs_only": true}
       -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
   {"op": "quit"}
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -526,6 +528,37 @@ def _cer(reference: str | None, hypothesis: str | None) -> float:
     return prev[-1] / len(ref)
 
 
+_NUM_RE = re.compile(r"(?<![\w.,])\d+(?:[.,]\d+)?(?![\w])")
+_EN_THOUSANDS_RE = re.compile(r"(?<![\w.,])\d{1,3}(?:,\d{3})+(?![\w,])")
+
+
+def _spell(text: str | None, lang: str | None) -> str:
+    """Digits spelled out with num2words (same rules as babeldub.text.normalize.numbers_to_words)."""
+    if not text or not lang:
+        return text or ""
+    try:
+        from num2words import num2words
+    except ImportError:
+        return text
+    code = lang.replace("_", "-").split("-")[0].lower()
+    if code == "en":
+        text = _EN_THOUSANDS_RE.sub(lambda m: m.group(0).replace(",", ""), text)
+
+    def repl(match: Any) -> str:
+        raw = match.group(0)
+        value: Any = float(raw.replace(",", ".")) if ("." in raw or "," in raw) else int(raw)
+        try:
+            return str(num2words(value, lang=code))
+        except Exception:
+            return raw
+
+    return _NUM_RE.sub(repl, text)
+
+
+def op_spell(req: dict[str, Any]) -> dict[str, Any]:
+    return {"id": req.get("id"), "texts": [_spell(str(t or ""), req.get("lang")) for t in req.get("texts") or []]}
+
+
 def op_score(req: dict[str, Any]) -> dict[str, Any]:
     """Several metrics of one take in one call: CER, voice similarity, emotion cosine, MOS."""
     import numpy as np
@@ -543,7 +576,7 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
         else:
             asr = op_asr({"wav": req["wav"], "lang": req.get("lang")})
             out["asr_text"] = asr["text"]
-            out["cer"] = round(_cer(req.get("text"), asr["text"]), 4)
+            out["cer"] = round(_cer(_spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))), 4)
     if "sim" in want:
         refs = req.get("refs") or []
         if _STATE["sv"] is None or not refs:
@@ -626,6 +659,7 @@ OPS = {
     "sim": op_sim,
     "score": op_score,
     "accent": op_accent,
+    "spell": op_spell,
 }
 
 

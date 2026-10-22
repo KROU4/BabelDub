@@ -9,6 +9,7 @@ weights are not downloaded, and the worker loads them only on their first reques
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -231,6 +232,12 @@ class QcSession:
         return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody",
                                           "unavailable")}
 
+    def spell(self, texts: list[str], lang: str | None) -> list[str]:
+        """Digits spelled out by the worker's num2words (the CLI may not have it)."""
+        reply = self._call({"op": "spell", "texts": list(texts), "lang": lang})
+        out = [str(t) for t in reply.get("texts") or []]
+        return out if len(out) == len(texts) else list(texts)
+
     def accent(self, texts: list[str], homographs_only: bool = True) -> list[str]:
         """RUAccent marks ("+" before the stressed vowel) for each text, homographs only by default."""
         reply = self._call({"op": "accent", "texts": list(texts), "homographs_only": homographs_only})
@@ -246,3 +253,22 @@ class QcSession:
         if self.lock is not None:
             self.lock.release()
             self.lock = None
+
+
+_DIGIT = re.compile(r"\d")
+
+
+def number_cer(session: QcSession | None, reference: str | None, hypothesis: str | None, lang: str | None) -> float:
+    """CER with digits spelled out on both sides: by the CLI's num2words when installed, else by the
+    qc worker's (one `spell` request, only when a side has digits)."""
+    from babeldub.qa.metrics import cer
+    from babeldub.text.normalize import has_num2words
+
+    ref, hyp = reference or "", hypothesis or ""
+    if not lang or has_num2words() or session is None or not (_DIGIT.search(ref) or _DIGIT.search(hyp)):
+        return cer(ref, hyp, lang)
+    try:
+        ref, hyp = session.spell([ref, hyp], lang)
+    except QcItemError:
+        pass
+    return cer(ref, hyp)

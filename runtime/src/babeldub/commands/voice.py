@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import sys
 import time
 from collections import Counter, defaultdict
@@ -51,6 +52,7 @@ from babeldub.core.output import EXIT_ATTENTION, EXIT_ENV, EXIT_OK, EXIT_USAGE, 
 from babeldub.core.paths import env_python, models_dir
 from babeldub.core.project import Project
 from babeldub.core.takes import follower_map
+from babeldub.qa import rank as best_rank
 from babeldub.text.normalize import acute_to_plus, render_stress
 from babeldub.text.syllables import SYLLABLE_RATE, count_syllables
 from babeldub.workers.client import GpuLock, WorkerClient, WorkerError
@@ -862,7 +864,7 @@ def _plan_synth(
                 reason = "retranslated"
         elif args.force and rows:
             reason = "force"
-        tries_for_text = sum(1 for r in rows if r.get("text") == text)
+        tries_for_text = len({r.get("attempt") for r in rows if r.get("text") == text})  # a scored row repeats its attempt
         if not args.force and tries_for_text >= (min(max_attempts, short_attempts) if cls == "short_word" else max_attempts):
             skipped["max_attempts"] += 1
             attention.append(line_id)
@@ -982,7 +984,25 @@ def _wait_hint(waiting: int) -> str:
             "`babeldub post`, `babeldub vc`, `babeldub qa`, then `babeldub synth` again")
 
 
+BEST_OF_MODES = ("auto", "length", "score")
+
+
+def best_of_mode(project: Project) -> str:
+    """tts.best_of_mode: length (closest speech length wins) or score (two passes: every candidate is kept,
+    then `synth score` ranks them with the qc models); auto = score when the qc env is installed."""
+    mode = str(project.setting("tts", "best_of_mode", "auto") or "auto")
+    if mode not in BEST_OF_MODES:
+        raise BabelDubError(f"tts.best_of_mode must be one of {BEST_OF_MODES}", code=EXIT_USAGE)
+    if mode == "auto":
+        from babeldub.qa.qc import QC_ENV
+
+        return "score" if env_python(QC_ENV).exists() else "length"
+    return mode
+
+
 def cmd_synth(args: argparse.Namespace) -> int:
+    if getattr(args, "action", None) == "score":
+        return cmd_synth_score(args)
     project = Project.load(args.project)
     catalog = _catalog()
     # GPU-first (contract §1.6): tts.device / --device override, else compute.device (auto -> cuda if present)
@@ -1002,6 +1022,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
     if strategy_note:
         notes.append(strategy_note)
     best_of = max(1, int(args.best_of or project.setting("tts", "best_of", 1) or 1))
+    mode = best_of_mode(project)
     accent: Accenter | None = None
     if (_primary(project.target_lang) == "ru" and _on(project.setting("tts", "stress", "off"))
             and stress_mode(project, engine, catalog) != "none"):
@@ -1019,6 +1040,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
             "stage": "synth", "dry_run": True, "engine": engine.name, "model": engine.model_name,
             "model_source": engine.model_source, "env_ready": engine.python.exists(), "planned": planned,
             "would_run": len(jobs), "by_ref": dict(by_ref), "ref_strategy": strategy, "best_of": best_of,
+            "best_of_mode": mode,
             "by_char": dict(Counter(j.char_id for j in jobs).most_common(12)),
             "skipped": dict(skipped), "attention": clip(attention), "notes": notes,
         })
@@ -1031,6 +1053,8 @@ def cmd_synth(args: argparse.Namespace) -> int:
             "remaining": 0, "skipped": dict(skipped), "attention": clip(attention),
             "next": _wait_hint(len(waiting)) if waiting else "babeldub post", "notes": notes,
         }
+        if mode == "score":  # candidates a crashed run left unscored
+            payload_empty["score"] = _auto_score(project, None, args, notes)
         return emit(payload_empty, EXIT_ATTENTION if attention else EXIT_OK)
 
     cache_dir = project.path("synth", "refcache")
@@ -1049,7 +1073,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
     log_path = project.path(layout.LOGS_DIR, f"synth-{stamp}.log")
     device_note: str | None = None
     lock = GpuLock(project.path(layout.GPU_LOCK), owner=f"synth:{engine.name}", wait_s=args.wait_lock)
-    run = _SynthRun(project, engine, results_path, cache_dir, best_of)
+    run = _SynthRun(project, engine, results_path, cache_dir, best_of, mode)
     batch_size = 1
     project.mark_stage("synth", "running", planned=planned, engine=engine.name)
     started = time.perf_counter()
@@ -1081,6 +1105,9 @@ def cmd_synth(args: argparse.Namespace) -> int:
             lock.release()
 
     t = run.tally
+    scored: dict[str, Any] | None = None
+    if mode == "score" and run.unscored:  # pass 2, after the TTS worker exited and freed the GPU
+        scored = _auto_score(project, run.unscored, args, notes)
     remaining = planned - t.processed + t.failed  # failed lines get a new attempt on the next run
     elapsed = time.perf_counter() - started
     status = "attention" if (t.failed or attention) else ("running" if remaining else "done")
@@ -1088,6 +1115,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
         "done": t.done, "failed": t.failed, "remaining": remaining,
         "rtf": _num(sum(t.rtfs) / len(t.rtfs)) if t.rtfs else None,
         "audio_s": round(t.audio_s, 1), "elapsed_s": round(elapsed, 1), "batch": batch_size, "best_of": best_of,
+        "best_of_mode": mode,
     }
     if t.vram_peak:
         summary["vram_peak_gb"] = round(t.vram_peak, 2)
@@ -1097,6 +1125,8 @@ def cmd_synth(args: argparse.Namespace) -> int:
         **summary, "by_ref": dict(by_ref), "skipped": dict(skipped),
         "results": layout.SYNTH_RESULTS, "log": project.rel(log_path),
     }
+    if scored is not None:
+        payload["score"] = scored
     if t.errors:
         payload["errors"] = clip(t.errors, 5)
     if attention:
@@ -1143,12 +1173,15 @@ class _SynthRun:
     is an error "runaway".
     """
 
-    def __init__(self, project: Project, engine: EngineChoice, results_path: Path, cache_dir: Path, best_of: int = 1):
+    def __init__(self, project: Project, engine: EngineChoice, results_path: Path, cache_dir: Path, best_of: int = 1,
+                 mode: str = "length"):
         self.project = project
         self.engine = engine
         self.results_path = results_path
         self.cache_dir = cache_dir
         self.best_of = max(1, best_of)
+        self.mode = mode
+        self.unscored: list[str] = []  # lines whose candidates wait for `synth score` (mode score)
         self.tally = _Tally()
 
     def request_for(self, job: Job, seed: int | None = None, out: Path | None = None) -> dict[str, Any]:
@@ -1298,12 +1331,22 @@ class _SynthRun:
             self.finish(client, job, {**reply, "wav": str(job.out)} if reply.get("ok") else reply, seed, batch)
             return
         best = min(usable, key=lambda c: (c[0], c[1]))
-        best[3].replace(job.out)
+        keep = self.mode == "score" and len(usable) > 1
+        if keep:  # pass 1: a provisional pick by length; every usable candidate stays for `synth score`
+            shutil.copyfile(best[3], job.out)
+        else:
+            best[3].replace(job.out)
+        kept = {c[3] for c in usable} if keep else set()
         for _, _, other in cands:
-            if other != job.out:
+            if other != job.out and other not in kept:
                 other.unlink(missing_ok=True)
-        info = {"n": len(cands), "usable": len(usable), "picked_seed": best[1],
-                "speech_s": [round(c[4], 3) for c in usable], "target_speech_s": round(self.target_speech(job), 3)}
+        info: dict[str, Any] = {"n": len(cands), "usable": len(usable), "picked_seed": best[1],
+                                "speech_s": [round(c[4], 3) for c in usable],
+                                "target_speech_s": round(self.target_speech(job), 3)}
+        if keep:
+            info.update(mode="score", scored=False, cands=[
+                {"seed": c[1], "wav": self.project.rel(c[3]), "speech_s": round(c[4], 3)} for c in usable])
+            self.unscored.append(job.id)
         if runaways:
             info["runaways"] = runaways
         self.record(job, {**best[2], "wav": str(job.out)}, best[1], batch, best=info)
@@ -1385,6 +1428,135 @@ class _SynthRun:
                 if self.tally.aborted:
                     break
                 self.single(client, job)
+
+
+# ---- synth score (best-of pass 2) ---------------------------------------------------------
+SCORE_WANTS = ("cer", "sim", "emo", "mos", "prosody")
+
+
+def _pending_scores(project: Project, ids: set[str] | None = None) -> list[dict[str, Any]]:
+    """Latest results rows whose candidates were kept for scoring (best_of.scored == false)."""
+    out = []
+    for lid, row in latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS))).items():
+        if ids and lid not in ids and make_uid(lid) not in ids:
+            continue
+        if row.get("status") == "ok" and (row.get("best_of") or {}).get("scored") is False:
+            out.append(row)
+    return out
+
+
+def _open_scorer(project: Project, wait_lock: float) -> Any:
+    from babeldub.qa.qc import QcSession, emotion_model_dir
+
+    return QcSession.open(project.root, project.data, need_asr=True, need_sv=True, need_mos=True,
+                          need_emotion=emotion_model_dir(project.data) is not None, wait_lock=wait_lock,
+                          owner="synth:score")
+
+
+def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any) -> dict[str, Any]:
+    """Pass 2 of best-of: score every kept candidate with the qc worker, keep the winner as the line's
+    take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest."""
+    from babeldub.commands.vc import load_models
+    from babeldub.qa.metrics import prosody_similarity
+    from babeldub.qa.qc import QcItemError, number_cer
+
+    lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    chosen = {str(r["char_id"]): r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")}
+    rvc = set(load_models(project))
+    max_cer = float(project.setting("qa", "max_cer", 0.15))
+    lang = project.target_lang
+    scored, changed, errors = 0, 0, []
+    new_rows: list[dict[str, Any]] = []
+    for row in rows:
+        info = dict(row.get("best_of") or {})
+        cands = [c for c in info.pop("cands", None) or [] if _exists(project, c.get("wav"))]
+        out = _abs(project, row.get("wav"))
+        line = lines.get(row["id"])
+        if len(cands) < 2 or line is None or out is None:
+            new_rows.append({**row, "best_of": {**info, "scored": True, "note": "fewer than 2 candidates left"},
+                             "ts": now_iso()})
+            continue
+        orig = _orig_wav(project, line)
+        ref = chosen.get(str(row.get("char_id")))
+        refs = [p for p in (orig, _abs(project, (ref or {}).get("wav"))) if p is not None and p.exists()]
+        ranked: list[best_rank.Candidate] = []
+        for cand in cands:
+            wav = _abs(project, cand["wav"])
+            assert wav is not None
+            try:
+                sc = session.score(f"{row['id']}#s{cand['seed']}", wav, text=row.get("text"), lang=lang,
+                                   orig_wav=orig, refs=refs, want=SCORE_WANTS)
+            except QcItemError as exc:
+                errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
+                continue
+            cer_v = sc.get("cer")
+            if sc.get("asr_text") is not None:
+                cer_v = number_cer(session, row.get("text"), sc["asr_text"], lang)
+            ranked.append(best_rank.Candidate(
+                seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
+                sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),
+                prosody_sim=prosody_similarity(sc.get("prosody"), sc.get("orig_prosody"))["sim"]))
+        if not ranked:
+            continue  # stays unscored: the next `synth score` tries again
+        target = float(info.get("target_speech_s") or row.get("dur_s") or 0.0)
+        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=str(row.get("char_id")) in rvc)
+        win_path = _abs(project, win.wav)
+        assert win_path is not None
+        win_path.replace(out)
+        for cand in cands:
+            if cand["wav"] != win.wav:
+                p = _abs(project, cand["wav"])
+                if p is not None:
+                    p.unlink(missing_ok=True)
+        changed += int(win.seed != info.get("picked_seed"))
+        info.update(scored=True, provisional_seed=info.get("picked_seed"), picked_seed=win.seed,
+                    sim_weight=best_rank.W_SIM_RVC if str(row.get("char_id")) in rvc else best_rank.W_SIM,
+                    scores=[c.summary() for c in ranked])
+        new_rows.append({**row, "seed": win.seed, "key": _sha(row.get("key"), win.seed), "best_of": info,
+                         "ts": now_iso()})
+        scored += 1
+    append_jsonl(project.path(layout.SYNTH_RESULTS), new_rows)
+    summary: dict[str, Any] = {"scored": scored, "changed": changed, "pending": len(rows) - len(new_rows)}
+    if errors:
+        summary["errors"] = clip(errors, 5)
+    return summary
+
+
+def _auto_score(project: Project, ids: list[str] | None, args: argparse.Namespace, notes: list[str]) -> dict[str, Any]:
+    """`synth` in best_of_mode=score: rank the kept candidates now; without the qc env the provisional
+    (length) picks stand and a note says how to score them later."""
+    from babeldub.qa.qc import qc_missing
+
+    rows = _pending_scores(project, set(ids) if ids else None)
+    if not rows:
+        return {"scored": 0}
+    if qc_missing(project.data, True, True):
+        notes.append("tts.best_of_mode=score: the qc env is not ready, the provisional picks (by length) stand; "
+                     "`babeldub setup --engines qc`, then `babeldub synth score`")
+        return {"scored": 0, "pending": len(rows)}
+    try:
+        with _open_scorer(project, float(getattr(args, "wait_lock", 0.0) or 0.0)) as session:
+            return score_candidates(project, rows, session)
+    except BabelDubError as err:
+        notes.append(f"synth score: {err} (run `babeldub synth score` later)")
+        return {"scored": 0, "pending": len(rows)}
+
+
+def cmd_synth_score(args: argparse.Namespace) -> int:
+    """`babeldub synth score`: pass 2 of tts.best_of_mode=score for every line left unscored."""
+    project = Project.load(args.project)
+    rows = _pending_scores(project, set(_csv(args.ids)) or None)
+    if args.limit is not None:
+        rows = rows[: max(0, args.limit)]
+    if args.dry_run or not rows:
+        return emit({"stage": "synth score", "dry_run": bool(args.dry_run), "pending": len(rows), "scored": 0,
+                     "next": "babeldub post"})
+    with _open_scorer(project, float(args.wait_lock or 0.0)) as session:
+        summary = score_candidates(project, rows, session)
+        device = session.device
+    payload = {"stage": "synth score", **summary, "device": device, "results": layout.SYNTH_RESULTS,
+               "next": "babeldub synth score" if summary["pending"] else "babeldub post"}
+    return emit(payload, EXIT_ATTENTION if summary.get("errors") else EXIT_OK)
 
 
 # ---- post ---------------------------------------------------------------------------------
@@ -1572,6 +1744,8 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
         "(ref_strategy=line) or the character's best reference (char).",
     )
     common(p)
+    p.add_argument("action", nargs="?", choices=("score",),
+                   help="score: rank the candidates a tts.best_of_mode=score run kept (qc worker), keep the best")
     p.add_argument("--chars", help="only these characters (char_id or name, comma-separated)")
     p.add_argument("--ids", help="only these line ids or uids (comma-separated)")
     p.add_argument("--limit", type=int, help="synthesize at most N lines in this run")

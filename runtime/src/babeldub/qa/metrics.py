@@ -1,8 +1,8 @@
 """QA metrics: text normalization, character error rate, audio level checks, voice similarity
 and the speaker identity margin.
 
-CER is computed on normalized text (lower case, no punctuation or markup, ё -> е, digits kept
-as they are), with spaces counted as characters. The Levenshtein distance is a row-vectorized
+CER is computed on normalized text (lower case, no punctuation or markup, ё -> е; digits are
+spelled out on both sides when the language is given), with spaces counted as characters. The Levenshtein distance is a row-vectorized
 numpy implementation, so no extra dependency is needed in the CLI.
 """
 
@@ -13,6 +13,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -63,13 +64,65 @@ def levenshtein(a: Sequence[str] | str, b: Sequence[str] | str) -> int:
     return int(prev[m])
 
 
-def cer(reference: str | None, hypothesis: str | None) -> float:
-    """Character error rate of the hypothesis (ASR) against the reference (dub text)."""
+def cer(reference: str | None, hypothesis: str | None, lang: str | None = None) -> float:
+    """Character error rate of the hypothesis (ASR) against the reference (dub text).
+
+    With `lang`, digits on both sides are spelled out first (num2words), so "25" heard for
+    "двадцать пять" (or the other way round) is not an error."""
+    if lang:
+        from babeldub.text.normalize import numbers_to_words
+
+        reference = numbers_to_words(reference or "", lang)
+        hypothesis = numbers_to_words(hypothesis or "", lang)
     ref = normalize_text(reference)
     hyp = normalize_text(hypothesis)
     if not ref:
         return 0.0 if not hyp else 1.0
     return levenshtein(ref, hyp) / len(ref)
+
+
+CONTOUR_POINTS = 32  # voiced F0 contours are resampled to this many points before the correlation
+MIN_CONTOUR = 8  # voiced points each contour needs
+MAX_CONTOUR_STRETCH = 2.0  # contours whose voiced lengths differ more are not compared
+
+
+def f0_range_ratio(dub_range: float | None, orig_range: float | None) -> float | None:
+    """min/max of the two F0 ranges (semitones): 1 = as lively as the original, 0.5 = half the range."""
+    if not isinstance(dub_range, (int, float)) or not isinstance(orig_range, (int, float)):
+        return None
+    if dub_range <= 0 or orig_range <= 0:
+        return None
+    return float(min(dub_range, orig_range) / max(dub_range, orig_range))
+
+
+def contour_correlation(dub: Sequence[float | None] | None, orig: Sequence[float | None] | None) -> float | None:
+    """Pearson correlation of the voiced F0 contours (semitones), both resampled to CONTOUR_POINTS;
+    None when either is too short or their lengths differ more than MAX_CONTOUR_STRETCH times."""
+    a = np.array([v for v in dub or [] if v is not None], dtype=np.float64)
+    b = np.array([v for v in orig or [] if v is not None], dtype=np.float64)
+    if min(a.size, b.size) < MIN_CONTOUR or max(a.size, b.size) > MAX_CONTOUR_STRETCH * min(a.size, b.size):
+        return None
+    grid = np.linspace(0.0, 1.0, CONTOUR_POINTS)
+    ra = np.interp(grid, np.linspace(0.0, 1.0, a.size), a)
+    rb = np.interp(grid, np.linspace(0.0, 1.0, b.size), b)
+    if ra.std() < 1e-6 or rb.std() < 1e-6:
+        return None
+    return float(np.corrcoef(ra, rb)[0, 1])
+
+
+def prosody_similarity(dub: dict[str, Any] | None, orig: dict[str, Any] | None) -> dict[str, float | None]:
+    """{range_ratio, contour_corr, sim}: sim = 0.6 x range ratio + 0.4 x (corr + 1) / 2 (range ratio alone
+    when the contours cannot be compared); None without F0 ranges."""
+    dub, orig = dub or {}, orig or {}
+    ratio = f0_range_ratio(dub.get("f0_range_st"), orig.get("f0_range_st"))
+    corr = contour_correlation(dub.get("contour"), orig.get("contour"))
+    if ratio is None:
+        sim = None
+    elif corr is None:
+        sim = ratio
+    else:
+        sim = 0.6 * ratio + 0.4 * (corr + 1.0) / 2.0
+    return {"range_ratio": ratio, "contour_corr": corr, "sim": sim}
 
 
 def duration_ratio(dur_s: float | None, target_s: float | None) -> float | None:
