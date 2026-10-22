@@ -615,8 +615,18 @@ def _get_accent() -> Any:
             raise RuntimeError("the accent op needs ruaccent in the qc env: uv pip install ruaccent") from exc
         Path(folder).mkdir(parents=True, exist_ok=True)
         model = RUAccent()
-        model.load(omograph_model_size="turbo3.1", use_dictionary=True, workdir=folder,
-                   device="CUDA" if (_STATE["device"] or "").startswith("cuda") else "CPU")
+        # the speaker model forces HF offline mode; RUAccent fetches its dictionaries and model on first use
+        import huggingface_hub.constants as hf_constants
+
+        offline_env, offline = os.environ.pop("HF_HUB_OFFLINE", None), hf_constants.HF_HUB_OFFLINE
+        hf_constants.HF_HUB_OFFLINE = False
+        try:
+            model.load(omograph_model_size="turbo3.1", use_dictionary=True, workdir=folder,
+                       device="CUDA" if (_STATE["device"] or "").startswith("cuda") else "CPU")
+        finally:
+            hf_constants.HF_HUB_OFFLINE = offline
+            if offline_env is not None:
+                os.environ["HF_HUB_OFFLINE"] = offline_env
         _STATE["accent"] = model
         log(f"RUAccent loaded from {folder}")
     return _STATE["accent"]
