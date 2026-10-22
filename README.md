@@ -14,7 +14,7 @@
 
 **BabelDub** is not an app. It is a pack of **skills, agents, commands and hooks** for AI coding agents (Claude Code, Codex, Gemini CLI and others). Point your agent at a game folder and name a language. The agent figures out the engine, finds the voice-over and the subtitles, translates the text, **re-voices every character in their own original voice** with local neural models, and repacks the files so the game loads them natively.
 
-> Low-Budget Repairs (Unity + FMOD) is the first game the pipeline was developed on. BabelDub itself is engine-agnostic: recon detects the engine and the audio middleware and picks the matching adapter or playbook.
+> **No game is included.** This repository is only the pipeline: skills, agents, the CLI and docs. You run it on your own copy of a game; the voice lines, texts, trained voices and model weights never leave your machine and never enter the repository. Low-Budget Repairs (Unity + FMOD) is just the test case the pipeline was developed and measured on — recon detects any engine and audio middleware and picks the matching adapter or playbook.
 
 ## The original hero's voice, not a "TTS voice"
 
@@ -36,6 +36,20 @@ BabelDub's core principle is **dubbing with the original character's voice**: th
 8. **Repack** — native engine containers (for example, FMOD `.bank` files are rebuilt without proprietary tools), installed with a backup and one-command rollback.
 
 You are asked **exactly two questions**: which language, and which characters to dub (all, the main ones, or a list). Everything else is automatic and summarized in a final report. The agent talks to you in your language.
+
+### An example session
+
+```text
+you    > Dub D:\Games\MyGame into Spanish.
+agent  > Unity + FMOD, 1 334 voiced lines, 62 characters, English voice-over and subtitles (support level A).
+         Which characters should be dubbed: all, the main ones (Zbyszek, Helena, Maciek…), or a list?
+you    > The main ones.
+agent  > (installs the models for your GPU, translates in scene batches, voices, checks, rebuilds)
+         Done: 412 lines dubbed, 9 kept in the original (shouts and laughs), 3 need your ear — see report.md.
+         Installed with a backup; `/babeldub:rollback` restores the original files.
+```
+
+Everything the agent produces lives in a project folder in `~/.babeldub/projects/<game>`: extracted lines, translations, every take, QA metrics, the trained voices and the final report. The game folder itself changes only on install, and always with a backup.
 
 ## Quick start
 
@@ -111,7 +125,9 @@ Download `babeldub-kit-<version>.zip` from [Releases](https://github.com/KROU4/B
 
 Chosen in blind listening rounds on Low-Budget Repairs (English → Russian): VoxCPM2 + RVC reached a CER of 0.045 (Qwen3-TTS + RVC: 0.050) and a speaker similarity of ~0.65–0.70 to the original actor, whose own lines score 0.77 among themselves.
 
-**v0.2 against v0.1** on a 38-line test set (13 characters: long lines, short words, cutscenes; the same Russian texts, the same metrics): slowed-down lines 17 → 0, time-stretched lines 74 % → 15 %, UTMOS naturalness 2.64 → 3.14 (the originals score 3.14), speaker similarity 0.544 → 0.606, the gap between the dub's and the original's pitch range 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034. Five of the 38 lines (shouts that could not be voiced recognizably) keep the original. Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
+**v0.2 against v0.1** on a 38-line test set (13 characters: long lines, short words, cutscenes; the same Russian texts, the same metrics): slowed-down lines 17 → 0, time-stretched lines 74 % → 15 %, UTMOS naturalness 2.64 → 3.14 (the originals score 3.14), speaker similarity 0.544 → 0.606, the gap between the dub's and the original's pitch range 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034. Five of the 38 lines (shouts that could not be voiced recognizably) keep the original.
+
+Only permissively licensed models (Apache/MIT) are installed by default. Non-commercial models are enabled only with your explicit consent. Tiers for CPU, 12 and 24 GB GPUs: [docs/MODELS.md](docs/MODELS.md).
 
 ## Responsible use
 

@@ -1,144 +1,149 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 480" width="1280" height="480" role="img" aria-labelledby="t">
-  <title id="t">Dubbing with the original hero’s voice: timbre and emotion of the original line carry over to the translation</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" role="img" aria-labelledby="t">
+  <title id="t">Same hero, same voice — in your language</title>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#17143A"/><stop offset="1" stop-color="#0A0920"/>
+      <stop offset="0" stop-color="#15112E"/><stop offset="1" stop-color="#0B0A1C"/>
     </linearGradient>
-    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+    <radialGradient id="glowA" cx="0.12" cy="0.1" r="0.55">
+      <stop offset="0" stop-color="#FFB547" stop-opacity="0.16"/><stop offset="1" stop-color="#FFB547" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.92" cy="0.95" r="0.6">
+      <stop offset="0" stop-color="#7C5CFF" stop-opacity="0.18"/><stop offset="1" stop-color="#7C5CFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="track" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#FFC24B"/><stop offset="0.5" stop-color="#FF5C8A"/><stop offset="1" stop-color="#9B7BFF"/>
     </linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-      <path d="M0 0 L10 5 L0 10 z" fill="#B9B2E0"/>
-    </marker>
   </defs>
-  <rect width="1280" height="480" fill="url(#bg)"/>
-  <g font-family="Segoe UI, sans-serif">
-    <text x="40" y="54" font-size="26" font-weight="700" fill="#ECE8FF">Dub with the original hero’s voice</text>
-    <text x="40" y="84" font-size="18" fill="#8E86BC">the hero’s own recordings, picked to match the line’s energy, are the voice prompt: same timbre, emotion and delivery</text>
-
-    <!-- original -->
-    <rect x="40" y="120" width="400" height="250" rx="24" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFC24B" stroke-opacity="0.55"/>
-    <text x="68" y="160" font-size="20" font-weight="700" fill="#FFC24B">Original · EN</text>
-    <rect x="70.0" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="77.4" y="227.0" width="4.1" height="9.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="84.8" y="222.0" width="4.1" height="20.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="92.2" y="218.3" width="4.1" height="27.4" rx="2.1" fill="#FFC24B"/>
-    <rect x="99.6" y="209.2" width="4.1" height="45.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="107.0" y="205.2" width="4.1" height="53.6" rx="2.1" fill="#FFC24B"/>
-    <rect x="114.3" y="198.0" width="4.1" height="67.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="121.7" y="207.0" width="4.1" height="49.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="129.1" y="199.6" width="4.1" height="64.8" rx="2.1" fill="#FFC24B"/>
-    <rect x="136.5" y="205.2" width="4.1" height="53.6" rx="2.1" fill="#FFC24B"/>
-    <rect x="143.9" y="201.6" width="4.1" height="60.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="151.3" y="197.3" width="4.1" height="69.4" rx="2.1" fill="#FFC24B"/>
-    <rect x="158.7" y="206.8" width="4.1" height="50.4" rx="2.1" fill="#FFC24B"/>
-    <rect x="166.1" y="206.1" width="4.1" height="51.8" rx="2.1" fill="#FFC24B"/>
-    <rect x="173.5" y="202.6" width="4.1" height="58.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="180.9" y="206.7" width="4.1" height="50.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="188.3" y="206.7" width="4.1" height="50.6" rx="2.1" fill="#FFC24B"/>
-    <rect x="195.7" y="196.7" width="4.1" height="70.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="203.0" y="188.4" width="4.1" height="87.3" rx="2.1" fill="#FFC24B"/>
-    <rect x="210.4" y="201.0" width="4.1" height="61.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="217.8" y="181.8" width="4.1" height="100.4" rx="2.1" fill="#FFC24B"/>
-    <rect x="225.2" y="182.5" width="4.1" height="99.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="232.6" y="190.2" width="4.1" height="83.6" rx="2.1" fill="#FFC24B"/>
-    <rect x="240.0" y="195.0" width="4.1" height="74.1" rx="2.1" fill="#FFC24B"/>
-    <rect x="247.4" y="179.2" width="4.1" height="105.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="254.8" y="195.0" width="4.1" height="74.1" rx="2.1" fill="#FFC24B"/>
-    <rect x="262.2" y="202.7" width="4.1" height="58.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="269.6" y="205.9" width="4.1" height="52.3" rx="2.1" fill="#FFC24B"/>
-    <rect x="277.0" y="198.8" width="4.1" height="66.4" rx="2.1" fill="#FFC24B"/>
-    <rect x="284.3" y="207.1" width="4.1" height="49.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="291.7" y="208.1" width="4.1" height="47.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="299.1" y="206.7" width="4.1" height="50.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="306.5" y="207.5" width="4.1" height="48.9" rx="2.1" fill="#FFC24B"/>
-    <rect x="313.9" y="201.7" width="4.1" height="60.5" rx="2.1" fill="#FFC24B"/>
-    <rect x="321.3" y="209.5" width="4.1" height="45.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="328.7" y="209.1" width="4.1" height="45.8" rx="2.1" fill="#FFC24B"/>
-    <rect x="336.1" y="209.1" width="4.1" height="45.8" rx="2.1" fill="#FFC24B"/>
-    <rect x="343.5" y="215.2" width="4.1" height="33.7" rx="2.1" fill="#FFC24B"/>
-    <rect x="350.9" y="219.2" width="4.1" height="25.6" rx="2.1" fill="#FFC24B"/>
-    <rect x="358.3" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="365.7" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="373.0" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="380.4" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="387.8" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="395.2" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <rect x="402.6" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#FFC24B"/>
-    <text x="68" y="310" font-size="22" font-weight="600" fill="#FFFFFF">«Get out of my garage!»</text>
-    <text x="68" y="344" font-size="17" fill="#C9C2EC">hero’s timbre · anger · shouting</text>
-
-    <!-- translation input -->
-    <rect x="490" y="112" width="300" height="76" rx="18" fill="#FFFFFF" fill-opacity="0.06" stroke="#FFFFFF" stroke-opacity="0.18"/>
-    <text x="512" y="142" font-size="16" fill="#8E86BC">translated line</text>
-    <text x="512" y="172" font-size="20" font-weight="600" fill="#FFFFFF">«Вон из моего гаража!»</text>
-    <path d="M640 190 V226" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-
-    <!-- clone core -->
-    <circle cx="640" cy="290" r="58" fill="url(#core)"/>
-    <circle cx="640" cy="290" r="46" fill="#0A0920" fill-opacity="0.55"/>
-    <text x="640" y="284" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">voice</text>
-    <text x="640" y="306" font-size="17" font-weight="700" fill="#FFFFFF" text-anchor="middle">clone</text>
-    <text x="640" y="376" font-size="16" fill="#8E86BC" text-anchor="middle">local model</text>
-    <text x="640" y="398" font-size="16" fill="#8E86BC" text-anchor="middle">VoxCPM2 + RVC</text>
-    <path d="M444 290 H576" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-    <text x="452" y="276" font-size="14" fill="#B9B2E0">loud reference</text>
-    <path d="M702 290 H834" stroke="#B9B2E0" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-
-    <!-- dub -->
-    <rect x="840" y="120" width="400" height="250" rx="24" fill="#FFFFFF" fill-opacity="0.06" stroke="#9B7BFF" stroke-opacity="0.7"/>
-    <text x="868" y="160" font-size="20" font-weight="700" fill="#B9A3FF">Dub · RU</text>
-    <rect x="870.0" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="877.4" y="226.1" width="4.1" height="11.8" rx="2.1" fill="#9B7BFF"/>
-    <rect x="884.8" y="220.6" width="4.1" height="22.8" rx="2.1" fill="#9B7BFF"/>
-    <rect x="892.2" y="217.0" width="4.1" height="30.1" rx="2.1" fill="#9B7BFF"/>
-    <rect x="899.6" y="207.8" width="4.1" height="48.4" rx="2.1" fill="#9B7BFF"/>
-    <rect x="907.0" y="204.5" width="4.1" height="54.9" rx="2.1" fill="#9B7BFF"/>
-    <rect x="914.3" y="198.4" width="4.1" height="67.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="921.7" y="208.1" width="4.1" height="47.8" rx="2.1" fill="#9B7BFF"/>
-    <rect x="929.1" y="202.0" width="4.1" height="60.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="936.5" y="208.0" width="4.1" height="47.9" rx="2.1" fill="#9B7BFF"/>
-    <rect x="943.9" y="205.8" width="4.1" height="52.4" rx="2.1" fill="#9B7BFF"/>
-    <rect x="951.3" y="203.1" width="4.1" height="57.8" rx="2.1" fill="#9B7BFF"/>
-    <rect x="958.7" y="211.9" width="4.1" height="40.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="966.1" y="212.2" width="4.1" height="39.7" rx="2.1" fill="#9B7BFF"/>
-    <rect x="973.5" y="203.9" width="4.1" height="56.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="980.9" y="200.7" width="4.1" height="62.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="988.3" y="202.1" width="4.1" height="59.8" rx="2.1" fill="#9B7BFF"/>
-    <rect x="995.7" y="191.9" width="4.1" height="80.3" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1003.0" y="184.3" width="4.1" height="95.5" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1010.4" y="199.3" width="4.1" height="65.3" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1017.8" y="180.8" width="4.1" height="102.4" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1025.2" y="183.2" width="4.1" height="97.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1032.6" y="192.1" width="4.1" height="79.7" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1040.0" y="197.8" width="4.1" height="68.3" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1047.4" y="184.9" width="4.1" height="94.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1054.8" y="200.2" width="4.1" height="63.7" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1062.2" y="207.7" width="4.1" height="48.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1069.6" y="211.2" width="4.1" height="41.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1077.0" y="206.7" width="4.1" height="50.5" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1084.3" y="207.4" width="4.1" height="49.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1091.7" y="202.7" width="4.1" height="58.7" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1099.1" y="202.2" width="4.1" height="59.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1106.5" y="204.3" width="4.1" height="55.3" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1113.9" y="199.0" width="4.1" height="65.9" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1121.3" y="208.4" width="4.1" height="47.2" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1128.7" y="208.7" width="4.1" height="46.6" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1136.1" y="209.5" width="4.1" height="45.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1143.5" y="216.0" width="4.1" height="32.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1150.9" y="220.3" width="4.1" height="23.5" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1158.3" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1165.7" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1173.0" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1180.4" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1187.8" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1195.2" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <rect x="1202.6" y="229.0" width="4.1" height="6.0" rx="2.1" fill="#9B7BFF"/>
-    <text x="868" y="310" font-size="22" font-weight="600" fill="#FFFFFF">«Вон из моего гаража!»</text>
-    <text x="868" y="344" font-size="17" fill="#C9C2EC">same timbre · same anger · same length</text>
-
-    <!-- qa -->
-    <rect x="40" y="410" width="1200" height="48" rx="24" fill="#FFFFFF" fill-opacity="0.05"/>
-    <text x="640" y="441" font-size="18" fill="#C9C2EC" text-anchor="middle">QA: <tspan fill="#FFD27A">voice</tspan> · <tspan fill="#FFD27A">words · naturalness · delivery</tspan> · <tspan fill="#FFD27A">timing</tspan> → rejects are regenerated</text>
+  <rect width="1280" height="560" rx="28" fill="url(#bg)"/>
+  <rect width="1280" height="560" rx="28" fill="url(#glowA)"/>
+  <rect width="1280" height="560" rx="28" fill="url(#glowB)"/>
+  <g font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif">
+    <text x="64" y="78" font-size="14" font-weight="700" letter-spacing="3" fill="#7D74A8">THE CORE IDEA</text>
+    <text x="64" y="118" font-size="32" font-weight="700" fill="#F3F0FF">Same hero, same voice — in your language</text>
+    <rect x="64" y="152" width="528" height="222" rx="20" fill="#FFFFFF" fill-opacity="0.035" stroke="#FFC24B" stroke-opacity="0.28"/>
+    <text x="92" y="192" font-size="17" font-weight="700" fill="#FFC24B">Original</text>
+    <rect x="528" y="174" width="38" height="24" rx="12" fill="#FFC24B" fill-opacity="0.14"/>
+    <text x="547" y="191" font-size="13" font-weight="700" fill="#FFC24B" text-anchor="middle">EN</text>
+    <rect x="94.3" y="261.4" width="5.7" height="5.1" rx="2.9" fill="#FFC24B"/>
+    <rect x="104.5" y="259.3" width="5.7" height="9.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="114.8" y="254.6" width="5.7" height="18.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="125.0" y="252.8" width="5.7" height="22.3" rx="2.9" fill="#FFC24B"/>
+    <rect x="135.3" y="247.6" width="5.7" height="32.9" rx="2.9" fill="#FFC24B"/>
+    <rect x="145.6" y="247.1" width="5.7" height="33.8" rx="2.9" fill="#FFC24B"/>
+    <rect x="155.8" y="249.7" width="5.7" height="28.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="166.1" y="249.8" width="5.7" height="28.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="176.3" y="254.3" width="5.7" height="19.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="186.6" y="254.2" width="5.7" height="19.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="196.9" y="254.8" width="5.7" height="18.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="207.1" y="252.4" width="5.7" height="23.3" rx="2.9" fill="#FFC24B"/>
+    <rect x="217.4" y="247.2" width="5.7" height="33.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="227.6" y="241.2" width="5.7" height="45.6" rx="2.9" fill="#FFC24B"/>
+    <rect x="237.9" y="244.4" width="5.7" height="39.2" rx="2.9" fill="#FFC24B"/>
+    <rect x="248.2" y="244.2" width="5.7" height="39.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="258.4" y="244.2" width="5.7" height="39.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="268.7" y="246.4" width="5.7" height="35.2" rx="2.9" fill="#FFC24B"/>
+    <rect x="279.0" y="251.7" width="5.7" height="24.6" rx="2.9" fill="#FFC24B"/>
+    <rect x="289.2" y="254.2" width="5.7" height="19.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="299.5" y="252.3" width="5.7" height="23.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="309.7" y="253.8" width="5.7" height="20.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="320.0" y="247.3" width="5.7" height="33.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="330.3" y="247.1" width="5.7" height="33.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="340.5" y="246.0" width="5.7" height="36.0" rx="2.9" fill="#FFC24B"/>
+    <rect x="350.8" y="245.5" width="5.7" height="37.0" rx="2.9" fill="#FFC24B"/>
+    <rect x="361.0" y="245.0" width="5.7" height="38.1" rx="2.9" fill="#FFC24B"/>
+    <rect x="371.3" y="243.8" width="5.7" height="40.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="381.6" y="249.6" width="5.7" height="28.8" rx="2.9" fill="#FFC24B"/>
+    <rect x="391.8" y="249.1" width="5.7" height="29.8" rx="2.9" fill="#FFC24B"/>
+    <rect x="402.1" y="248.9" width="5.7" height="30.1" rx="2.9" fill="#FFC24B"/>
+    <rect x="412.3" y="248.6" width="5.7" height="30.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="422.6" y="244.6" width="5.7" height="38.9" rx="2.9" fill="#FFC24B"/>
+    <rect x="432.9" y="244.2" width="5.7" height="39.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="443.1" y="240.8" width="5.7" height="46.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="453.4" y="236.6" width="5.7" height="54.7" rx="2.9" fill="#FFC24B"/>
+    <rect x="463.6" y="230.4" width="5.7" height="67.3" rx="2.9" fill="#FFC24B"/>
+    <rect x="473.9" y="233.4" width="5.7" height="61.2" rx="2.9" fill="#FFC24B"/>
+    <rect x="484.2" y="236.8" width="5.7" height="54.4" rx="2.9" fill="#FFC24B"/>
+    <rect x="494.4" y="238.3" width="5.7" height="51.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="504.7" y="244.0" width="5.7" height="40.0" rx="2.9" fill="#FFC24B"/>
+    <rect x="515.0" y="249.6" width="5.7" height="28.8" rx="2.9" fill="#FFC24B"/>
+    <rect x="525.2" y="252.0" width="5.7" height="24.0" rx="2.9" fill="#FFC24B"/>
+    <rect x="535.5" y="256.2" width="5.7" height="15.5" rx="2.9" fill="#FFC24B"/>
+    <rect x="545.7" y="259.8" width="5.7" height="8.3" rx="2.9" fill="#FFC24B"/>
+    <rect x="556.0" y="261.3" width="5.7" height="5.4" rx="2.9" fill="#FFC24B"/>
+    <path d="M92.0 270.0 L103.8 269.0 L115.6 268.1 L127.4 267.2 L139.2 266.2 L151.0 265.4 L162.8 264.5 L174.6 263.7 L186.4 262.9 L198.2 262.2 L210.0 261.6 L221.8 261.0 L233.6 260.5 L245.4 260.1 L257.2 259.8 L269.0 259.5 L280.8 259.4 L292.6 259.3 L304.4 259.3 L316.2 259.4 L328.0 259.7 L339.8 260.0 L351.6 260.4 L363.4 260.8 L375.2 261.3 L387.0 261.6 L398.8 261.5 L410.6 260.7 L422.4 258.8 L434.2 255.5 L446.0 251.4 L457.8 247.4 L469.6 245.0 L481.4 245.4 L493.2 248.8 L505.0 254.7 L516.8 261.5 L528.6 267.9 L540.4 273.1 L552.2 277.0 L564.0 279.8" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.95"/>
+    <text x="92" y="342" font-size="20" font-weight="600" fill="#F3F0FF">“Get out of my garage!”</text>
+    <path d="M92 390 v8 H564 v-8" fill="none" stroke="#7D74A8" stroke-width="1.4"/>
+    <text x="328.0" y="418" font-size="13" fill="#7D74A8" text-anchor="middle">2.4 s</text>
+    <rect x="688" y="152" width="528" height="222" rx="20" fill="#FFFFFF" fill-opacity="0.035" stroke="#9B7BFF" stroke-opacity="0.28"/>
+    <text x="716" y="192" font-size="17" font-weight="700" fill="#9B7BFF">Dub</text>
+    <rect x="1152" y="174" width="38" height="24" rx="12" fill="#9B7BFF" fill-opacity="0.14"/>
+    <text x="1171" y="191" font-size="13" font-weight="700" fill="#9B7BFF" text-anchor="middle">RU</text>
+    <rect x="718.3" y="261.3" width="5.7" height="5.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="728.5" y="258.6" width="5.7" height="10.8" rx="2.9" fill="#9B7BFF"/>
+    <rect x="738.8" y="253.8" width="5.7" height="20.3" rx="2.9" fill="#9B7BFF"/>
+    <rect x="749.0" y="251.2" width="5.7" height="25.6" rx="2.9" fill="#9B7BFF"/>
+    <rect x="759.3" y="247.7" width="5.7" height="32.6" rx="2.9" fill="#9B7BFF"/>
+    <rect x="769.6" y="245.8" width="5.7" height="36.3" rx="2.9" fill="#9B7BFF"/>
+    <rect x="779.8" y="249.0" width="5.7" height="30.0" rx="2.9" fill="#9B7BFF"/>
+    <rect x="790.1" y="249.8" width="5.7" height="28.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="800.3" y="252.1" width="5.7" height="23.8" rx="2.9" fill="#9B7BFF"/>
+    <rect x="810.6" y="253.1" width="5.7" height="21.9" rx="2.9" fill="#9B7BFF"/>
+    <rect x="820.9" y="254.7" width="5.7" height="18.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="831.1" y="251.4" width="5.7" height="25.1" rx="2.9" fill="#9B7BFF"/>
+    <rect x="841.4" y="249.1" width="5.7" height="29.8" rx="2.9" fill="#9B7BFF"/>
+    <rect x="851.6" y="241.3" width="5.7" height="45.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="861.9" y="240.3" width="5.7" height="47.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="872.2" y="245.5" width="5.7" height="37.0" rx="2.9" fill="#9B7BFF"/>
+    <rect x="882.4" y="242.0" width="5.7" height="44.1" rx="2.9" fill="#9B7BFF"/>
+    <rect x="892.7" y="246.3" width="5.7" height="35.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="903.0" y="251.4" width="5.7" height="25.2" rx="2.9" fill="#9B7BFF"/>
+    <rect x="913.2" y="253.5" width="5.7" height="20.9" rx="2.9" fill="#9B7BFF"/>
+    <rect x="923.5" y="255.0" width="5.7" height="18.0" rx="2.9" fill="#9B7BFF"/>
+    <rect x="933.7" y="253.9" width="5.7" height="20.2" rx="2.9" fill="#9B7BFF"/>
+    <rect x="944.0" y="248.9" width="5.7" height="30.2" rx="2.9" fill="#9B7BFF"/>
+    <rect x="954.3" y="248.5" width="5.7" height="31.0" rx="2.9" fill="#9B7BFF"/>
+    <rect x="964.5" y="245.7" width="5.7" height="36.6" rx="2.9" fill="#9B7BFF"/>
+    <rect x="974.8" y="244.6" width="5.7" height="38.7" rx="2.9" fill="#9B7BFF"/>
+    <rect x="985.0" y="246.8" width="5.7" height="34.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="995.3" y="245.9" width="5.7" height="36.2" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1005.6" y="248.2" width="5.7" height="31.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1015.8" y="247.9" width="5.7" height="32.3" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1026.1" y="249.5" width="5.7" height="29.0" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1036.3" y="247.2" width="5.7" height="33.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1046.6" y="244.9" width="5.7" height="38.3" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1056.9" y="239.7" width="5.7" height="48.7" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1067.1" y="237.2" width="5.7" height="53.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1077.4" y="235.9" width="5.7" height="56.1" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1087.6" y="227.1" width="5.7" height="73.9" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1097.9" y="227.6" width="5.7" height="72.8" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1108.2" y="231.8" width="5.7" height="64.3" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1118.4" y="237.3" width="5.7" height="53.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1128.7" y="244.9" width="5.7" height="38.2" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1139.0" y="249.9" width="5.7" height="28.1" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1149.2" y="253.8" width="5.7" height="20.4" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1159.5" y="257.7" width="5.7" height="12.5" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1169.7" y="259.1" width="5.7" height="9.9" rx="2.9" fill="#9B7BFF"/>
+    <rect x="1180.0" y="261.4" width="5.7" height="5.1" rx="2.9" fill="#9B7BFF"/>
+    <path d="M716.0 270.0 L727.8 269.0 L739.6 268.1 L751.4 267.2 L763.2 266.2 L775.0 265.4 L786.8 264.5 L798.6 263.7 L810.4 262.9 L822.2 262.2 L834.0 261.6 L845.8 261.0 L857.6 260.5 L869.4 260.1 L881.2 259.8 L893.0 259.5 L904.8 259.4 L916.6 259.3 L928.4 259.3 L940.2 259.4 L952.0 259.7 L963.8 260.0 L975.6 260.4 L987.4 260.8 L999.2 261.3 L1011.0 261.6 L1022.8 261.5 L1034.6 260.7 L1046.4 258.8 L1058.2 255.5 L1070.0 251.4 L1081.8 247.4 L1093.6 245.0 L1105.4 245.4 L1117.2 248.8 L1129.0 254.7 L1140.8 261.5 L1152.6 267.9 L1164.4 273.1 L1176.2 277.0 L1188.0 279.8" fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.95"/>
+    <text x="716" y="342" font-size="20" font-weight="600" fill="#F3F0FF">“Вон из моего гаража!”</text>
+    <path d="M716 390 v8 H1188 v-8" fill="none" stroke="#7D74A8" stroke-width="1.4"/>
+    <text x="952.0" y="418" font-size="13" fill="#7D74A8" text-anchor="middle">2.4 s</text>
+    <circle cx="640" cy="263.0" r="26" fill="#141130" stroke="url(#track)" stroke-width="2.5"/>
+    <path d="M631 263.0 H649 M643 257.0 L649 263.0 L643 269.0" stroke="#F3F0FF" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M618 315.0 q11 -10 22 0 t22 0" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <text x="640" y="339.0" font-size="12" fill="#B7AEDF" text-anchor="middle">same</text>
+    <text x="640" y="355.0" font-size="12" fill="#B7AEDF" text-anchor="middle">intonation</text>
+    <rect x="64" y="460" width="4" height="66" rx="2" fill="#FFC24B"/>
+    <text x="84" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Timbre</text>
+    <text x="84" y="503" font-size="14" fill="#B7AEDF">learned from the actor’s own lines,</text>
+    <text x="84" y="523" font-size="14" fill="#B7AEDF">then sharpened by an RVC model</text>
+    <rect x="456" y="460" width="4" height="66" rx="2" fill="#FF5C8A"/>
+    <text x="476" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Emotion</text>
+    <text x="476" y="503" font-size="14" fill="#B7AEDF">the voice prompt is chosen to match</text>
+    <text x="476" y="523" font-size="14" fill="#B7AEDF">the line’s energy: calm, loud, soft</text>
+    <rect x="848" y="460" width="4" height="66" rx="2" fill="#9B7BFF"/>
+    <text x="868" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Timing</text>
+    <text x="868" y="503" font-size="14" fill="#B7AEDF">exactly the original’s length;</text>
+    <text x="868" y="523" font-size="14" fill="#B7AEDF">speech is never slowed down</text>
   </g>
 </svg>
