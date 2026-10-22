@@ -197,8 +197,11 @@ PS_SENTINEL = "BABELDUB_PS_OK"
 PS_ROW = 'ForEach-Object { "$($_.Id)|$($_.ProcessName)|$($_.Path)" }'
 
 
-def _powershell(script: str) -> list[str] | None:
-    """Output lines of a PowerShell snippet; None when PowerShell is missing or did not finish."""
+def _powershell(script: str, env: dict[str, str] | None = None) -> list[str] | None:
+    """Output lines of a PowerShell snippet; None when PowerShell is missing or did not finish.
+
+    Untrusted values (file names from the game folder) go through `env`, never into the script text.
+    """
     full = f"[Console]::OutputEncoding=[Text.Encoding]::UTF8; {script}; '{PS_SENTINEL}'; exit 0"
     try:
         proc = subprocess.run(
@@ -208,6 +211,7 @@ def _powershell(script: str) -> list[str] | None:
             encoding="utf-8",
             errors="replace",
             timeout=60,
+            env=None if env is None else {**os.environ, **env},
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -227,15 +231,19 @@ def parse_ps_rows(lines: list[str]) -> list[dict[str, Any]]:
     return rows
 
 
-def _ps_names(names: set[str]) -> str:
-    quoted = ",".join("'" + n.removesuffix(".exe").replace("'", "''") + "'" for n in sorted(names))
-    return f"@({quoted}) | ForEach-Object {{ [Management.Automation.WildcardPattern]::Escape($_) }}"
+PS_NAMES_ENV = "BABELDUB_PS_NAMES"
+# names are read from the environment, so no file name is ever parsed as PowerShell code
+PS_NAMES = (
+    f"@($env:{PS_NAMES_ENV} -split [char]10 | Where-Object {{ $_ }} | "
+    "ForEach-Object { [Management.Automation.WildcardPattern]::Escape($_) })"
+)
 
 
 def _windows_by_name(names: set[str]) -> list[dict[str, Any]] | None:
     """Processes named like the game's executables, with paths, in one PowerShell call."""
     lines = _powershell(
-        f"$n = {_ps_names(names)}; Get-Process -Name $n -ErrorAction SilentlyContinue | {PS_ROW}"
+        f"$n = {PS_NAMES}; Get-Process -Name $n -ErrorAction SilentlyContinue | {PS_ROW}",
+        env={PS_NAMES_ENV: "\n".join(n.removesuffix(".exe") for n in sorted(names))},
     )
     return None if lines is None else parse_ps_rows(lines)
 

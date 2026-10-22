@@ -136,3 +136,15 @@ def test_check_running_tasklist_fallback(monkeypatch: pytest.MonkeyPatch) -> Non
     if guards._scan_psutil(guards._roots(Path.cwd())) is not None:
         pytest.skip("psutil is installed: the Windows fallback is not used")
     _assert_detects_this_process()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell process lookup is Windows-only")
+def test_windows_by_name_does_not_run_file_names(tmp_path: Path) -> None:
+    """A crafted .exe name in the game folder must stay data (PowerShell also treats ’ as a quote)."""
+    marker = tmp_path / "pwned.txt"
+    evil = f"x’); Set-Content -Path '{marker}' -Value 1; (’y.exe"
+    rows = guards._windows_by_name({evil, "babeldub-no-such-process.exe"})
+    if rows is None:
+        pytest.skip("PowerShell is not available")
+    assert rows == []
+    assert not marker.exists()
