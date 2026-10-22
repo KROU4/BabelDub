@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from babeldub.analysis.classes import CLASSES, KEEP_ORIGINAL_CLASSES
 from babeldub.core import layout
 from babeldub.core.jsonl import latest_by, read_jsonl, write_jsonl
 from babeldub.core.project import Project
@@ -40,6 +41,28 @@ def save_vectors(path: Path, vectors: dict[str, np.ndarray]) -> None:
 
 def vector_key(kind: str, uid: str) -> str:
     return f"{kind}_{uid}"
+
+
+def keep_original_classes(project: Project) -> frozenset[str]:
+    """Line classes whose original audio is kept instead of a dub (`tts.keep_original_classes`)."""
+    value = project.setting("tts", "keep_original_classes", None)
+    if value is None:
+        return KEEP_ORIGINAL_CLASSES
+    if isinstance(value, str):
+        value = [v.strip() for v in value.split(",")]
+    return frozenset(str(v) for v in value if str(v) in CLASSES)
+
+
+def line_classes(analysis: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """{line id: class} of analyzed lines."""
+    return {lid: str(row["class"]) for lid, row in analysis.items() if row.get("class") in CLASSES}
+
+
+def keep_original_ids(project: Project, analysis: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """{line id: class} of lines that keep the original audio (interjection, nonverbal by default)."""
+    keep = keep_original_classes(project)
+    classes = line_classes(load_analysis(project) if analysis is None else analysis)
+    return {lid: cls for lid, cls in classes.items() if cls in keep}
 
 
 def emotion_vectors(project: Project) -> dict[str, np.ndarray]:

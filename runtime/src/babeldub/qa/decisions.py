@@ -140,22 +140,31 @@ class AutoDecision:
     note: str
 
 
-def auto_decide(verdict: str, reasons: list[str], attempt: int, th: Thresholds, shortened: int = 0) -> AutoDecision:
+def auto_decide(
+    verdict: str, reasons: list[str], attempt: int, th: Thresholds, shortened: int = 0,
+    line_class: str | None = None, max_attempts: int | None = None,
+) -> AutoDecision:
     """Decision for one QA row.
 
-    pass -> accept. Quality failures (cer/sim/identity/peak/empty/silent) -> regen while attempts remain,
-    then keep_original with attention. Too long -> shorten (the translator agent rewrites the
-    text), at most MAX_SHORTEN times, then keep_original with attention.
+    pass -> accept (a `mixed` line, words with a laugh or groan, is accepted with attention: a person
+    listens whether the nonverbal part survived). Quality failures -> regen while attempts remain
+    (`max_attempts` overrides th.max_attempts, e.g. 2 for short_word lines), then keep_original with
+    attention. Too long -> shorten (the translator agent rewrites the text), at most MAX_SHORTEN
+    times, then keep_original with attention.
     """
+    limit = th.max_attempts if max_attempts is None else max_attempts
     if verdict == "pass":
+        if line_class == "mixed":
+            return AutoDecision("accept", True, "mixed line (words with a laugh/groan): listen, keep_original "
+                                "if the nonverbal part is lost")
         return AutoDecision("accept", False, "all checks passed")
     blocking = BLOCKING_REASONS.intersection(reasons)
     if blocking:
         return AutoDecision(None, True, "needs attention: " + ",".join(sorted(blocking)))
     quality = sorted(QUALITY_REASONS.intersection(reasons))
     too_long = "duration" in reasons
-    if quality and attempt < th.max_attempts:
-        return AutoDecision("regen", False, f"{','.join(quality)} failed on attempt {attempt}/{th.max_attempts}")
+    if quality and attempt < limit:
+        return AutoDecision("regen", False, f"{','.join(quality)} failed on attempt {attempt}/{limit}")
     if too_long and shortened < MAX_SHORTEN:
         return AutoDecision("shorten", True, "too long for the original timing: shorten the dub text")
     if too_long:

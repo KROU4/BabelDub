@@ -51,7 +51,7 @@ def audio(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     data = np.zeros(2 * SR, dtype=np.float32)
     monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(data)])
     monkeypatch.setitem(qc_worker._STATE, "audio_cache", None)
-    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir"):
+    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir"):
         monkeypatch.setitem(qc_worker._STATE, key, None)
     return data
 
@@ -103,10 +103,13 @@ def test_prosody_semitone_range(monkeypatch: pytest.MonkeyPatch) -> None:
     lib.pyin = lambda y, **kw: (f0, voiced, np.ones_like(f0))  # type: ignore[attr-defined]
     lib.feature = SimpleNamespace(rms=lambda y, **kw: np.array([[0.1, 0.1, 0.0001]]))  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "librosa", lib)
+    monkeypatch.setattr(qc_worker, "CONTOUR_HZ", 100)  # one point per frame
     out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
     lo, hi = np.percentile(f0[voiced], [10, 90])
     assert out["f0_median_hz"] == pytest.approx(140.0) and out["f0_range_st"] == round(12 * np.log2(hi / lo), 2)
     assert out["rms_db"] == pytest.approx(-20.0) and out["voiced_ratio"] == 0.8
+    contour = out["contour"]  # semitones from the median, None where unvoiced
+    assert len(contour) == 10 and contour[0] is None and contour[1] == pytest.approx(round(12 * np.log2(100 / 140), 2))
 
 
 def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,3 +150,27 @@ def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> Non
     out = qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "m", "emotion_model": "e"})
     assert out["mos"] and out["emotion"] and not out["asr"] and not out["sv"]
     assert qc_worker._STATE["mos"] is None and qc_worker._STATE["mos_dir"] == "m"  # nothing loaded yet
+
+
+def test_score_prosody_of_the_take_and_the_original(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(qc_worker, "op_prosody", lambda req: {"f0_range_st": 5.0 if req["wav"] == "a.wav" else 7.0})
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "orig_wav": "o.wav", "want": ["prosody"]})
+    assert out["prosody"]["f0_range_st"] == 5.0 and out["orig_prosody"]["f0_range_st"] == 7.0
+
+
+def test_accent_marks_homographs_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeAccent:
+        omographs = {"замок": ["з+амок", "зам+ок"]}
+
+        def process_all(self, text: str) -> str:
+            return text.replace("замок", "зам+ок").replace("открой", "откр+ой")
+
+    monkeypatch.setitem(qc_worker._STATE, "accent", FakeAccent())
+    out = qc_worker.op_accent({"texts": ["открой замок", "Зб+ышек, открой", ""]})
+    assert out["texts"] == ["открой зам+ок", "Зб+ышек, открой", ""]  # input marks are kept
+    full = qc_worker.op_accent({"texts": ["открой замок"], "homographs_only": False})
+    assert full["texts"] == ["откр+ой зам+ок"]
+    monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
+    monkeypatch.setitem(qc_worker._STATE, "device", "cpu")
+    load = qc_worker.op_load({"op": "load", "device": "cpu", "accent_model": "ra"})
+    assert load["accent"] and qc_worker._STATE["accent"] is None  # reloaded lazily from the new dir

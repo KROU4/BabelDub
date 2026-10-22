@@ -58,6 +58,7 @@ class EngineSpec:
     git: dict[str, Any] | None = None  # {url, commit}: source checkout under BABELDUB_HOME/engines/<name>
     requirements: str | None = None  # requirements file inside the checkout (torch lines are dropped)
     post_install: list[list[str]] = field(default_factory=list)  # env-python commands run in the checkout
+    stress: str = "none"  # how the engine reads a stress mark: none | upper (CAPITAL vowel) | acute (U+0301)
 
     def supports(self, lang: str | None) -> bool:
         return _langs_support(self.languages, lang)
@@ -96,6 +97,7 @@ class ModelSpec:
     sha256: str | None = None
     warning: str | None = None
     notes: str = ""
+    stress: str | None = None  # overrides the engine's stress capability (ru-stress: acute)
 
     def supports(self, lang: str | None) -> bool:
         return _langs_support(self.languages, lang)
@@ -165,6 +167,15 @@ def _as_list(value: Any) -> list[str]:
     return [str(value)]
 
 
+STRESS_MODES = ("none", "upper", "acute")
+
+
+def _stress(value: Any, what: str) -> str:
+    if str(value) not in STRESS_MODES:
+        raise BabelDubError(f"catalog {what} has unknown stress '{value}'", code=EXIT_ERROR, known=list(STRESS_MODES))
+    return str(value)
+
+
 def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
     if not isinstance(data, dict):
         raise BabelDubError("model catalog must be a mapping", code=EXIT_ERROR, where=str(source))
@@ -191,6 +202,7 @@ def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
             git=raw.get("git"),
             requirements=raw.get("requirements"),
             post_install=[_as_list(cmd) for cmd in raw.get("post_install") or []],
+            stress=_stress(raw.get("stress") or "none", f"engine '{name}'"),
         )
         if engines[name].git and not (engines[name].git or {}).get("url"):
             raise BabelDubError(f"catalog engine '{name}' has git without url", code=EXIT_ERROR)
@@ -237,6 +249,7 @@ def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
                 sha256=raw.get("sha256"),
                 warning=raw.get("warning"),
                 notes=str(raw.get("notes") or ""),
+                stress=_stress(raw["stress"], f"model '{raw['name']}'") if raw.get("stress") else None,
             )
         )
     return Catalog(engines=engines, models=models, source=source)

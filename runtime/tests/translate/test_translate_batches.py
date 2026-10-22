@@ -180,3 +180,17 @@ def test_scenes_keep_game_order_not_alphabetical(bd, project_with_lines, line):
     bd("batch", "make", "--size", "1")
     _, rows = _in_rows(project.path(layout.BATCHES_DIR, "b0001.in.jsonl"))
     assert rows[0]["src"] == "First."
+
+
+def test_keep_original_classes_are_not_translated(bd, project_with_lines, line):
+    lines = [line(1, src="Okay, let's go."), line(2, src="Hehe..."), line(3, src="Ugh!")]
+    project = project_with_lines(lines)
+    write_jsonl(project.path(layout.ANALYSIS), [
+        {"id": lines[0]["id"], "class": "speech"}, {"id": lines[1]["id"], "class": "interjection"},
+        {"id": lines[2]["id"], "class": "nonverbal"}], schema="babeldub.analysis/1")
+    code, out = bd("translate", "plan")
+    assert out["need_agent"] == 1 and out["keep_original"] == 2, out
+    code, out = bd("batch", "make")
+    assert code == 0 and out["lines"] == 1
+    _, rows = _in_rows(project.path(layout.BATCHES_DIR, "b0001.in.jsonl"))
+    assert [r["id"] for r in rows] == [lines[0]["id"]]

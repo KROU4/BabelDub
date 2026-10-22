@@ -1,6 +1,6 @@
 """BabelDub QC worker: ASR (faster-whisper), VAD (Silero), prosody (librosa pyin), speaker
 embeddings (SpeechBrain ECAPA), naturalness MOS (UTMOS22 via SpeechMOS) and, opt-in, emotion
-(emotion2vec+ via funasr).
+(emotion2vec+ via funasr) and Russian stress marks for homographs (RUAccent, opt-in via tts.stress).
 
 Runs inside the `qc` engine venv as `<env python> -u qc_worker.py`; it never imports babeldub.
 Protocol (docs/dev/CONTRACT.md section 6): one JSON command per stdin line, exactly one JSON
@@ -20,8 +20,10 @@ answer per command on stdout; all logs go to stderr.
   {"op": "mos", "id", "wav"}                              -> {"mos"}
   {"op": "embed", "id": ..., "wav": ...}                   -> {"emb": [192 floats], "dur_s"}
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
-  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos]}
-      -> {"cer", "asr_text", "sim", "emo_cos", "mos", "unavailable": [...]}
+  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody]}
+      -> {"cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
+  {"op": "accent", "texts": [...], "homographs_only": true}
+      -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
   {"op": "quit"}
 """
 
@@ -43,7 +45,8 @@ VAD_PARAMETERS = {"min_silence_duration_ms": 500, "speech_pad_ms": 200}
 # analysis VAD: a 250 ms pause already splits segments (the translator sees such pauses)
 SEGMENT_VAD = {"threshold": 0.5, "min_silence_duration_ms": 250, "speech_pad_ms": 30, "min_speech_duration_ms": 60}
 F0_MIN_HZ, F0_MAX_HZ = 60.0, 700.0
-SCORE_WANTS = ("cer", "sim", "emo", "mos")
+SCORE_WANTS = ("cer", "sim", "emo", "mos", "prosody")
+CONTOUR_HZ = 20  # F0 contour points per second returned by prosody (for the contour correlation)
 
 _STATE: dict[str, Any] = {
     "device": None,
@@ -57,6 +60,8 @@ _STATE: dict[str, Any] = {
     "mos_dir": None,
     "emotion": None,
     "emotion_dir": None,
+    "accent": None,
+    "accent_dir": None,
     "audio_cache": None,  # (key, 16 kHz mono numpy array): the ops of one line decode it once
 }
 
@@ -227,13 +232,14 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     if asr_dir and (_STATE["asr"] is None or _STATE["asr_dir"] != asr_dir):
         info.update(_load_asr(asr_dir, device, req.get("compute_type")))
     # heavier optional models load on their first request
-    for key in ("mos", "emotion"):
+    for key in ("mos", "emotion", "accent"):
         folder = req.get(f"{key}_model")
         if folder and folder != _STATE[f"{key}_dir"]:
             _STATE.update({key: None, f"{key}_dir": folder})
     info["load_s"] = round(time.time() - t0, 2)
     return {"device": device, "asr": _STATE["asr"] is not None, "sv": _STATE["sv"] is not None,
-            "mos": _STATE["mos_dir"] is not None, "emotion": _STATE["emotion_dir"] is not None, "info": info}
+            "mos": _STATE["mos_dir"] is not None, "emotion": _STATE["emotion_dir"] is not None,
+            "accent": _STATE["accent_dir"] is not None, "info": info}
 
 
 def _torch_device() -> str:
@@ -443,7 +449,16 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
         "rms_db": round(float(np.mean(active)), 2) if active.size else None,
         "voiced_ratio": round(float(np.mean(voiced)), 3) if voiced is not None and voiced.size else 0.0,
         "dur_s": round(dur, 3),
+        "contour": [],
     }
+    if f0 is not None and f0v.size >= 3:
+        # voiced F0 in semitones relative to the median, CONTOUR_HZ points per second (null = unvoiced)
+        step = max(1, int(round(SV_SR / hop / CONTOUR_HZ)))
+        ref = float(np.median(f0v))
+        out["contour"] = [
+            round(float(12.0 * np.log2(v / ref)), 2) if ok and np.isfinite(v) else None
+            for v, ok in zip(f0[::step], voiced[::step], strict=True)
+        ]
     if f0v.size >= 3:
         lo, hi = np.percentile(f0v, [10, 90])
         out["f0_median_hz"] = round(float(np.median(f0v)), 1)
@@ -547,9 +562,56 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             unavailable.append("mos")
         else:
             out["mos"] = round(_mos_of(req["wav"]), 3)
+    if "prosody" in want:
+        out["prosody"] = op_prosody({"wav": req["wav"]})
+        if req.get("orig_wav"):
+            out["orig_prosody"] = op_prosody({"wav": req["orig_wav"]})
     if unavailable:
         out["unavailable"] = unavailable
     return out
+
+
+def _get_accent() -> Any:
+    if _STATE["accent"] is None:
+        folder = _STATE["accent_dir"]
+        if not folder:
+            raise RuntimeError("accent model not configured: send {'op': 'load', 'accent_model': dir} first")
+        try:
+            from ruaccent import RUAccent
+        except ImportError as exc:
+            raise RuntimeError("the accent op needs ruaccent in the qc env: uv pip install ruaccent") from exc
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        model = RUAccent()
+        model.load(omograph_model_size="turbo3.1", use_dictionary=True, workdir=folder,
+                   device="CUDA" if (_STATE["device"] or "").startswith("cuda") else "CPU")
+        _STATE["accent"] = model
+        log(f"RUAccent loaded from {folder}")
+    return _STATE["accent"]
+
+
+def _keep_homograph_marks(text: str, homographs: Any, given: str = "") -> str:
+    """Drop "+" from every word that is not a stress homograph (its plain form has several stressings);
+    words already marked in the input (`given`, e.g. a glossary pronunciation) keep their marks."""
+    import re
+
+    kept = set(re.findall(r"[\w+]*\+[\w+]*", given))
+
+    def word(match: Any) -> str:
+        token = match.group(0)
+        plain = token.replace("+", "")
+        return token if token in kept or plain.lower() in homographs else plain
+
+    return re.sub(r"[\w+]+", word, text)
+
+
+def op_accent(req: dict[str, Any]) -> dict[str, Any]:
+    """RUAccent stress marks ("+" before the stressed vowel), by default on homographs only."""
+    model = _get_accent()
+    texts = [str(t or "") for t in req.get("texts") or []]
+    marked = [model.process_all(t) if t.strip() else t for t in texts]
+    if req.get("homographs_only", True):
+        marked = [_keep_homograph_marks(m, model.omographs, t) for m, t in zip(marked, texts, strict=True)]
+    return {"id": req.get("id"), "texts": marked}
 
 
 OPS = {
@@ -563,6 +625,7 @@ OPS = {
     "embed": op_embed,
     "sim": op_sim,
     "score": op_score,
+    "accent": op_accent,
 }
 
 

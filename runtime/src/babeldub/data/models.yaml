@@ -20,6 +20,8 @@
 #   git            {url, commit}: source checkout in BABELDUB_HOME/engines/<name> at a pinned commit
 #   requirements   requirements file of the checkout, installed without its torch/torchaudio lines
 #   post_install   commands run with the env python inside the checkout after the packages
+#   stress         how the engine reads a stress mark: none (default) | upper (CAPITAL stressed vowel) |
+#                  acute (U+0301); a model may override it. Marks are sent only with tts.stress=on
 # models[]:
 #   name           folder under BABELDUB_HOME/models (aliases: older folder names that are recognised)
 #   repo/include   Hugging Face repo and optional file patterns (only these files are downloaded)
@@ -40,7 +42,8 @@ engines:
     license: Apache-2.0
     cuda_only: true
     fallback: qwen3tts-fast
-    notes: "Default on NVIDIA GPUs with 8 GB+ (tts.engine=auto): VoxCPM2, 2B, 48 kHz, 30 languages. Timbre from a long original reference (reference_wav_path) plus a target-language continuation prompt (ref_strategy=bootstrap). Peak VRAM 6.5 GB on an RTX 3060 Ti. Takes plain text: no U+0301 stress marks."
+    stress: upper
+    notes: "Default on NVIDIA GPUs with 8 GB+ (tts.engine=auto): VoxCPM2, 2B, 48 kHz, 30 languages. Timbre from a long original reference (reference_wav_path) plus a target-language continuation prompt (ref_strategy=bootstrap). Peak VRAM 6.5 GB on an RTX 3060 Ti. Takes plain text: U+0301 marks become extra sounds and \"+\" is read as \"plus\"; with tts.stress=on a homograph gets a CAPITAL stressed vowel (stress: upper)."
   applio:
     env: applio
     role: vc
@@ -113,7 +116,8 @@ engines:
     import: []
     languages: ["*"]
     license: MIT
-    notes: "Test engine without a venv or model: writes a tone of the expected length. For pipeline tests only."
+    stress: upper
+    notes: "Test engine without a venv or model: writes a tone of the expected length. For pipeline tests only. Reads stress like VoxCPM2."
 
 models:
   - name: VoxCPM2
@@ -167,6 +171,7 @@ models:
     auto_tiers: []
     languages: [ru]
     aliases: [Qwen3-TTS-1.7B-ru-stress-cf, Qwen3-TTS-1.7B-ru-stress]
+    stress: acute
     warning: "Weights are Apache-2.0, but part of the stress-training texts comes from a dataset without a declared license (see the model card); check before commercial use."
     notes: "Russian fine-tune of 1.7B-Base that follows the U+0301 stress mark; keeps the original voice worse than 1.7B-Base, so it is used only when set explicitly in tts.model."
   - name: faster-whisper-large-v3-turbo

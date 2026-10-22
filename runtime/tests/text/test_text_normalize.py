@@ -63,3 +63,16 @@ def test_stress_marks_are_stripped_unless_kept():
     assert normalize.strip_stress(stressed) == "Ну что, малой, поехали."
     assert prepare_for_tts(stressed, "ru") == "Ну что, малой, поехали."
     assert prepare_for_tts(stressed, "ru", stress=True) == stressed
+
+
+def test_stress_rendering_and_pronounce():
+    from babeldub.text.normalize import acute_to_plus, apply_pronounce, plus_to_acute, render_stress
+
+    assert plus_to_acute("з+амок") == "за́мок" and acute_to_plus("за́мок") == "з+амок"
+    assert render_stress("замо́к и з+амок", "upper") == "замОк и зАмок"
+    assert render_stress("за́мок", "none") == "замок" and render_stress("з+амок", "acute") == "за́мок"
+    assert render_stress("2+2", "none") == "2+2"  # not a stress mark
+    pron = {"Збышек": "Збы́шек", "Zbyszek": "Збышек"}
+    assert apply_pronounce("Збышек и збышека", pron) == "Збы́шек и збы́шека"  # inflected form keeps the mark
+    assert apply_pronounce("Zbyszek, Zbyszeka", {"Zbyszek": "Збышек"}) == "Збышек, Zbyszeka"  # whole words only
+    assert prepare_for_tts("Збышек!", "ru", stress="upper", pronounce={"Збышек": "Зб+ышек"}) == "ЗбЫшек!"

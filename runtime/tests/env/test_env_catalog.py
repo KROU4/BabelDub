@@ -157,6 +157,7 @@ def test_non_commercial_models_are_forced_opt_in(tmp_path):
         [{"name": "a", "repo": "x/a", "engine": "e", "tiers": ["4gb"]}],
         [{"name": "a", "engine": "e"}],
         [{"name": "a", "repo": "x/a", "engine": "e"}, {"name": "a", "repo": "x/b", "engine": "e"}],
+        [{"name": "a", "repo": "x/a", "engine": "e", "stress": "loud"}],
     ],
 )
 def test_invalid_catalogs_are_rejected(models):

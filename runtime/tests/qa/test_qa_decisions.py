@@ -135,3 +135,11 @@ def test_validate_agent_row() -> None:
     assert len(probs) == 4
     assert validate_agent_row({"decision": "skip"}, known) == ["missing 'id'"]
     assert validate_agent_row({"id": "a", "decision": "skip", "attempt": True}, known) == ["attempt must be a positive integer"]
+
+
+def test_auto_decide_line_classes() -> None:
+    mixed = auto_decide("pass", [], 1, TH, line_class="mixed")
+    assert mixed.decision == "accept" and mixed.attention and "mixed" in mixed.note
+    assert auto_decide("fail", ["cer"], 1, TH, line_class="short_word", max_attempts=2).decision == "regen"
+    last = auto_decide("fail", ["cer"], 2, TH, line_class="short_word", max_attempts=2)
+    assert last.decision == "keep_original" and last.attention

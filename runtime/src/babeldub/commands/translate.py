@@ -19,6 +19,7 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
+from babeldub.analysis.store import keep_original_ids
 from babeldub.audio.fit import speech_segments_s
 from babeldub.audio.io import read_audio
 from babeldub.commands.project import (
@@ -89,6 +90,12 @@ RULES = (
 # ---- shared helpers -----------------------------------------------------------------------------
 
 
+def dub_lines(project: Project, lines: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Voiced lines that get a dub: interjections and nonverbal lines (analyze classes) keep the original."""
+    keep = keep_original_ids(project)
+    return [ln for ln in voiced_lines(project, lines) if ln["id"] not in keep]
+
+
 def configured_mode(project: Project) -> str:
     return str(project.setting("translation", "mode", "auto") or "auto")
 
@@ -122,7 +129,7 @@ def current_mode(project: Project, voiced: list[dict[str, Any]] | None = None) -
     resolved = project.setting("translation", "resolved_mode")
     if resolved:
         return str(resolved)
-    return decide_mode(project, voiced if voiced is not None else voiced_lines(project))[0]
+    return decide_mode(project, voiced if voiced is not None else dub_lines(project))[0]
 
 
 def needs_translation(line: dict[str, Any], mode: str, current: dict[str, Any] | None) -> bool:
@@ -260,7 +267,7 @@ def append_translations(project: Project, rows: list[dict[str, Any]]) -> int:
 
 def refresh_stage(project: Project, mode: str | None = None) -> dict[str, Any]:
     """Recompute translation coverage and record it in progress.json."""
-    voiced = voiced_lines(project)
+    voiced = dub_lines(project)
     mode = mode or current_mode(project, voiced)
     translations = latest_translations(project)
     remaining = [ln for ln in voiced if needs_translation(ln, mode, translations.get(ln["id"]))]
@@ -328,7 +335,7 @@ def _require_lines(project: Project) -> list[dict[str, Any]]:
 def cmd_translate_plan(args: argparse.Namespace) -> int:
     project = Project.load(args.project)
     lines = _require_lines(project)
-    voiced = voiced_lines(project, lines)
+    voiced = dub_lines(project, lines)
     mode, stats = decide_mode(project, voiced)
     translations = latest_translations(project)
     need_agent = [ln for ln in voiced if needs_agent(ln, mode, translations.get(ln["id"]))]
@@ -346,6 +353,7 @@ def cmd_translate_plan(args: argparse.Namespace) -> int:
         "need_agent": len(need_agent),
         "glossary": len(load_glossary(project)),
         "style_bible": project.path(layout.STYLE_BIBLE).exists(),
+        "keep_original": len(voiced_lines(project, lines)) - len(voiced),  # interjections/nonverbal (analyze)
     }
     if not voiced:
         payload["next"] = "nothing to dub: check `babeldub cast` selection and line kinds"
@@ -364,7 +372,7 @@ def cmd_translate_plan(args: argparse.Namespace) -> int:
 def cmd_use_official(args: argparse.Namespace) -> int:
     project = Project.load(args.project)
     lines = _require_lines(project)
-    voiced = voiced_lines(project, lines)
+    voiced = dub_lines(project, lines)
     lang = project.target_lang
     translations = latest_translations(project)
     rows: list[dict[str, Any]] = []
@@ -502,7 +510,7 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
         raise BabelDubError("--size must be positive", code=EXIT_USAGE)
     project = Project.load(args.project)
     lines = _require_lines(project)
-    voiced = voiced_lines(project, lines)
+    voiced = dub_lines(project, lines)
     mode = current_mode(project, voiced)
     lang = project.target_lang
     translations = latest_translations(project)

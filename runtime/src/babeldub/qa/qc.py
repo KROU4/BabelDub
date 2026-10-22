@@ -25,6 +25,7 @@ DEFAULT_ASR_MODEL = "faster-whisper-large-v3-turbo"
 DEFAULT_SV_MODEL = "spkrec-ecapa-voxceleb"
 DEFAULT_MOS_MODEL = "utmos22-strong"
 DEFAULT_EMOTION_MODEL = "emotion2vec_plus_base"
+DEFAULT_ACCENT_DIR = "ruaccent"  # RUAccent workdir: it downloads its dictionaries there on first use
 QC_LOG = "logs/qc_worker.log"
 
 
@@ -59,6 +60,11 @@ def mos_model_dir(settings: dict[str, Any]) -> Path | None:
 def emotion_model_dir(settings: dict[str, Any]) -> Path | None:
     """emotion2vec+ folder (`qa.emotion_model`, opt-in license), None when it is not downloaded."""
     return _optional_dir(settings, "emotion_model", DEFAULT_EMOTION_MODEL)
+
+
+def accent_model_dir(settings: dict[str, Any]) -> Path:
+    """RUAccent workdir (`qa.accent_model`); used only with tts.stress=on."""
+    return _model_dir(settings, "accent_model", DEFAULT_ACCENT_DIR)
 
 
 def qc_missing(settings: dict[str, Any], need_asr: bool, need_sv: bool) -> list[str]:
@@ -107,6 +113,7 @@ class QcSession:
         need_sv: bool,
         need_mos: bool = False,
         need_emotion: bool = False,
+        need_accent: bool = False,
         device: str | None = None,
         wait_lock: float = 0.0,
         owner: str = "qa",
@@ -137,6 +144,8 @@ class QcSession:
             req["mos_model"] = str(mos_dir)
         if emo_dir is not None:
             req["emotion_model"] = str(emo_dir)
+        if need_accent:
+            req["accent_model"] = str(accent_model_dir(settings))
         try:
             reply = client.load(req)
         except BabelDubError as err:
@@ -212,13 +221,23 @@ class QcSession:
     def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
               orig_wav: Path | None = None, refs: list[Path] | None = None,
               want: tuple[str, ...] = ("cer", "sim", "emo", "mos")) -> dict[str, Any]:
-        """{cer, asr_text, sim, emo_cos, mos, unavailable?}: metrics that cannot be computed are null."""
+        """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?}: metrics that cannot be
+        computed are null; prosody (with its F0 contour) only when `want` has "prosody"."""
         req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
                                "refs": [str(r) for r in refs or []], "want": list(want)}
         if orig_wav is not None:
             req["orig_wav"] = str(orig_wav)
         reply = self._call(req)
-        return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "unavailable")}
+        return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody",
+                                          "unavailable")}
+
+    def accent(self, texts: list[str], homographs_only: bool = True) -> list[str]:
+        """RUAccent marks ("+" before the stressed vowel) for each text, homographs only by default."""
+        reply = self._call({"op": "accent", "texts": list(texts), "homographs_only": homographs_only})
+        out = [str(t) for t in reply.get("texts") or []]
+        if len(out) != len(texts):
+            raise QcItemError(f"accent returned {len(out)} texts for {len(texts)}")
+        return out
 
     def close(self) -> None:
         client, self.client = self.client, None

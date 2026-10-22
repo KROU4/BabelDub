@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 
+from babeldub.analysis.store import line_classes, load_analysis
 from babeldub.cast.characters import UNKNOWN_ID
 from babeldub.cast.cluster import EMBEDDINGS, MERGE_THRESHOLD, Embedder, EmbeddingStore
 from babeldub.commands.cast import sub_common
@@ -208,6 +209,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
     lang = project.data.get("target_lang")
     chars = latest_by(read_jsonl(project.path(layout.CHARACTERS)), "char_id")
     same_voice = float(project.setting("cast", "merge_threshold", MERGE_THRESHOLD))
+    classes = line_classes(load_analysis(project))
+    short_attempts = int(project.setting("tts", "short_word_attempts", 2) or 2)
 
     session = QcSession.open(
         root, project.data, need_asr=True, need_sv=True,
@@ -332,6 +335,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "ratio": None if ratio is None else round(float(ratio), 4),
                     "dur_s": None if levels is None else round(levels.dur_s, 3),
                     "peak_db": None if levels is None else round(levels.peak_db, 2),
+                    "class": classes.get(lid),
                     "verdict": verdict,
                     "reasons": reasons,
                     "ts": now_iso(),
@@ -340,7 +344,9 @@ def cmd_qa(args: argparse.Namespace) -> int:
             prev = dec_latest.get(lid)
             if prev and prev.get("by") in ("agent", "human") and _attempt(prev) == attempt:
                 continue  # a decision for this attempt was already made by an agent/human
-            auto = auto_decide(verdict, reasons, attempt, th, shortened.get(lid, 0))
+            cls = classes.get(lid)
+            auto = auto_decide(verdict, reasons, attempt, th, shortened.get(lid, 0), line_class=cls,
+                               max_attempts=min(th.max_attempts, short_attempts) if cls == "short_word" else None)
             if auto.decision is not None:
                 new_dec.append(
                     {"id": lid, "decision": auto.decision, "attempt": attempt, "by": "auto",

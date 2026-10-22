@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from babeldub.analysis.store import keep_original_classes, line_classes, load_analysis
 from babeldub.audio.dsp import fade, speech_seconds, to_mono
 from babeldub.audio.fit import fit_segments, length_score, speech_span
 from babeldub.audio.io import probe, read_audio, write_wav
@@ -49,6 +50,7 @@ from babeldub.core.output import EXIT_ATTENTION, EXIT_ENV, EXIT_OK, EXIT_USAGE, 
 from babeldub.core.paths import env_python, models_dir
 from babeldub.core.project import Project
 from babeldub.core.takes import follower_map
+from babeldub.text.normalize import acute_to_plus, render_stress
 from babeldub.text.syllables import SYLLABLE_RATE, count_syllables
 from babeldub.workers.client import GpuLock, WorkerClient, WorkerError
 
@@ -72,7 +74,10 @@ TOKEN_CAP_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # engines that take 
 TRANSCRIPT_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # voice prompt uses ref_text (ICL vs timbre only)
 SYNTH_SCHEMA = "babeldub.synth_results/1"
 POST_SCHEMA = "babeldub.post/1"
+DECISIONS_SCHEMA = "babeldub.decisions/1"
 ANALYSIS = "inventory/analysis.jsonl"  # optional: {id, vad_segments: [[start_s, end_s], ...], ...}
+SHORT_WORD_BEST_OF = 6  # tts.short_word_best_of: candidates of a short_word line ("Freeze!")
+SHORT_WORD_ATTEMPTS = 2  # tts.short_word_attempts: one regen, then the original is kept
 
 # Fallback when data/models.yaml or babeldub.envsetup is unavailable.
 BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
@@ -81,6 +86,7 @@ BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
         "languages": ["ar", "my", "zh", "da", "nl", "en", "fi", "fr", "de", "el", "he", "hi", "id", "it", "ja",
                       "km", "ko", "lo", "ms", "no", "pl", "pt", "ru", "es", "sw", "sv", "tl", "th", "tr", "vi"],
         "model": "VoxCPM2", "repo": "openbmb/VoxCPM2", "cuda_only": True, "fallback": "qwen3tts-fast",
+        "stress": "upper",
     },
     "qwen3tts-fast": {
         "env": "qwen3tts-fast", "worker": "tts_qwen3_fast.py",
@@ -99,7 +105,8 @@ BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
                       "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh"],
         "model": "chatterbox-multilingual", "repo": "ResembleAI/chatterbox",
     },
-    "dummy": {"env": None, "worker": "tts_dummy.py", "languages": ["*"], "model": "dummy", "repo": "dummy"},
+    "dummy": {"env": None, "worker": "tts_dummy.py", "languages": ["*"], "model": "dummy", "repo": "dummy",
+              "stress": "upper"},  # mimics VoxCPM2
 }
 
 
@@ -151,7 +158,33 @@ def keeps_stress(model_name: str) -> bool:
     return "stress" in model_name.lower()
 
 
-def _text_preparer(stress: bool = False) -> Callable[[str, str, str], str]:
+def _on(value: Any) -> bool:
+    return str(value).strip().lower() in ("on", "true", "1", "yes")
+
+
+def stress_mode(project: Project, engine: EngineChoice, catalog: Any | None) -> str:
+    """How stress marks reach the engine: acute (U+0301) for an explicit stress model, else the engine's
+    capability (`stress` in models.yaml: VoxCPM2 reads a CAPITAL vowel) with tts.stress=on, else none."""
+    model_stress = None
+    if catalog is not None:
+        try:
+            model_stress = catalog.model(engine.model_name).stress
+        except BabelDubError:
+            model_stress = None
+    if model_stress == "acute" or keeps_stress(engine.model_name):
+        return "acute"
+    if not _on(project.setting("tts", "stress", "off")):
+        return "none"
+    return str(model_stress or _engine_spec(engine.name, catalog).get("stress") or "none")
+
+
+def pronounce_map(project: Project) -> dict[str, str]:
+    """{glossary translation: pronounce} for terms with a pronunciation."""
+    rows = latest_by(read_jsonl(project.path(layout.GLOSSARY)), "term")
+    return {str(r["translation"]): str(r["pronounce"]) for r in rows.values() if r.get("translation") and r.get("pronounce")}
+
+
+def _text_preparer(stress: bool | str = False, pronounce: dict[str, str] | None = None) -> Callable[[str, str, str], str]:
     """babeldub.text.normalize.prepare_for_tts when available, else a markup-only cleaner."""
     try:
         from babeldub.text.normalize import prepare_for_tts
@@ -160,11 +193,48 @@ def _text_preparer(stress: bool = False) -> Callable[[str, str, str], str]:
 
     def prepare(text: str, lang: str, yo: str) -> str:
         try:
-            return prepare_for_tts(text, lang, yo=yo, stress=stress)
+            return prepare_for_tts(text, lang, yo=yo, stress=stress, pronounce=pronounce)
         except (TypeError, ValueError):
             return _fallback_clean(text)
 
     return prepare
+
+
+ACCENT_CACHE = "synth/accent.jsonl"  # {text, marked}: RUAccent marks of prepared texts (tts.stress=on)
+
+
+class Accenter:
+    """Homograph stress marks of prepared texts via the qc worker's `accent` op (RUAccent), cached in
+    synth/accent.jsonl so a text keeps its marks (and the line its `done` state) across runs."""
+
+    def __init__(self, project: Project, compute: bool) -> None:
+        self.project = project
+        self.compute = compute
+        self.cache = {str(r["text"]): str(r["marked"]) for r in read_jsonl(project.path(ACCENT_CACHE))
+                      if r.get("text") is not None and r.get("marked") is not None}
+        self.pending = 0
+        self.note: str | None = None
+
+    def __call__(self, texts: list[str]) -> dict[str, str]:
+        missing = sorted({t for t in texts if t not in self.cache})
+        if missing and self.compute:
+            from babeldub.qa.qc import QcItemError, QcSession, qc_missing
+
+            if qc_missing(self.project.data, False, False):
+                self.note = "tts.stress=on needs the qc env with ruaccent (`babeldub setup --engines qc`): no marks"
+            else:
+                try:
+                    with QcSession.open(self.project.root, self.project.data, need_asr=False, need_sv=False,
+                                        need_accent=True, owner="synth:accent") as session:
+                        marked = session.accent([acute_to_plus(t) for t in missing])
+                except (BabelDubError, QcItemError) as err:
+                    self.note = f"stress marks failed: {err}"
+                else:
+                    rows = [{"text": t, "marked": m, "ts": now_iso()} for t, m in zip(missing, marked, strict=True)]
+                    append_jsonl(self.project.path(ACCENT_CACHE), rows)
+                    self.cache.update({r["text"]: r["marked"] for r in rows})
+        self.pending = sum(1 for t in set(texts) if t not in self.cache)
+        return {t: self.cache[t] for t in texts if t in self.cache}
 
 
 # ---- engines and models ---------------------------------------------------------------------
@@ -234,7 +304,7 @@ def _engine_spec(engine: str, catalog: Any | None) -> dict[str, Any]:
     if catalog is not None and engine in getattr(catalog, "engines", {}):
         cat = catalog.engines[engine]
         spec.update(env=cat.env, worker=cat.worker or spec["worker"], languages=list(cat.languages),
-                    cuda_only=cat.cuda_only, fallback=cat.fallback)
+                    cuda_only=cat.cuda_only, fallback=cat.fallback, stress=getattr(cat, "stress", "none"))
     return spec
 
 
@@ -391,6 +461,8 @@ class Job:
     src_rate: float | None = None  # syllables/s of the line transcript over its original speech
     prompt: Prompt | None = None  # bootstrap-tgt: target-language continuation prompt (wav + exact text)
     target_speech: float | None = None  # speech span of the original (best-of picks the closest)
+    line_class: str | None = None  # analyze class of the original (speech, short_word, mixed, ...)
+    best_of_min: int = 1  # at least this many candidates (short_word lines: tts.short_word_best_of)
 
     @property
     def ref_mode(self) -> str:
@@ -589,11 +661,21 @@ def _bootstrap_states(
 
 
 # ---- synth --------------------------------------------------------------------------------
+def _overridden(decision: dict[str, Any] | None) -> bool:
+    """An agent/human asked for a dub of a line whose class would keep the original."""
+    return bool(decision) and decision.get("by") in ("agent", "human")         and decision.get("decision") not in ("keep_original", "skip")
+
+
 def _plan_synth(
-    project: Project, args: argparse.Namespace, engine: EngineChoice, strategy: str
+    project: Project, args: argparse.Namespace, engine: EngineChoice, strategy: str,
+    catalog: Any | None = None, accent: Callable[[list[str]], dict[str, str]] | None = None,
 ) -> tuple[list[Job], Counter[str], list[str], list[str]]:
     """Jobs of this run, skip counters, lines that need attention and lines that wait for the
-    bootstrap target-language prompt (strategy `bootstrap`)."""
+    bootstrap target-language prompt (strategy `bootstrap`).
+
+    Line classes (inventory/analysis.jsonl): interjection/nonverbal lines keep the original (an auto
+    keep_original decision, skipped.keep_original); a short_word line is spoken with the line itself as
+    the reference, tts.short_word_best_of candidates and tts.short_word_attempts attempts."""
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
     if not lines_all:
         raise BabelDubError("no lines in inventory/lines.jsonl", code=EXIT_USAGE, hint="run `babeldub extract` and `babeldub link` first")
@@ -615,7 +697,12 @@ def _plan_synth(
     min_s = float(tts.get("line_ref_min_s", 1.6))
     max_attempts = int(tts.get("max_attempts", 3))
     yo = str(tts.get("yo") or "keep")
-    prepare = _text_preparer(stress=keeps_stress(engine.model_name))
+    mode = stress_mode(project, engine, catalog)
+    prepare = _text_preparer("acute" if accent is not None else mode, pronounce_map(project))
+    classes = line_classes(load_analysis(project))
+    keep_classes = keep_original_classes(project)
+    short_best_of = max(1, int(tts.get("short_word_best_of", SHORT_WORD_BEST_OF) or SHORT_WORD_BEST_OF))
+    short_attempts = max(1, int(tts.get("short_word_attempts", SHORT_WORD_ATTEMPTS) or SHORT_WORD_ATTEMPTS))
     want_chars = {c.lower() for c in _csv(args.chars)}
     want_ids = set(_csv(args.ids))
     follows = follower_map(lines_all.values())
@@ -658,16 +745,33 @@ def _plan_synth(
         states = _bootstrap_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars},
                                    translations, decisions, history, follows, refs_by_char)
 
+    accent_map: dict[str, str] = {}
+    if accent is not None:
+        texts = {prepare(str(tr["dub_text"]), target, yo) for lid, _, _ in picked
+                 if (tr := translations.get(lid)) and str(tr.get("dub_text") or "").strip()}
+        accent_map = accent(sorted(texts))
+
     attention: list[str] = []
     waiting: list[str] = []
     jobs: list[Job] = []
+    keep_rows: list[dict[str, Any]] = []
     for line_id, line, char_id in picked:
         uid = _line_uid(line)
+        cls = classes.get(line_id)
+        if cls in keep_classes and not _overridden(decisions.get(line_id)):
+            skipped["keep_original"] += 1
+            if (decisions.get(line_id) or {}).get("decision") != "keep_original":
+                keep_rows.append({"id": line_id, "decision": "keep_original", "attempt": None, "by": "auto",
+                                  "note": f"line class {cls}: the original audio is kept", "attention": False,
+                                  "class": cls, "ts": now_iso()})
+            continue
         tr = translations.get(line_id)
         if not tr or not str(tr.get("dub_text") or "").strip() or (tr.get("lang") and _primary(tr["lang"]) != _primary(target)):
             skipped["no_translation"] += 1
             continue
         text = prepare(str(tr["dub_text"]), target, yo)
+        if accent is not None:
+            text = render_stress(accent_map.get(text, text), mode)
         if not text:
             skipped["empty_text"] += 1
             continue
@@ -717,7 +821,7 @@ def _plan_synth(
         elif args.force and rows:
             reason = "force"
         tries_for_text = sum(1 for r in rows if r.get("text") == text)
-        if not args.force and tries_for_text >= max_attempts:
+        if not args.force and tries_for_text >= (min(max_attempts, short_attempts) if cls == "short_word" else max_attempts):
             skipped["max_attempts"] += 1
             attention.append(line_id)
             continue
@@ -725,7 +829,14 @@ def _plan_synth(
         prompt: Prompt | None = None
         ref_reason: str | None = None
         boot = states.get(char_id)
-        if boot is not None and boot.long_ref is not None and prefer is None:
+        orig = _orig_wav(project, line) if cls == "short_word" and prefer is None else None
+        if orig is not None:  # a short word: the line itself carries the delivery, no target-language prompt
+            src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
+            src = str((line.get("text") or {}).get("src") or "")
+            dur = float((line.get("audio") or {}).get("dur_s") or 0.0) or float(probe(orig)["dur_s"])
+            ref = Ref("line", f"line:{uid}", orig, prepare(src, src_lang, "keep") if src else "", src_lang, dur)
+            ref_reason = "short_word: the line itself is the voice reference"
+        elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             if boot.tgt is not None:
                 ref = Ref("bootstrap-tgt", boot.long_ref.ref_id, boot.long_ref.wav, "", src_lang, boot.long_ref.dur_s)
@@ -751,9 +862,12 @@ def _plan_synth(
         job = Job(line, line_id, uid, char_id, text, last_attempt + 1, ref, reason, target_s,
                   (char_id, str(line.get("scene") or ""), int(line.get("order") or 0), line_id))
         job.prompt, job.ref_reason = prompt, ref_reason
+        job.line_class = cls
+        if cls == "short_word":
+            job.best_of_min = short_best_of
         if ref.mode == "line" and engine.name != PREMIUM:  # VoxCPM2 takes the line as timbre only
             char_ref = _char_ref(project, refs_by_char.get(char_id, []), ref.lang, avoid, prepare)
-            _check_icl(job, None if prefer == "line" else char_ref)
+            _check_icl(job, None if prefer == "line" or cls == "short_word" else char_ref)
             if job.ref.mode == "line":
                 job.alt_ref = char_ref
         if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and not job.ref.mode.startswith("bootstrap"):
@@ -764,6 +878,9 @@ def _plan_synth(
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
     jobs.sort(key=lambda j: j.sort_key)
+    if keep_rows and not args.dry_run:
+        _ensure_header(project.path(layout.DECISIONS), DECISIONS_SCHEMA)
+        append_jsonl(project.path(layout.DECISIONS), keep_rows)
     return jobs, skipped, attention, waiting
 
 
@@ -777,7 +894,8 @@ def _check_icl(job: Job, char_ref: Ref | None) -> None:
     if lo <= rate <= hi:
         return
     shown = f"{rate:.1f}" if math.isfinite(rate) else "inf"
-    reason = f"transcript rate {shown} syl/s outside [{lo}, {hi}]"
+    reason = f"{job.ref_reason}; " if job.ref_reason else ""
+    reason += f"transcript rate {shown} syl/s outside [{lo}, {hi}]"
     if char_ref is not None:
         job.ref = char_ref
         job.ref_reason = f"{reason}: character reference"
@@ -838,7 +956,13 @@ def cmd_synth(args: argparse.Namespace) -> int:
     if strategy_note:
         notes.append(strategy_note)
     best_of = max(1, int(args.best_of or project.setting("tts", "best_of", 1) or 1))
-    jobs, skipped, attention, waiting = _plan_synth(project, args, engine, strategy)
+    accent: Accenter | None = None
+    if (_primary(project.target_lang) == "ru" and _on(project.setting("tts", "stress", "off"))
+            and stress_mode(project, engine, catalog) != "none"):
+        accent = Accenter(project, compute=not args.dry_run)
+    jobs, skipped, attention, waiting = _plan_synth(project, args, engine, strategy, catalog, accent)
+    if accent is not None and accent.note:
+        notes.append(accent.note)
     planned = len(jobs)
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
@@ -994,9 +1118,13 @@ class _SynthRun:
             req["prompt_text"] = job.prompt.text
         return req
 
+    def n_for(self, job: Job) -> int:
+        """Candidates of one line: tts.best_of, more for a short_word line."""
+        return max(self.best_of, job.best_of_min)
+
     def candidate(self, job: Job, k: int) -> tuple[int, Path]:
         """Seed and output file of candidate k (k = 0 is the line's own seed and file)."""
-        if self.best_of == 1:
+        if self.n_for(job) == 1:
             return job.seed, job.out
         return job.seed + k, job.out.with_name(f"a{job.attempt}c{k}.wav")
 
@@ -1162,7 +1290,7 @@ class _SynthRun:
 
     def single(self, client: WorkerClient, job: Job) -> None:
         cands: list[tuple[int, dict[str, Any], Path]] = []
-        for k in range(self.best_of):
+        for k in range(self.n_for(job)):
             seed, out = self.candidate(job, k)
             cands.append((seed, self.call(client, job, seed, out), out))
             if not client.alive and client.restarts >= client.max_restarts:
@@ -1175,7 +1303,7 @@ class _SynthRun:
         """One generate call per candidate round for several lines. False = a batch failed as a whole
         (the caller falls back to single lines)."""
         cands: dict[str, list[tuple[int, dict[str, Any], Path]]] = {j.id: [] for j in chunk}
-        for k in range(self.best_of):
+        for k in range(self.n_for(chunk[0])):
             seed = chunk[0].seed + k  # a batch shares one seed
             outs = [self.candidate(j, k)[1] for j in chunk]
             msg = {"op": "synth_batch", "seed": seed,
@@ -1199,10 +1327,10 @@ class _SynthRun:
         while i < len(jobs) and not self.tally.aborted:
             chunk = jobs[i : i + batch_size]
             i += len(chunk)
-            if len(chunk) > 1 and self.batch(client, chunk):
-                continue
-            if len(chunk) > 1:  # e.g. out of memory: smaller batches from now on, these lines one by one
-                batch_size = max(1, batch_size // 2)
+            if len(chunk) > 1 and len({self.n_for(j) for j in chunk}) == 1:
+                if self.batch(client, chunk):
+                    continue
+                batch_size = max(1, batch_size // 2)  # e.g. out of memory: smaller batches, these lines one by one
             for job in chunk:
                 if self.tally.aborted:
                     break
