@@ -222,6 +222,19 @@ class FakeQc:
                 rows = latest_by(read_jsonl(self.root / layout.SYNTH_RESULTS)).values()
                 spoken = next((r["text"] for r in rows if f"/{path.stem}/" in str(r.get("wav"))), "")
             return {"ok": True, "op": "asr", "id": msg.get("id"), "text": spoken}
+        info = sf.info(str(path))
+        if msg["op"] == "vad":  # analyze: one speech segment with 0.1 s margins
+            return {"ok": True, "op": "vad", "segments": [[0.1, round(info.duration - 0.1, 3)]],
+                    "speech_s": round(info.duration - 0.2, 3), "dur_s": info.duration}
+        if msg["op"] == "asr_words":  # analyze: the original says its subtitle
+            line = next(ln for ln in latest_by(read_jsonl(self.root / layout.LINES)).values() if ln["uid"] == path.stem)
+            text = (line.get("text") or {}).get("src") or ""
+            words = [{"w": w, "start": 0.1, "end": 0.5, "prob": 0.9} for w in text.split()]
+            return {"ok": True, "op": "asr_words", "text": text, "lang": "en", "words": words,
+                    "avg_logprob": -0.2, "no_speech_prob": 0.01}
+        if msg["op"] == "prosody":
+            return {"ok": True, "op": "prosody", "f0_median_hz": 140.0, "f0_range_st": 5.0, "rms_db": -20.0,
+                    "voiced_ratio": 0.6, "dur_s": info.duration}
         return {"ok": False, "op": msg["op"], "error": "unsupported"}
 
     def close(self) -> None:
@@ -305,6 +318,23 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     )
     assert hero1["text"]["src"] == "Hello Mia, the old engine is broken again."  # speaker label stripped
 
+    # analyze: VAD, ASR and prosody of the originals (fake qc worker), line classes
+    code, out = bd("status")
+    assert out["next_stage"] == "analyze", out
+    import babeldub.qa.qc as qc
+
+    with monkeypatch.context() as m:
+        fake = FakeQc(root)
+        m.setattr(qc, "qc_missing", lambda *a, **k: [])
+        m.setattr(qc, "_make_client", lambda log_path: fake)
+        code, out = bd("analyze")
+        assert code == EXIT_OK and out["analyzed"] == 4 and out["subtitle_mismatch"] == 0, out
+        assert sum(out["classes"].values()) == 4 and {r["op"] for r in fake.requests} == {"vad", "asr_words", "prosody"}
+        code, out = bd("analyze")
+        assert code == EXIT_OK and out["analyzed"] == 0 and out["up_to_date"] == 4, out
+    code, out = bd("query", "--where", "voiced=true", "--fields", "id,class")
+    assert all(r["class"] for r in out["rows"]), out
+
     # cast: speakers from FMOD event folders, the cutscene narrator is unknown until labelled
     code, out = bd("cast")
     assert code == EXIT_ATTENTION and out["uncertain"] == ["unknown"], out
@@ -386,8 +416,6 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     assert code == EXIT_ENV and "setup --engines qc" in out["hint"], out
     code, out = bd("status")
     assert out["stages"]["qa"] == "pending" and out["next"] == "babeldub qa", out
-    import babeldub.qa.qc as qc
-
     fake = FakeQc(root)
     monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
     monkeypatch.setattr(qc, "_make_client", lambda log_path: fake)

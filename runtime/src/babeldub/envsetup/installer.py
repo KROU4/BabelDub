@@ -355,6 +355,9 @@ def plan_model(spec: ModelSpec, force: bool = False, accepted: set[str] | None =
     if not force and is_model_downloaded(spec, dest):
         item.action, item.reason, item.size_gb = "skip", "downloaded", None
         return item
+    if spec.url:
+        item.reason = "direct download"
+        return item
     cmd = model_command(spec, dest)
     if cmd is not None:
         item.commands = [cmd]
@@ -374,7 +377,16 @@ def run_model(item: PlanItem, spec: ModelSpec) -> dict[str, Any]:
     log = logs_dir() / f"setup-model-{spec.name}.log"
     dest.mkdir(parents=True, exist_ok=True)
     (dest / MODEL_MARKER).unlink(missing_ok=True)  # completeness is re-checked after the download
-    if item.commands:
+    if spec.url:
+        target = dest / spec.url.rsplit("/", 1)[-1]
+        try:
+            digest = _download(spec.url, target, timeout=MODEL_TIMEOUT)
+        except Exception as exc:  # network errors of any kind end up in the report
+            return {"name": spec.name, "kind": "model", "status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+        if spec.sha256 and digest != spec.sha256.lower():
+            target.unlink(missing_ok=True)
+            return {"name": spec.name, "kind": "model", "status": "failed", "error": f"sha256 mismatch: {digest}"}
+    elif item.commands:
         code = run_logged(item.commands[0], log, MODEL_TIMEOUT)
         if code != 0:
             return {"name": spec.name, "kind": "model", "status": "failed", "error": f"exit code {code}",

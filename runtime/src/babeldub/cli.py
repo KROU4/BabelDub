@@ -19,6 +19,7 @@ COMMAND_MODULES = [
     "babeldub.commands.env",  # doctor, setup, models
     "babeldub.commands.project",  # init, status, set, query, sample, games
     "babeldub.commands.recon",  # scan, extract, link
+    "babeldub.commands.analyze",  # analyze
     "babeldub.commands.cast",  # cast
     "babeldub.commands.translate",  # glossary, batch, translate
     "babeldub.commands.voice",  # synth, post

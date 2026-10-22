@@ -76,7 +76,10 @@ def test_auto_models_by_tier_and_language():
         "Qwen3-TTS-12Hz-1.7B-Base",
         "faster-whisper-large-v3-turbo",
         "spkrec-ecapa-voxceleb",
+        "utmos22-strong",
     ]
+    assert "emotion2vec_plus_base" not in ru  # FunASR model license: opt-in only
+    assert cat.model("emotion2vec_plus_base").opt_in and cat.model("utmos22-strong").url
     en = [m.name for m in auto_models(cat, ["qwen3tts", "qc"], "8gb", "en")]
     assert "qwen3-tts-12hz-1.7b-ru-stress-cf" not in en
     nolang = [m.name for m in auto_models(cat, ["qwen3tts"], "8gb", None)]
@@ -84,7 +87,8 @@ def test_auto_models_by_tier_and_language():
     cpu = [m.name for m in auto_models(cat, ["qwen3tts", "qc"], "cpu", "ru")]
     assert cpu == ["Qwen3-TTS-12Hz-0.6B-Base", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"]
     pl = [m.name for m in auto_models(cat, ["chatterbox", "qc"], "12gb", "pl")]
-    assert set(pl) == {"chatterbox-multilingual", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"}
+    assert set(pl) == {"chatterbox-multilingual", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb",
+                       "utmos22-strong"}
 
 
 def test_default_model_prefers_general_base():

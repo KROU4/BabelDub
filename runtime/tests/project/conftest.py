@@ -11,7 +11,8 @@ from babeldub.core.jsonl import write_jsonl
 from babeldub.core.output import BabelDubError, emit_error, set_pretty
 from babeldub.core.project import Project
 
-MODULES = ["babeldub.commands.env", "babeldub.commands.project", "babeldub.commands.translate"]
+MODULES = ["babeldub.commands.env", "babeldub.commands.project", "babeldub.commands.translate",
+           "babeldub.commands.analyze"]
 
 
 def build_parser() -> argparse.ArgumentParser:

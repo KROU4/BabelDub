@@ -98,14 +98,15 @@ engines:
     env: qc
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
-    packages: ["faster-whisper", "speechbrain", "soundfile", "numpy", "jiwer", "num2words"]
+    packages: ["faster-whisper", "speechbrain", "soundfile", "numpy", "jiwer", "num2words", "librosa",
+               "speechmos @ git+https://github.com/tarepan/SpeechMOS@ed25eacbfa42b99156c36ebec67a733b5dbb9b79"]
     gpu_packages: ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
-    import: [faster_whisper, speechbrain, soundfile]
+    import: [faster_whisper, speechbrain, soundfile, librosa, speechmos]
     worker: qc_worker.py
-    size_gb: 5.0
+    size_gb: 5.2
     languages: ["*"]
     license: MIT
-    notes: "Quality control: ASR (CER against the dub text) and speaker similarity to the original voice."
+    notes: "Quality control and analysis: ASR with word times, Silero VAD, prosody (librosa pyin), speaker similarity, UTMOS22 naturalness."
   dummy:
     env: null
     worker: tts_dummy.py
@@ -192,6 +193,34 @@ models:
     auto_tiers: [cpu, 8gb, 12gb, 24gb]
     languages: ["*"]
     notes: "Speaker embeddings: voice similarity of the dub to the original character, clustering of voices."
+  - name: utmos22-strong
+    repo: tarepan/SpeechMOS
+    url: "https://github.com/tarepan/SpeechMOS/releases/download/v1.0.0/utmos22_strong_step7459_v1.pt"
+    sha256: "38aa51ab79e2a4e09a1449758a4b37e9cbb2e8235a49662a732d33a9ba1e9bff"
+    engine: qc
+    role: mos
+    license: MIT
+    commercial: true
+    size_gb: 0.41
+    vram_gb: 0.6
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: [8gb, 12gb, 24gb]
+    languages: ["*"]
+    notes: "UTMOS22 strong learner (sarulab-speech/UTMOS22, MIT) via SpeechMOS: predicted naturalness MOS for best-of and QA; compare candidates of one line only."
+  - name: emotion2vec_plus_base
+    repo: emotion2vec/emotion2vec_plus_base
+    engine: qc
+    role: emotion
+    license: FunASR-Model-License-1.1
+    commercial: false
+    opt_in: true
+    size_gb: 0.36
+    vram_gb: 0.5
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: []
+    languages: ["*"]
+    warning: "Weights are under the FunASR Model License v1.1 (non-standard: 'reference and learning purposes', revocable, revisable); the emotion op also needs `uv pip install funasr` in the qc env."
+    notes: "Speech emotion embedding (768-dim) and label for analyze/QA; without it analyze uses prosody (F0, RMS, syllable rate) only."
   - name: chatterbox-multilingual
     repo: ResembleAI/chatterbox
     include: [ve.pt, t3_mtl23ls_v3.safetensors, s3gen.pt, grapheme_mtl_merged_expanded_v1.json, conds.pt, Cangjie5_TC.json]

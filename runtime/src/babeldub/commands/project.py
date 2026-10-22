@@ -43,6 +43,7 @@ STAGE_COMMANDS: dict[str, str] = {
     "scan": "babeldub scan",
     "extract": "babeldub extract",
     "link": "babeldub link",
+    "analyze": "babeldub analyze",
     "cast": "babeldub cast",
     "translate": "babeldub translate plan",
     "synth": "babeldub synth",
@@ -120,6 +121,7 @@ def merged_rows(project: Project, lines: list[dict[str, Any]] | None = None) -> 
     qa = load_latest(project, layout.QA)
     decisions = load_latest(project, layout.DECISIONS)
     follows = follower_map(lines)
+    analysis = load_latest(project, layout.ANALYSIS)
     rows = []
     for line in lines:
         row = dict(line)
@@ -130,6 +132,7 @@ def merged_rows(project: Project, lines: list[dict[str, Any]] | None = None) -> 
         row["qa"] = qa.get(line["id"])
         row["decision"] = decisions.get(line["id"])
         row["follows"] = follows.get(line["id"])  # leader id of an alt take / duplicate
+        row["analysis"] = analysis.get(line["id"])  # `babeldub analyze`: class, VAD, ASR of the original
         rows.append(row)
     return rows
 
@@ -286,6 +289,12 @@ def project_counts(project: Project) -> dict[str, Any]:
     install = read_json(project.path(layout.INSTALL_LOG), default=None) or {}
     containers = manifest.get("containers") or []
     follows = follower_map(lines)
+    analysis = load_latest(project, layout.ANALYSIS)
+    classes: dict[str, int] = {}
+    for i in voiced_ids:
+        cls = (analysis.get(i) or {}).get("class")
+        if cls:
+            classes[cls] = classes.get(cls, 0) + 1
     return {
         "lines": len(lines),
         "voiced": len(voiced),
@@ -294,6 +303,9 @@ def project_counts(project: Project) -> dict[str, Any]:
         "linked": sum(1 for ln in lines if src_text(ln)),
         "characters": len(chars),
         "selected": sum(1 for c in chars.values() if c.get("selected")),
+        "analyzed": sum(1 for i in voiced_ids if i in analysis),
+        "classes": classes,  # analyze: speech | short_word | interjection | nonverbal | mixed
+        "subtitle_mismatch": sum(1 for i in voiced_ids if (analysis.get(i) or {}).get("subtitle_mismatch")),
         "translated": sum(1 for i in voiced_ids if i in translations),
         "synth_ok": sum(1 for i, r in synth.items() if r.get("status") == "ok" and i in voiced_ids),
         "post": sum(1 for i in post if i in voiced_ids),
@@ -420,6 +432,7 @@ _COMPUTED_FIELDS: dict[str, Callable[[dict[str, Any]], Any]] = {
     "verdict": lambda r: (r.get("qa") or {}).get("verdict"),
     "decision": lambda r: (r.get("decision") or {}).get("decision"),
     "voiced": is_voiced_kind,
+    "class": lambda r: (r.get("analysis") or {}).get("class"),
 }
 
 

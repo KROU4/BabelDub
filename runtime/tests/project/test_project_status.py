@@ -37,9 +37,19 @@ def test_status_counts(bd, project_with_lines, line):
     write_jsonl(project.path(layout.QA), [{"id": ids[0], "verdict": "pass"}, {"id": ids[1], "verdict": "fail"}])
     write_json(project.path(layout.BUILD_MANIFEST), {"containers": [{"replaced": 2}]})
     write_json(project.path(layout.INSTALL_LOG), {"installed": [{"relpath": "a"}], "state": "installed"})
+    write_jsonl(project.path(layout.ANALYSIS), [
+        {"id": ids[0], "class": "speech", "subtitle_mismatch": True},
+        {"id": ids[1], "class": "interjection", "subtitle_mismatch": False},
+    ])
+    project.mark_stage("analyze", "done")
     project.mark_stage("cast", "attention", uncertain=["c2"])
     code, out = bd("status")
     counts = out["counts"]
+    assert counts["analyzed"] == 2 and counts["subtitle_mismatch"] == 1
+    assert counts["classes"] == {"speech": 1, "interjection": 1}
+    code, q = bd("query", "--where", "class=interjection", "--fields", "id,class")
+    assert q["total"] == 1 and q["rows"] == [{"id": ids[1], "class": "interjection"}]
+    code, out = bd("status")
     assert counts["lines"] == 4 and counts["voiced"] == 2 and counts["linked"] == 2
     assert counts["characters"] == 2 and counts["selected"] == 1
     assert counts["translated"] == 1 and counts["synth_ok"] == 1
@@ -52,6 +62,7 @@ def test_status_counts(bd, project_with_lines, line):
 def test_status_failed_stage_is_next(bd, project_with_lines, line):
     project = project_with_lines([line(1)])
     project.mark_stage("link", "attention", unlinked=3)
+    project.mark_stage("analyze", "done")
     project.mark_stage("cast", "failed", error="boom")
     code, out = bd("status")
     assert code == 3 and out["next_stage"] == "cast" and out["next"] == "babeldub cast"

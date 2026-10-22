@@ -275,3 +275,24 @@ def test_probe_parsers():
     assert parse_version("uv", "uv 0.12.5 (210d1f678 2026-08-14)") == "0.12.5"
     assert parse_version("git", "git version 2.55.0.windows.3") == "2.55.0.windows.3"
     assert parse_version("rubberband", "") is None
+
+
+def test_direct_url_model_checks_sha256(home, fake_tools, monkeypatch):
+    cat = load_catalog()
+    spec = cat.model("utmos22-strong")
+    item = installer.plan_model(spec)
+    assert item.action == "install" and item.reason == "direct download" and not item.commands
+
+    def fake_download(url, dest, timeout=300):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"\1" * 16)
+        return spec.sha256
+
+    monkeypatch.setattr(installer, "_download", fake_download)
+    result = installer.run_model(item, spec)
+    assert result["status"] == "installed"
+    assert (model_dir(spec) / "utmos22_strong_step7459_v1.pt").exists()
+    assert installer.plan_model(spec).action == "skip"
+    monkeypatch.setattr(installer, "_download", lambda url, dest, timeout=300: (dest.write_bytes(b"x"), "bad")[1])
+    failed = installer.run_model(installer.plan_model(spec, force=True), spec)
+    assert failed["status"] == "failed" and "sha256" in failed["error"]

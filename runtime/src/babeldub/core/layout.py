@@ -14,6 +14,8 @@ LINES = "inventory/lines.jsonl"
 TEXTS = "inventory/texts.jsonl"
 INVENTORY_REPORT = "inventory/report.md"
 ORIG_AUDIO_DIR = "audio/orig"
+ANALYSIS = "inventory/analysis.jsonl"  # analyze: VAD, ASR of the original, prosody, emotion, line class
+ANALYSIS_NPZ = "inventory/analysis.npz"  # analyze: vectors (emotion embeddings) by line uid
 
 CHARACTERS = "cast/characters.jsonl"
 ASSIGN = "cast/assign.jsonl"
@@ -53,6 +55,7 @@ STAGES = [
     "scan",
     "extract",
     "link",
+    "analyze",
     "cast",
     "translate",
     "synth",

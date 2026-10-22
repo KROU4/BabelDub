@@ -1,8 +1,10 @@
-"""CLI-side access to the `qc` worker (ASR + speaker embeddings).
+"""CLI-side access to the `qc` worker (ASR, VAD, prosody, speaker embeddings, MOS, emotion).
 
 The worker is workers/qc_worker.py running in BABELDUB_HOME/envs/qc. QcSession starts it via
 babeldub.workers.client.WorkerClient, holds the project GPU lock while it runs on CUDA
-(GPU-first policy, see core/compute.py) and wraps the `asr` / `embed` ops.
+(GPU-first policy, see core/compute.py) and wraps the worker ops. MOS (UTMOS22) and emotion
+(emotion2vec+, opt-in) are optional: `mos_model_dir`/`emotion_model_dir` return None when the
+weights are not downloaded, and the worker loads them only on their first request.
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ QC_ENV = "qc"
 QC_SCRIPT = "qc_worker.py"
 DEFAULT_ASR_MODEL = "faster-whisper-large-v3-turbo"
 DEFAULT_SV_MODEL = "spkrec-ecapa-voxceleb"
+DEFAULT_MOS_MODEL = "utmos22-strong"
+DEFAULT_EMOTION_MODEL = "emotion2vec_plus_base"
 QC_LOG = "logs/qc_worker.log"
 
 
@@ -40,6 +44,21 @@ def asr_model_dir(settings: dict[str, Any]) -> Path:
 
 def sv_model_dir(settings: dict[str, Any]) -> Path:
     return _model_dir(settings, "sv_model", DEFAULT_SV_MODEL)
+
+
+def _optional_dir(settings: dict[str, Any], key: str, default: str) -> Path | None:
+    folder = _model_dir(settings, key, default)
+    return folder if folder.is_dir() and any(folder.iterdir()) else None
+
+
+def mos_model_dir(settings: dict[str, Any]) -> Path | None:
+    """UTMOS22 checkpoint folder (`qa.mos_model`), None when it is not downloaded."""
+    return _optional_dir(settings, "mos_model", DEFAULT_MOS_MODEL)
+
+
+def emotion_model_dir(settings: dict[str, Any]) -> Path | None:
+    """emotion2vec+ folder (`qa.emotion_model`, opt-in license), None when it is not downloaded."""
+    return _optional_dir(settings, "emotion_model", DEFAULT_EMOTION_MODEL)
 
 
 def qc_missing(settings: dict[str, Any], need_asr: bool, need_sv: bool) -> list[str]:
@@ -75,6 +94,8 @@ class QcSession:
         self.lock = lock
         self.info = info or {}
         self.warnings: list[str] = []
+        self.has_mos = False
+        self.has_emotion = False
 
     @classmethod
     def open(
@@ -84,6 +105,8 @@ class QcSession:
         *,
         need_asr: bool,
         need_sv: bool,
+        need_mos: bool = False,
+        need_emotion: bool = False,
         device: str | None = None,
         wait_lock: float = 0.0,
         owner: str = "qa",
@@ -108,6 +131,12 @@ class QcSession:
         if need_sv:
             req["sv_model"] = str(sv_model_dir(settings))
             req["sv_savedir"] = str(hf_home() / "speechbrain" / sv_model_dir(settings).name)
+        mos_dir = mos_model_dir(settings) if need_mos else None
+        emo_dir = emotion_model_dir(settings) if need_emotion else None
+        if mos_dir is not None:
+            req["mos_model"] = str(mos_dir)
+        if emo_dir is not None:
+            req["emotion_model"] = str(emo_dir)
         try:
             reply = client.load(req)
         except BabelDubError as err:
@@ -122,6 +151,8 @@ class QcSession:
             ) from err
         actual = str(reply.get("device") or wanted)
         session = cls(client, actual, lock, reply.get("info") or {})
+        session.has_mos = mos_dir is not None
+        session.has_emotion = emo_dir is not None
         warning = device_warning(wanted, actual)
         if warning:
             session.warnings.append(warning)
@@ -156,6 +187,38 @@ class QcSession:
     def asr(self, key: str, wav: Path, lang: str | None) -> dict[str, Any]:
         reply = self._call({"op": "asr", "id": key, "wav": str(wav), "lang": lang})
         return {"text": reply.get("text") or "", "lang": reply.get("lang"), "lang_prob": reply.get("lang_prob")}
+
+    def asr_words(self, key: str, wav: Path, lang: str | None) -> dict[str, Any]:
+        """Transcript with word times: {text, lang, lang_prob, words[{w, start, end, prob}], avg_logprob, no_speech_prob}."""
+        return self._call({"op": "asr_words", "id": key, "wav": str(wav), "lang": lang})
+
+    def vad(self, key: str, wav: Path) -> dict[str, Any]:
+        """Silero speech segments: {segments [[start_s, end_s]], speech_s, dur_s}."""
+        return self._call({"op": "vad", "id": key, "wav": str(wav)})
+
+    def prosody(self, key: str, wav: Path) -> dict[str, Any]:
+        """{f0_median_hz, f0_range_st, rms_db, voiced_ratio, dur_s}."""
+        return self._call({"op": "prosody", "id": key, "wav": str(wav)})
+
+    def emotion(self, key: str, wav: Path) -> dict[str, Any]:
+        """{label, score, emb (np.float32)}; only when the session was opened with an emotion model."""
+        reply = self._call({"op": "emotion", "id": key, "wav": str(wav)})
+        return {"label": reply.get("label"), "score": reply.get("score"),
+                "emb": np.asarray(reply.get("emb") or [], dtype=np.float32)}
+
+    def mos(self, key: str, wav: Path) -> float:
+        return float(self._call({"op": "mos", "id": key, "wav": str(wav)})["mos"])
+
+    def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
+              orig_wav: Path | None = None, refs: list[Path] | None = None,
+              want: tuple[str, ...] = ("cer", "sim", "emo", "mos")) -> dict[str, Any]:
+        """{cer, asr_text, sim, emo_cos, mos, unavailable?}: metrics that cannot be computed are null."""
+        req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
+                               "refs": [str(r) for r in refs or []], "want": list(want)}
+        if orig_wav is not None:
+            req["orig_wav"] = str(orig_wav)
+        reply = self._call(req)
+        return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "unavailable")}
 
     def close(self) -> None:
         client, self.client = self.client, None

@@ -26,7 +26,7 @@ A stage in the `attention` state counts as passed: the following stages run. Do 
 
 ## 3. Stages
 
-Stage order in the CLI: `init → scan → extract → link → cast → translate → synth → post → vc → qa → build → verify → install`. A stage started before the previous one returns exit code 2 with a hint. `vc train` (RVC models of the main characters) is a one-time step any time after `cast`.
+Stage order in the CLI: `init → scan → extract → link → analyze → cast → translate → synth → post → vc → qa → build → verify → install`. A stage started before the previous one returns exit code 2 with a hint. `vc train` (RVC models of the main characters) is a one-time step any time after `cast`.
 
 ### 3.0. Environment (outside a project)
 
@@ -81,8 +81,21 @@ babeldub link
 
 - Links lines to texts: exact key, then normalized key, then file name. Fills `text` in `lines.jsonl` and `source_lang` in the project.
 - Output: `linked`, `unlinked`, `with_official_target`, `by_match{}`, `src_lang`, `ambiguous`, `no_src_text`, `unlinked_examples[]`, `next`.
-- Lines without text cannot be translated: they keep the original voice and go into the report. v0.1 has no speech recognition of the original for such lines.
+- Lines without text cannot be translated: they keep the original voice and go into the report. `analyze` transcribes their original (`analysis.asr_text`) for the report.
 - Code 3: there are unlinked lines. The scout checks a sample and writes a hypothesis into the report; the canon is never edited by hand.
+
+### 3.4a. `analyze`: what the originals really contain
+
+```text
+babeldub analyze [--ids a,b] [--limit N] [--force] [--device cuda|cpu] [--wait-lock S]
+```
+
+- The `qc` worker (on the GPU when present) measures every voiced original with audio (alt takes that follow a leader are skipped): Silero VAD speech segments (a 250 ms pause splits them), the ASR transcript with word times and confidences, pitch (F0 median and range in semitones), loudness and voiced share; an emotion label and embedding only when the user accepted the opt-in emotion2vec+ license. Rows go to `inventory/analysis.jsonl`, vectors to `inventory/analysis.npz`.
+- Each line gets a class: `speech`, `short_word` (real words in under 1.2 s of speech: "Freeze!", "Yes, Chief!"), `interjection` (the subtitle is only "Hehe…", "Hmm", "Um…", "Ugh", "Oh!", "Ах"…), `nonverbal` (screams, laughs, grunts, a `[laughs]` subtitle, or no subtitle and nothing the ASR is sure of) or `mixed` (words plus a laugh or groan). `interjection` and `nonverbal` lines are meant to keep the original audio (nothing to translate).
+- A line whose original says something else than its subtitle (CER of the ASR against `text.src` > 0.35) gets the flag `subtitle_mismatch` in `lines.jsonl`; no other line field changes. Tell the translator: such a subtitle may be an alt take, a shortened caption or the wrong line.
+- Idempotent: an unchanged wav is not measured again (`--force` does); the class and the flag are recomputed on every run, so a corrected subtitle is picked up.
+- Output: `analyzed`, `up_to_date`, `failed`, `lines`, `classes{}`, `subtitle_mismatch`, `mismatch_ids[]`, `flags_changed`, `skipped{}`, `emotion`, `device`, `elapsed_s`, `next`. Code 3: some lines failed or are left by `--limit` (run again); code 4: no `qc` env (`babeldub setup --engines qc`).
+- `status` shows `counts.classes` and `counts.subtitle_mismatch`; `query` filters with `class=interjection` and reads `analysis.*` fields.
 
 ### 3.5. `cast`: characters and references
 
@@ -247,7 +260,7 @@ babeldub verify [--game-runtime]
 `query` is the main way to look at data. Always pass `--fields` and `--limit` (up to 50).
 
 - `--where` conditions: `field=value`, `field!=value`, `field~substring`, comma-separated.
-- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.sim_threshold`, `qa.margin`, `qa.closest_char`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`.
+- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.sim_threshold`, `qa.margin`, `qa.closest_char`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; analysis — `analysis.speech_s`, `analysis.asr_text`, `analysis.asr_vs_sub_cer`, `analysis.prosody.f0_range_st`, `analysis.class_reason`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`, `class`.
 - Example: `babeldub query --where char=Zbyszek,verdict=fail --fields id,qa.reasons,qa.cer,qa.sim,qa.sim_ref --limit 30`.
 
 ## 5. Project artifacts
@@ -258,7 +271,7 @@ babeldub verify [--game-runtime]
 BABELDUB_HOME/projects/<slug>/
 ├─ project.json                         settings and the user's answers
 ├─ state/ progress.json events.jsonl locks/gpu.lock
-├─ inventory/ recon.json assets.jsonl lines.jsonl texts.jsonl report.md
+├─ inventory/ recon.json assets.jsonl lines.jsonl texts.jsonl report.md analysis.jsonl analysis.npz
 ├─ audio/orig/<uid>.wav                 decoded originals
 ├─ cast/ characters.jsonl assign.jsonl refs.jsonl refs/<char_id>/<uid>.wav casting_sheet.md labels.agent.jsonl
 ├─ translate/ glossary.jsonl glossary.agent.jsonl style_bible.md batches/<bid>.in.jsonl batches/<bid>.out.jsonl translations.jsonl
@@ -280,7 +293,7 @@ All JSONL files are UTF-8 without BOM, one object per line. A repeated `id` is a
 ## 6. Line lifecycle
 
 ```text
-inventoried (extract) → linked (link; no text → original plays)
+inventoried (extract) → linked (link; no text → original plays) → analyzed (analyze: line class, `subtitle_mismatch` flag)
 → cast (character not selected → original plays)
 → translated (translations.jsonl)
 → synth (attempt k; bootstrap lines may wait for their character's target-language prompt) → post → vc → qa

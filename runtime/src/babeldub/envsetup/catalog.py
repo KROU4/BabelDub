@@ -92,6 +92,8 @@ class ModelSpec:
     include: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
     revision: str | None = None
+    url: str | None = None  # direct download of one weight file instead of a Hugging Face repo
+    sha256: str | None = None
     warning: str | None = None
     notes: str = ""
 
@@ -231,6 +233,8 @@ def parse_catalog(data: dict[str, Any], source: Path | None = None) -> Catalog:
                 include=_as_list(raw.get("include")),
                 aliases=_as_list(raw.get("aliases")),
                 revision=raw.get("revision"),
+                url=raw.get("url"),
+                sha256=raw.get("sha256"),
                 warning=raw.get("warning"),
                 notes=str(raw.get("notes") or ""),
             )

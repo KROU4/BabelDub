@@ -61,7 +61,7 @@ def test_doctor_small_gpu_keeps_qwen_fast(bd, machine):
 def test_doctor_all_ready(bd, machine, home):
     machine["envs"] = {"voxcpm": {"status": "ok"}, "applio": {"status": "ok"}, "qc": {"status": "ok"}}
     cat = load_catalog()
-    for name in ("VoxCPM2", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"):
+    for name in ("VoxCPM2", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb", "utmos22-strong"):
         folder = model_dir(cat.model(name))
         folder.mkdir(parents=True)
         (folder / "model.safetensors").write_bytes(b"x")

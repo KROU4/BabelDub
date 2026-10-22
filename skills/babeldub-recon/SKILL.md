@@ -1,6 +1,6 @@
 ---
 name: babeldub-recon
-description: "Find out what is inside a video game before localizing it and dubbing it in the original characters' voices: detect the engine, audio middleware (FMOD, Wwise, CRIWARE, loose files, video) and text tables, inventory the voice lines, extract the original audio and link subtitles to voice lines with babeldub scan, extract and link. Use for the recon stage or for questions like 'what engine is this game on', 'where are the voice files and subtitles', 'can this be repacked'. Example triggers: 'localize this game', 'dub the voices', 'что внутри игры', 'какой движок', 'где озвучка и субтитры', 'переведи игру', 'сделай русскую озвучку', 'doblar el juego'."
+description: "Find out what is inside a video game before localizing it and dubbing it in the original characters' voices: detect the engine, audio middleware (FMOD, Wwise, CRIWARE, loose files, video) and text tables, inventory the voice lines, extract the original audio and link subtitles to voice lines and analyze the original speech (VAD, ASR, line classes) with babeldub scan, extract, link and analyze. Use for the recon stage or for questions like 'what engine is this game on', 'where are the voice files and subtitles', 'can this be repacked'. Example triggers: 'localize this game', 'dub the voices', 'что внутри игры', 'какой движок', 'где озвучка и субтитры', 'переведи игру', 'сделай русскую озвучку', 'doblar el juego'."
 license: MIT
 compatibility: "Local agent with shell access to the game folder (read-only); babeldub CLI 0.1.0 installed via the babeldub-doctor skill; vgmstream-cli for decoding. Works without GPU."
 metadata:
@@ -54,10 +54,13 @@ The skill is universal. Low-Budget Repairs (Unity + FMOD + Unity Localization) a
    | `gettext` and other text formats | `references/text/generic.md` |
 4. `babeldub extract` → `lines`, `by_kind{}`, `minutes`, `texts`, `locales[]`.
 5. `babeldub link` → `linked`, `unlinked`, `with_official_target`.
-6. Check the result with `babeldub query` samples (always with `--fields` and `--limit`):
+6. `babeldub analyze` (the `qc` worker on the GPU; code 4 without the `qc` env → `babeldub-doctor`) → `analyzed`, `classes{speech, short_word, interjection, nonverbal, mixed}`, `subtitle_mismatch`, `mismatch_ids[]`. It measures every voiced original (VAD speech segments, ASR with word times, pitch and loudness) into `inventory/analysis.jsonl` and flags lines whose subtitle does not match what is actually said (`subtitle_mismatch`). `interjection` and `nonverbal` lines ("Hehe…", "Hmm", screams) are meant to keep the original audio; mention the class counts and the mismatches in the report.
+7. Check the result with `babeldub query` samples (always with `--fields` and `--limit`):
    - unrecognized audio: `--where kind=unknown --fields id,entry.key,audio.dur_s --limit 30`;
-   - dialogue without text: `--where kind=dialogue --fields id,entry.key,flags --limit 30` and look for `no_text`.
-7. Return the summary to the orchestrator in the scout role format (`babeldub-localize/references/roles/scout.md`).
+   - dialogue without text: `--where kind=dialogue --fields id,entry.key,flags --limit 30` and look for `no_text`;
+   - subtitles that do not match the audio: `--where flags=subtitle_mismatch --fields id,text.src,analysis.asr_text --limit 30`;
+   - line classes: `--where class=interjection --fields id,text.src,analysis.speech_s --limit 30`.
+8. Return the summary to the orchestrator in the scout role format (`babeldub-localize/references/roles/scout.md`).
 
 Exit codes: 0: continue; 2: read `hint` (usually a previous stage has not been run); 3: there are warnings or unparsed entries, work through them with the references; 4: a decoder or the environment is missing, use the `babeldub-doctor` skill; 1: error, see the project's `logs/`.
 
