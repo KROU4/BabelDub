@@ -15,7 +15,8 @@ In a game, a line is a separate file that the engine plays. Length is dangerous 
 
 - The target is the **speech duration of the original** without leading and trailing pauses (`target_s` in `post/post.jsonl`).
 - `ratio` = speech duration of the dub after fitting / `target_s`. QA checks the same value.
-- The translation budget in syllables: `budget_syll` = duration of the original file × the language's pace (5.5 syllables per second for Russian, 5.8 for English, 7.2 for Spanish). In Russian the number of syllables equals the number of vowels.
+- The translation budget in syllables: `budget_syll` = **speech span** of the original (`speech_s`, not the file length) × the character's measured pace (`rate_syl_s`: the median over its accepted dubs; until it has 3 of them, the language's pace: 5.5 syllables per second for Russian, 5.8 for English, 7.2 for Spanish). In Russian the number of syllables equals the number of vowels.
+- `pause_cut_s`: how much of the dub's internal pauses `post` removed; `onset_deltas`: placed minus original speech onset (per segment for `fixed_length`); `chunk_tempo`: the tempo range of the placed chunks.
 
 ## 3. Default limits
 
@@ -23,8 +24,9 @@ In a game, a line is a separate file that the engine plays. Length is dangerous 
 |---|---|---|
 | `fixed_length` (cutscenes, videos, timelines) | `ratio` ≤ 1.03 and the speech fits into the original file | `post.fixed_length_tolerance` = 0.03 |
 | everything else (`dialogue`, `bark`) | `ratio` ≤ 1.35 | `qa.max_duration_ratio` = 1.35 |
-| dead band: no tempo change | speech within ±3% of the original's | `post.tolerance` = 0.03 |
-| tempo range of `post` | 0.93 (slower) … 1.20 (faster) | `post.tempo_min`, `post.tempo_max` |
+| overrun that is not sped up | within 3% of the room | `post.tolerance` = 0.03 |
+| tempo range of `post` | 1.0 (never slower) … 1.15 (faster) | `post.tempo_min`, `post.tempo_max` |
+| pause shortening before any speed-up | each pause down to max(80 ms, half of it) | fixed |
 
 Every file has exactly the original's sample count when the fitted speech fits into it (`exact: true`); otherwise the file runs longer and the line is in `not_exact[]`.
 
@@ -34,11 +36,11 @@ The 1.35 limit for dialogue is soft: it catches obvious failures (model looping,
 
 1. **Syllable budget during translation** (skill `babeldub-translate`). The translator aims for `budget_syll`; for `fixed_length` the budget is mandatory. If the full translation does not fit, they provide up to two shorter `variants`, and `batch submit` takes the fullest one that fits.
 2. **Best of N.** `synth` generates `tts.best_of` (3) takes per line and keeps the one whose speech length is closest to the original's (log ratio of the speech spans).
-3. **Tempo fit in `post`** without changing pitch, within `post.tempo_min`..`post.tempo_max`; the rest is silence. Tool: Rubber Band (R3 engine) if the user installed it; otherwise the `rubberband` filter in ffmpeg; otherwise `atempo` in ffmpeg. Rubber Band is distributed under the GPL and is not part of BabelDub.
+3. **Fit in `post`**, never slower: a dub shorter than the original keeps its tempo and the rest is silence. A dub that does not fit the room after the original's speech onset first loses part of its internal pauses (each down to max(80 ms, half of it)), then speeds up without changing pitch to at most `post.tempo_max` (1.15). For `fixed_length` lines the dub is split into chunks that are matched to the original's speech segments (from `inventory/analysis.jsonl` when `analyze` ran, else the energy VAD); each chunk starts where its segment starts and is fitted to that segment (shorter is fine). Tool: Rubber Band (R3 engine) if the user installed it; otherwise the `rubberband` filter in ffmpeg; otherwise `atempo` in ffmpeg. Rubber Band is distributed under the GPL and is not part of BabelDub.
 4. **Regeneration.** The model sometimes speaks slower or inserts pauses; a new attempt (`regen`) is often shorter. The automatic QA decision for length is not `regen` but `shorten`; however, if a length failure coincides with an intelligibility failure, `regen` comes first.
 5. **Shortening the text** (`shorten`): the line goes back to the translator with the actual `ratio`. The CLI allows two shortenings in a row; if the line still does not fit after them, it becomes `keep_original`: the line keeps the original voice and is listed in the report.
 
-`post` slows a short dub down by at most 7% (`post.tempo_min` 0.93) and pads the rest with silence; the final file keeps the original's exact length whenever the speech fits.
+`post` never slows a short dub down (`post.tempo_min` 1.0; slow speech sounds unnatural) and pads the rest with silence; the final file keeps the original's exact length whenever the speech fits.
 
 ## 5. How to resolve `over_length[]` and the `duration` reason
 
@@ -53,5 +55,5 @@ How much to cut: syllables ≈ `budget_syll` × (1 − 1/`ratio`). For example, 
 
 ## 6. What to say in the report
 
-- How many lines `post` compressed and by how much (`stretch` in `post/post.jsonl`), how many the translator shortened, how many kept the original voice because of length.
+- How many lines `post` compressed and by how much (`pause_cut_s` and `tempo` in `post/post.jsonl`), for cutscenes the largest `onset_deltas`, how many the translator shortened, how many kept the original voice because of length.
 - For cutscenes and videos: "check in the game that lines are not cut off and do not overlap the next ones". The behaviour of the running game is not checked automatically.

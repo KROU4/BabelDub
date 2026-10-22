@@ -273,6 +273,16 @@ def test_post_exact_length_without_tempo_change(project: Project, capsys: pytest
         assert row["lufs_out"] == pytest.approx(row["level_ref"], abs=1.0)  # loudness matched to the original
     code, out = run(capsys, project.root, "post")
     assert code == EXIT_OK and out["done"] == 0 and out["up_to_date"] == 3
+    # fixed_length lines take the original's speech segments from inventory/analysis.jsonl when it exists
+    fixed_id = "fmod:Audio/Dialogue_en.bank#fsb0:0002"
+    assert rows[fixed_id]["fixed_length"] is True and rows[fixed_id]["chunk_tempo"]["n"] >= 1
+    orig, o_sr = _orig(project, "0002")
+    write_jsonl(project.path("inventory/analysis.jsonl"),
+                [{"id": fixed_id, "vad_segments": [[0.05, orig.shape[0] / o_sr - 0.05]]}])
+    assert run(capsys, project.root, "post", "--force", "--ids", fixed_id)[0] == EXIT_OK
+    row = latest_by(read_jsonl(project.path(layout.POST)))[fixed_id]
+    assert row["lead_s"] == pytest.approx(0.05, abs=0.025) and row["onset_deltas"] == [pytest.approx(0.0, abs=0.025)]
+    assert row["exact"] is True and row["pause_cut_s"] == 0.0
 
 
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
@@ -284,23 +294,26 @@ def test_post_tempo_fit_is_bounded_and_flags_over_length(project: Project, capsy
     rows = latest_by(read_jsonl(project.path(layout.POST)))
     fixed = rows["fmod:Audio/Dialogue_en.bank#fsb0:0002"]
     assert fixed["fixed_length"] is True
-    assert fixed["tempo"] == pytest.approx(1.2, abs=1e-3)  # never faster than post.tempo_max
+    assert fixed["chunk_tempo"]["max"] == pytest.approx(1.15, abs=1e-3)  # never faster than post.tempo_max
+    assert 1.0 <= fixed["tempo"] <= 1.15 + 1e-3 and fixed["onset_deltas"][0] == pytest.approx(0.0, abs=0.03)
     assert fixed["stretch_method"] == "atempo"
     assert fixed["over_length"] is True and fixed["id"] in out["over_length"]
     assert fixed["exact"] is False and fixed["id"] in out["not_exact"]  # speech is never cut: the file runs longer
     assert code == EXIT_ATTENTION
     for row in rows.values():
+        assert row["tempo"] >= 1.0  # never slowed down
         if row["tempo"] > 1.0:
             assert row["ratio"] < row["ratio_raw"]
     data, sr = read_audio(project.path(fixed["wav"]))
     assert dsp.true_peak_db(data, sr) <= -0.95
-    # a dub much shorter than the original is slowed down to post.tempo_min at most, the rest is silence
+    # a dub much shorter than the original keeps its tempo (post.tempo_min = 1.0), the rest is silence
     project.data["tts"]["params"] = {"syllables_per_s": 40.0}
     project.save()
     assert run(capsys, project.root, "synth", "--force")[0] == EXIT_OK
     run(capsys, project.root, "post", "--stretch-method", "atempo")
     for row in latest_by(read_jsonl(project.path(layout.POST))).values():
-        assert row["tempo"] == pytest.approx(0.93, abs=1e-3) and row["exact"] is True
+        assert row["tempo"] == 1.0 and row["stretch_method"] == "none" and row["exact"] is True
+        assert row["pause_cut_s"] == 0.0
 
 
 # ---- runaway guard, ICL pre-check, followers ------------------------------------------------

@@ -38,8 +38,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "bootstrap_lines": 4,
         "bootstrap_min_accepted": 3,
     },
-    # tempo fit only within [tempo_min, tempo_max] (pitch kept), the rest is silence; exact original length
-    "post": {"tempo_min": 0.93, "tempo_max": 1.2, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
+    # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
+    # its pauses, then speeds up to tempo_max (pitch kept); exact original length
+    "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
     "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"},
     # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language

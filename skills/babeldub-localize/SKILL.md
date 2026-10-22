@@ -25,7 +25,7 @@ Every translated line must sound **in the voice of the original hero**: the same
 How this is achieved:
 
 1. **The timbre comes from the original actor.** The default chain (8 GB+ NVIDIA GPU) is VoxCPM2 with `bootstrap` prompts: every line gets the character's ~15–20 s long reference of clean original lines; the first 4 lines of each character are dubbed with it alone, and once QA accepted 3 of them, those dubs become a target-language prompt for the rest (native pronunciation, the actor's timbre).
-2. **Best of N and an exact fit.** Three takes per line, the one closest to the original's speech length wins; `post` fits it within a 0.93–1.20 tempo range and outputs exactly the original's length and format.
+2. **Best of N and an exact fit.** Three takes per line, the one closest to the original's speech length wins; `post` fits it without ever slowing it down (pauses first, then at most 1.15× faster) and outputs exactly the original's length and format.
 3. **RVC per main character.** One RVC model per main character, trained once on its original lines (`babeldub vc train`), converts its dubs (`babeldub vc`) in any target language.
 4. **Fallback engines** (smaller GPUs, CPU, languages without VoxCPM2): Qwen3-TTS or Chatterbox with the original line as the prompt (`tts.ref_strategy=line`, carrying its intonation), or the character's best reference for short, noisy or untranscribed lines (`char`); `auto` picks.
 5. **The translation keeps the emotional shape of the original**: exclamations, stammers, laughter, cut-off phrases, register and level of profanity. With an official translation the translator adapts it for speech (`adapt`).

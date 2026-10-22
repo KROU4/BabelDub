@@ -18,7 +18,7 @@ def test_init_creates_project_registry_and_active(bd, game, home):
     assert data["translation"]["mode"] == "auto"
     # auto: synth runs voxcpm on a GPU with its env, else qwen3tts-fast/qwen3tts/chatterbox
     assert data["tts"]["engine"] == "auto" and data["tts"]["ref_strategy"] == "auto"
-    assert data["tts"]["best_of"] == 3 and data["post"]["tempo_max"] == 1.2 and data["vc"]["epochs"] == 20
+    assert data["tts"]["best_of"] == 3 and data["post"]["tempo_max"] == 1.15 and data["vc"]["epochs"] == 20
     assert Path(data["game_dir"]) == game.resolve()
     progress = read_json(root / layout.PROGRESS)
     assert progress["init"]["status"] == "done"

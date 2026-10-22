@@ -69,7 +69,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `tts.bootstrap_lines` | 4 | first lines of a character dubbed before its target-language prompt exists |
 | `tts.bootstrap_min_accepted` | 3 | accepted first lines needed to build the prompt |
 | `tts.max_attempts` | 3 | attempts before `keep_original` |
-| `post.tempo_min` / `post.tempo_max` | 0.93 / 1.2 | the only tempo range `post` uses to fit a dub; the rest is silence, the file keeps the original's exact length |
+| `post.tempo_min` / `post.tempo_max` | 1.0 / 1.15 | `post` never slows a dub down (slow speech sounds unnatural) and speeds it up at most 15% after shortening its pauses; the rest is silence, the file keeps the original's exact length |
 | `post.tolerance` | 0.03 | no tempo change when the dub's speech is within ±3 % of the original's |
 | `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
 | `vc.epochs` / `vc.minutes` | 20 / 30 | RVC training per character (`babeldub vc train`) |

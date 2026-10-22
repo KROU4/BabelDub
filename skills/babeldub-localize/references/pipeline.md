@@ -155,7 +155,7 @@ babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>] [--b
 babeldub post
 ```
 
-- Tempo fit to the original speech only within `post.tempo_min`..`post.tempo_max` (0.93–1.20, pitch kept), the rest of the difference as silence; the speech starts where the original's does; exactly the original's sample count, sample rate and channels; loudness matched to the original speech (BS.1770 LUFS; RMS for clips shorter than 0.4 s); peak ceiling `post.true_peak_db` = −1 dB.
+- Never slower (`post.tempo_min` 1.0): a short dub keeps its tempo and the rest is silence; a dub that does not fit loses part of its pauses (each down to max(80 ms, half)), then speeds up to `post.tempo_max` (1.15, pitch kept); `fixed_length` chunks start at the original's speech segments; the speech starts where the original's does; exactly the original's sample count, sample rate and channels; loudness matched to the original speech (BS.1770 LUFS; RMS for clips shorter than 0.4 s); peak ceiling `post.true_peak_db` = −1 dB.
 - For `fixed_length: true` (cutscenes, timelines, video) the speech must fit the original within `post.fixed_length_tolerance` (0.03).
 - Output: `done`, `exact`, `not_exact[]`, `over_length[]`, `next`.
 - Code 3: `over_length[]` — lines that did not fit even at the fastest allowed tempo (speech is never cut; such files run longer, `not_exact[]`). After `qa` they get `shorten`.

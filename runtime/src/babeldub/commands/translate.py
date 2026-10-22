@@ -1,8 +1,10 @@
 """Translation commands: translate plan|use-official, batch make|next|submit, glossary check|apply.
 
 The CLI never translates. It decides the mode, cuts the voiced lines into batches with everything an
-agent needs (speaker, neighbours, duration budget in syllables, placeholders, glossary, style bible),
-validates what the agent wrote and merges it into translate/translations.jsonl (single writer).
+agent needs (speaker, neighbours, syllable budget, the original's pauses, placeholders, glossary, style
+bible), validates what the agent wrote and merges it into translate/translations.jsonl (single writer).
+The syllable budget is the original's speech span (not the file length) times the character's measured
+speaking rate (median over its accepted dubs, the language default until there are enough of them).
 """
 
 from __future__ import annotations
@@ -11,11 +13,14 @@ import argparse
 import hashlib
 import json
 import re
+from collections import defaultdict
 from collections.abc import Callable
 from itertools import groupby
 from pathlib import Path
 from typing import Any
 
+from babeldub.audio.fit import speech_segments_s
+from babeldub.audio.io import read_audio
 from babeldub.commands.project import (
     csv_list,
     latest_translations,
@@ -26,6 +31,7 @@ from babeldub.commands.project import (
     voiced_lines,
 )
 from babeldub.core import layout
+from babeldub.core.ids import uid as make_uid
 from babeldub.core.jsonl import (
     append_jsonl,
     latest_by,
@@ -38,7 +44,15 @@ from babeldub.core.jsonl import (
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
 from babeldub.core.project import Project
 from babeldub.text.placeholders import check_placeholders, describe, extract_placeholders, has_errors
-from babeldub.text.syllables import budget_syllables, count_syllables, fit_status
+from babeldub.text.syllables import (
+    budget_syllables,
+    character_rate,
+    count_syllables,
+    fit_status,
+    measured_rate,
+    segment_text,
+    speech_rate,
+)
 
 Common = Callable[[argparse.ArgumentParser], None]
 
@@ -48,6 +62,8 @@ GLOSSARY_SCHEMA = "babeldub.glossary/1"
 BATCH_INDEX = f"{layout.BATCHES_DIR}/index.json"
 GLOSSARY_VIOLATIONS = "translate/glossary_violations.jsonl"
 MISSING_OFFICIAL = "translate/missing_official.txt"
+ANALYSIS = "inventory/analysis.jsonl"  # optional: {id, speech_s?, vad_segments?: [[start_s, end_s], ...]}
+PAUSE_MARK_S = 0.25  # original pauses at least this long are shown as " / " in src_segmented
 STYLE_LIMIT = 8000
 MAX_ERRORS_SHOWN = 20
 _BATCH_ID_RE = re.compile(r"^b\d{4,}$")
@@ -60,7 +76,12 @@ RULES = (
     "keep its meaning and agreed terms, but spoken and colloquial, numbers and symbols written as words, Latin-script "
     "names transliterated into {lang} script, and fit the syllable budget. "
     "Keep every token from `placeholders` exactly (tags, {{vars}}, %s); line breaks may move. Aim at budget_syll "
-    "syllables: more than 115% is flagged, fixed_length lines must fit. variants = shorter alternatives, best first. "
+    "syllables (the original's speech_s times the character's speaking rate rate_syl_s): more than 115% is flagged, "
+    "fixed_length lines must fit. src_segmented shows the original's pauses of 250 ms or more as ' / ': keep a pause "
+    "at each mark as punctuation in dub_text (comma, dash, ellipsis or a sentence break), never write the slash. "
+    "Write ё wherever it belongs (Russian) and avoid stress homographs (words whose meaning depends on the "
+    "stress, like замок): pick an unambiguous word. "
+    "variants = shorter alternatives, best first. "
     "sub_text only if the subtitle must differ from dub_text (in adapt mode the subtitle is usually tgt_official)."
 )
 
@@ -126,11 +147,92 @@ def line_dur(line: dict[str, Any]) -> float | None:
     return float(dur) if isinstance(dur, (int, float)) else None
 
 
+class Timing:
+    """Speech span, pauses and speaking rate behind each line's syllable budget.
+
+    Speech: inventory/analysis.jsonl (`speech_s`, `vad_segments`) when the line has a row there, else the
+    energy VAD of the original audio, else the file duration. Rate: the median syllables per second of
+    the line's character over its accepted dubs (dub_text syllables / raw dub speech seconds from post),
+    the language default until MIN_RATE_SAMPLES exist."""
+
+    def __init__(self, project: Project, lang: str) -> None:
+        self.project, self.lang = project, lang
+        self.analysis = load_latest(project, ANALYSIS)
+        self.assign = load_latest(project, layout.ASSIGN)
+        self.rates = self._char_rates()
+        self._speech: dict[str, tuple[float | None, list[tuple[float, float]]]] = {}
+
+    def _char_rates(self) -> dict[str, float]:
+        decisions = load_latest(self.project, layout.DECISIONS)
+        post = load_latest(self.project, layout.POST)
+        translations = latest_translations(self.project)
+        samples: dict[str, list[float]] = defaultdict(list)
+        for line_id, decision in decisions.items():
+            row = post.get(line_id)
+            char_id = self.assign.get(line_id, {}).get("char_id")
+            if decision.get("decision") != "accept" or not row or not char_id:
+                continue
+            if decision.get("attempt") is not None and decision.get("attempt") != row.get("attempt"):
+                continue  # stale accept
+            try:
+                speech = float(row["ratio_raw"]) * float(row["target_s"])  # the dub's speech before the fit
+            except (KeyError, TypeError, ValueError):
+                continue
+            rate = measured_rate(str((translations.get(line_id) or {}).get("dub_text") or ""), speech, self.lang)
+            if rate:
+                samples[char_id].append(rate)
+        return {char_id: character_rate(rates, self.lang) for char_id, rates in samples.items()}
+
+    def rate(self, line: dict[str, Any]) -> float:
+        char_id = self.assign.get(line["id"], {}).get("char_id")
+        return self.rates.get(char_id) or speech_rate(self.lang)
+
+    def _orig_wav(self, line: dict[str, Any]) -> Path | None:
+        rel = (line.get("audio") or {}).get("wav")
+        candidates = [Path(rel) if Path(rel).is_absolute() else self.project.path(rel)] if rel else []
+        uid = str(line.get("uid") or make_uid(str(line["id"])))
+        candidates.append(self.project.path(layout.ORIG_AUDIO_DIR, f"{uid}.wav"))
+        return next((c for c in candidates if c.is_file()), None)
+
+    def speech(self, line: dict[str, Any]) -> tuple[float | None, list[tuple[float, float]]]:
+        """(speech seconds, speech segments split by pauses of at least PAUSE_MARK_S)."""
+        line_id = line["id"]
+        if line_id in self._speech:
+            return self._speech[line_id]
+        row = self.analysis.get(line_id) or {}
+        segments: list[tuple[float, float]] = []
+        try:
+            for start, end in sorted((float(s), float(e)) for s, e in row.get("vad_segments") or []):
+                if segments and start - segments[-1][1] < PAUSE_MARK_S:
+                    segments[-1] = (segments[-1][0], max(segments[-1][1], end))
+                elif end > start:
+                    segments.append((start, end))
+        except (TypeError, ValueError):
+            segments = []
+        if not segments:
+            path = self._orig_wav(line)
+            if path is not None:
+                try:
+                    data, sr = read_audio(path)
+                    segments = speech_segments_s(data, sr, PAUSE_MARK_S)
+                except (RuntimeError, OSError, ValueError):
+                    segments = []
+        speech_s = row.get("speech_s")
+        if not isinstance(speech_s, (int, float)) or speech_s <= 0:
+            speech_s = segments[-1][1] - segments[0][0] if segments else line_dur(line)
+        self._speech[line_id] = (float(speech_s) if speech_s is not None else None, segments)
+        return self._speech[line_id]
+
+    def budget(self, line: dict[str, Any]) -> int | None:
+        return budget_syllables(self.speech(line)[0], self.lang, self.rate(line))
+
+
 def make_translation(
-    line: dict[str, Any], dub_text: str, sub_text: str | None, lang: str, by: str, rev: int, **extra: Any
+    line: dict[str, Any], dub_text: str, sub_text: str | None, lang: str, by: str, rev: int,
+    timing: Timing | None = None, **extra: Any,
 ) -> dict[str, Any]:
     est = count_syllables(dub_text, lang)
-    budget = budget_syllables(line_dur(line), lang)
+    budget = timing.budget(line) if timing else budget_syllables(line_dur(line), lang)
     row = {
         "id": line["id"],
         "dub_text": dub_text,
@@ -268,6 +370,7 @@ def cmd_use_official(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     unchanged = kept = 0
     missing: list[str] = []
+    timing = Timing(project, lang)
     for line in voiced:
         official = official_text(line)
         current = translations.get(line["id"])
@@ -282,7 +385,7 @@ def cmd_use_official(args: argparse.Namespace) -> int:
             unchanged += 1
             continue
         rev = int(current.get("rev") or 0) + 1 if current else 1
-        rows.append(make_translation(line, official, official, lang, "official", rev))
+        rows.append(make_translation(line, official, official, lang, "official", rev, timing))
     append_translations(project, rows)
     if missing:
         path = project.path(MISSING_OFFICIAL)
@@ -450,6 +553,7 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
     if style and len(style) > STYLE_LIMIT:
         style = style[:STYLE_LIMIT] + f"\n[... truncated, full text in {layout.STYLE_BIBLE}]"
 
+    timing = Timing(project, lang)
     made: list[str] = []
     number = _next_batch_number(index)
     for chunk in _chunk(candidates, args.size):
@@ -475,6 +579,8 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
         for ln in chunk:
             dur = line_dur(ln)
             prev, nxt = context.get(ln["id"], (None, None))
+            speech_s, segments = timing.speech(ln)
+            rate = timing.rate(ln)
             row: dict[str, Any] = {
                 "id": ln["id"],
                 "key": (ln.get("text") or {}).get("key") or (ln.get("entry") or {}).get("key"),
@@ -482,12 +588,17 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
                 "src": src_text(ln),
                 "tgt_official": official_text(ln) or None,
                 "dur_s": dur,
-                "budget_syll": budget_syllables(dur, lang),
+                "speech_s": round(speech_s, 3) if speech_s is not None else None,
+                "rate_syl_s": round(rate, 2),
+                "budget_syll": budget_syllables(speech_s, lang, rate),
                 "fixed_length": bool(ln.get("fixed_length")),
                 "placeholders": extract_placeholders(src_text(ln)),
                 "context_prev": prev,
                 "context_next": nxt,
             }
+            segmented = segment_text(src_text(ln), segments, str(project.data.get("source_lang") or "en"))
+            if segmented:
+                row["src_segmented"] = segmented
             task = tasks.get(ln["id"], "translate")
             if task != "translate":
                 row["task"] = task
@@ -679,13 +790,14 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
     over: list[str] = []
     over_fixed: list[str] = []
     picked_variants = 0
+    timing = Timing(project, lang)
     for in_row in in_rows:
         out = accepted[in_row["id"]]
         line = lines.get(in_row["id"]) or {"id": in_row["id"], "audio": {"dur_s": in_row.get("dur_s")}}
         dub = out["dub_text"].strip()
         variants = [v.strip() for v in out.get("variants") or []]
         picked = None
-        budget = budget_syllables(line_dur(line), lang)
+        budget = timing.budget(line)
         if fit_status(count_syllables(dub, lang), budget, over=OVER_FACTOR) == "over":
             for i, variant in enumerate(variants):
                 if fit_status(count_syllables(variant, lang), budget, over=OVER_FACTOR) != "over":
@@ -698,7 +810,7 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
         if not (isinstance(sub, str) and sub.strip()) and in_row.get("task") == "adapt" and in_row.get("tgt_official"):
             sub = in_row["tgt_official"]  # an adapted dub keeps the official subtitle
         row = make_translation(
-            line, dub, sub.strip() if isinstance(sub, str) and sub.strip() else None, lang, "agent", rev,
+            line, dub, sub.strip() if isinstance(sub, str) and sub.strip() else None, lang, "agent", rev, timing,
             batch=bid, variants=variants or None, picked_variant=picked, notes=out.get("notes") or None,
         )
         if picked is not None:

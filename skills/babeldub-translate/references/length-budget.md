@@ -4,7 +4,7 @@ Read this on `over_budget[]` from `batch submit`, for `fixed_length` lines and f
 
 ## 1. Where `budget_syll` comes from
 
-`budget_syll` = duration of the original file (`dur_s`) × the target language's pace, rounded. The pace is the average for dubbed speech, in syllables per second:
+`budget_syll` = the original's **speech span** (`speech_s`: from the first to the last spoken sound, without the file's leading and trailing silence) × the character's pace (`rate_syl_s`), rounded. Both are in every batch row. `rate_syl_s` is measured: the median syllables per second of the character's accepted dubs. Until the character has 3 accepted dubs it is the target language's average for dubbed speech, in syllables per second:
 
 | Language | Syllables/s | | Language | Syllables/s |
 |---|---|---|---|---|
@@ -24,7 +24,13 @@ How the CLI counts syllables in a text (a heuristic, not phonetics):
 
 The `fit` status in `translate/translations.jsonl`: `over` means more than 115% of the budget; `under` means less than 50%; otherwise `ok`.
 
-The budget is a guide, not a law: the real duration depends on the voice and the delivery. The final length is checked by `post` and QA (`ratio`).
+The budget is a guide, not a law: the real duration depends on the voice and the delivery. The final length is checked by `post` and QA (`ratio`). `post` never slows a dub down: a short line is fine, a long one is compressed (pauses first, then at most 15% faster).
+
+## 1a. Pauses: `src_segmented`
+
+When the original has pauses of 250 ms or more, the batch row has `src_segmented`: `src` with ` / ` where the speaker pauses (placed by the time share, so it can be off by a word). Keep a pause at each mark in `dub_text` with punctuation: a comma, a dash, an ellipsis or a sentence break. Never write the slash itself. A natural pause in the right place makes the dub's rhythm match the original and lets cutscene lines be placed segment by segment.
+
+Also for the voice: in Russian write ё wherever it belongs (все / всё), and avoid stress homographs (за́мок / замо́к): pick an unambiguous word, because the TTS may stress them wrongly.
 
 ## 2. How to stay within the budget
 
@@ -36,7 +42,7 @@ The budget is a guide, not a law: the real duration depends on the voice and the
 
 ## 3. `fixed_length: true`
 
-Cutscenes, videos and timelines: the audio must fit into the duration of the original (3% tolerance, `post.fixed_length_tolerance`). For these lines:
+Cutscenes, videos and timelines: the audio must fit into the duration of the original (3% tolerance, `post.fixed_length_tolerance`), and `post` places each spoken chunk where the original's chunk starts. For these lines:
 
 - the budget is mandatory; aim at or below the budget, preferably 1–2 syllables under;
 - always provide variants if the full translation is close to the limit;

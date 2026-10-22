@@ -3,7 +3,8 @@
 `count_syllables` is a fast heuristic, not a phonetic analysis: vowel letters for languages with
 transparent spelling (ru, uk, pl, cs, ...), vowel groups for other Latin-script languages, the classic
 silent-e heuristic for English, characters for CJK. `budget_syllables` converts a duration into the number
-of syllables an average dubbing actor says in that time.
+of syllables said in that time, at the language's default rate or at a character's measured rate
+(`measured_rate`, `character_rate`). `segment_text` marks the original's pauses in its text with ' / '.
 """
 
 from __future__ import annotations
@@ -165,6 +166,70 @@ def budget_syllables(dur_s: float | None, lang: str, rate: float | None = None) 
     if seconds <= 0 or math.isnan(seconds):
         return 0
     return max(1, int(round(seconds * (rate or speech_rate(lang)))))
+
+
+MIN_RATE_SAMPLES = 3  # accepted dubs a character needs before its measured rate replaces the default
+RATE_LIMITS = (3.0, 9.0)  # a measured rate is kept within these bounds (syllables per second)
+_PAUSE_PUNCT = tuple(",.;:!?…—–-)»\"'")
+
+
+def measured_rate(text: str, speech_s: float | None, lang: str) -> float | None:
+    """Syllables per second of a dub: syllables of its text / its speech seconds (None if unusable)."""
+    if not text or not speech_s or speech_s < 0.3:
+        return None
+    syllables = count_syllables(text, lang)
+    return syllables / speech_s if syllables else None
+
+
+def character_rate(rates: list[float], lang: str, min_samples: int = MIN_RATE_SAMPLES) -> float:
+    """Median of a character's measured rates, clamped to RATE_LIMITS; the language default until
+    `min_samples` rates exist."""
+    usable = sorted(r for r in rates if r and r > 0)
+    if len(usable) < min_samples:
+        return speech_rate(lang)
+    mid = len(usable) // 2
+    median = usable[mid] if len(usable) % 2 else (usable[mid - 1] + usable[mid]) / 2
+    return min(max(median, RATE_LIMITS[0]), RATE_LIMITS[1])
+
+
+def segment_text(text: str, segments: list[tuple[float, float]], lang: str) -> str | None:
+    """Mark the original's pauses in its text: ' / ' between the words spoken in successive speech
+    `segments` ((start_s, end_s), split by the pauses to show). Without word timings each pause goes to
+    the word boundary whose share of the syllables is closest to the share of speech time before the
+    pause, preferring a boundary after punctuation. None when there is no pause to show."""
+    tokens = text.split()
+    if len(segments) < 2 or len(tokens) < 2:
+        return None
+    counts = [max(count_syllables(tok, lang), 0) for tok in tokens]
+    total = sum(counts)
+    durations = [max(0.0, e - s) for s, e in segments]
+    speech = sum(durations)
+    if total <= 0 or speech <= 0:
+        return None
+    shares, run = [], 0
+    for c in counts[:-1]:
+        run += c
+        shares.append(run / total)  # share of syllables before boundary k (after token k)
+    cuts: list[int] = []
+    done = 0.0
+    for dur in durations[:-1]:
+        done += dur
+        want = done / speech
+        start = cuts[-1] + 1 if cuts else 0
+        best, best_score = None, -1.0
+        for k in range(start, len(shares)):
+            score = -abs(shares[k] - want) + (0.08 if tokens[k].endswith(_PAUSE_PUNCT) else 0.0)
+            if best is None or score > best_score:
+                best, best_score = k, score
+        if best is None:
+            break
+        cuts.append(best)
+    groups, prev = [], 0
+    for k in cuts:
+        groups.append(" ".join(tokens[prev : k + 1]))
+        prev = k + 1
+    groups.append(" ".join(tokens[prev:]))
+    return " / ".join(groups)
 
 
 def fit_status(est: int, budget: int | None, over: float = 1.15, under: float = 0.5) -> str | None:

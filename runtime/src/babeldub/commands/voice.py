@@ -11,9 +11,11 @@ synth  tts.engine=auto runs VoxCPM2 (voxcpm) on an NVIDIA GPU, else qwen3tts-fas
        transcript with an implausible syllable rate goes to the char reference or timbre-only mode.
        Generation is capped per line; a runaway take is discarded and retried (see _SynthRun).
        Alt takes/duplicates (core/takes.py followers) are skipped: the build reuses their leader.
-post   Fits the dub to the original (audio/fit.py): tempo change only within post.tempo_min..tempo_max
-       (pitch kept), the rest is silence; speech placed where the original's starts; exactly the
-       original's sample count, rate and channels; loudness matched to the original speech.
+post   Fits the dub to the original (audio/fit.fit_segments): never slower than recorded (a shorter dub
+       keeps its tempo, the rest is silence); a dub that does not fit first loses part of its pauses,
+       then speeds up to post.tempo_max (pitch kept); fixed_length lines are placed chunk by chunk on
+       the original's speech segments (inventory/analysis.jsonl vad_segments, else the energy VAD);
+       exactly the original's sample count, rate and channels; loudness matched to the original speech.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from typing import Any
 import numpy as np
 
 from babeldub.audio.dsp import fade, speech_seconds, to_mono
-from babeldub.audio.fit import fit_to_original, length_score, speech_span
+from babeldub.audio.fit import fit_segments, length_score, speech_span
 from babeldub.audio.io import probe, read_audio, write_wav
 from babeldub.audio.stretch import METHODS as STRETCH_METHODS
 from babeldub.audio.stretch import time_stretch
@@ -70,6 +72,7 @@ TOKEN_CAP_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # engines that take 
 TRANSCRIPT_ENGINES = ("qwen3tts-fast", "qwen3tts", "dummy")  # voice prompt uses ref_text (ICL vs timbre only)
 SYNTH_SCHEMA = "babeldub.synth_results/1"
 POST_SCHEMA = "babeldub.post/1"
+ANALYSIS = "inventory/analysis.jsonl"  # optional: {id, vad_segments: [[start_s, end_s], ...], ...}
 
 # Fallback when data/models.yaml or babeldub.envsetup is unavailable.
 BUILTIN_ENGINES: dict[str, dict[str, Any]] = {
@@ -1218,8 +1221,22 @@ def _original_audio(project: Project, line: dict[str, Any], fallback_s: float, f
     return np.zeros((max(1, int(round(dur * sr))), int(audio.get("ch") or 1)), dtype=np.float32), sr
 
 
+def _vad_segments(project: Project) -> dict[str, list[list[float]]]:
+    """Original speech segments per line id from inventory/analysis.jsonl (empty when it does not exist)."""
+    segments: dict[str, list[list[float]]] = {}
+    for line_id, row in latest_by(read_jsonl(project.path(ANALYSIS))).items():
+        try:
+            segs = [[float(s), float(e)] for s, e in row.get("vad_segments") or []]
+        except (TypeError, ValueError):
+            continue
+        if segs:
+            segments[line_id] = segs
+    return segments
+
+
 def _post_line(
-    project: Project, line: dict[str, Any], res: dict[str, Any], settings: dict[str, float], method: str | None
+    project: Project, line: dict[str, Any], res: dict[str, Any], settings: dict[str, float], method: str | None,
+    segments: list[list[float]] | None = None,
 ) -> dict[str, Any]:
     raw_path = _abs(project, res.get("wav"))
     if raw_path is None or not raw_path.exists():
@@ -1230,15 +1247,15 @@ def _post_line(
     def stretcher(src: Path, dst: Path, ratio: float) -> str:
         return time_stretch(src, dst, ratio, method=method)
 
+    fixed = bool(line.get("fixed_length"))
     try:
-        fit = fit_to_original(
+        fit = fit_segments(
             raw, sr, orig, o_sr, tempo_min=settings["tempo_min"], tempo_max=settings["tempo_max"],
             tolerance=settings["tolerance"], ceiling_db=settings["true_peak_db"], stretcher=stretcher,
-            default_level=DEFAULT_LEVEL_LUFS,
+            fixed_length=fixed, orig_segments=segments, default_level=DEFAULT_LEVEL_LUFS,
         )
     except ValueError as exc:  # silent synthesis
         raise BabelDubError(str(exc)) from exc
-    fixed = bool(line.get("fixed_length"))
     # the same limits as QA's duration check
     over = (fit.ratio > 1.0 + settings["fixed_length_tolerance"] or not fit.fits) if fixed \
         else fit.ratio > settings["max_duration_ratio"]
@@ -1254,6 +1271,9 @@ def _post_line(
         "lufs_in": _num(fit.level_in, 2), "lufs_out": _num(fit.level_out, 2), "level_ref": _num(fit.level_ref, 2),
         "measure": fit.measure, "peak_db": _num(fit.peak_db, 2),
         "lead_s": round(fit.lead_s, 4), "trail_s": round(fit.trail_s, 4),
+        "pause_cut_s": round(fit.pause_cut_s, 4), "onset_deltas": [round(d, 3) for d in fit.onset_deltas],
+        "chunk_tempo": {"n": len(fit.chunk_tempos), "min": round(min(fit.chunk_tempos), 4),
+                        "max": round(max(fit.chunk_tempos), 4)},
         "sr": fit.sr, "ch": int(fit.audio.shape[1]), "frames": frames, "exact": fit.exact,
         "fixed_length": fixed, "over_length": bool(over),
         "src_wav": res.get("wav"), "src_key": res.get("key"), "ts": now_iso(),
@@ -1262,8 +1282,8 @@ def _post_line(
 
 def post_settings(project: Project) -> dict[str, float]:
     settings = {
-        "tempo_min": float(project.setting("post", "tempo_min", 0.93)),
-        "tempo_max": float(project.setting("post", "tempo_max", 1.2)),
+        "tempo_min": float(project.setting("post", "tempo_min", 1.0)),
+        "tempo_max": float(project.setting("post", "tempo_max", 1.15)),
         "tolerance": float(project.setting("post", "tolerance", 0.03)),
         "fixed_length_tolerance": float(project.setting("post", "fixed_length_tolerance", 0.03)),
         "true_peak_db": float(project.setting("post", "true_peak_db", -1.0)),
@@ -1271,7 +1291,7 @@ def post_settings(project: Project) -> dict[str, float]:
     }
     if not 0.5 <= settings["tempo_min"] <= 1.0 <= settings["tempo_max"] <= 2.0:
         raise BabelDubError("need 0.5 <= post.tempo_min <= 1 <= post.tempo_max <= 2", code=EXIT_USAGE,
-                            hint="`babeldub set post.tempo_min=0.93 post.tempo_max=1.2`")
+                            hint="`babeldub set post.tempo_min=1.0 post.tempo_max=1.15`")
     return settings
 
 
@@ -1292,6 +1312,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     existing = latest_by(read_jsonl(project.path(layout.POST)))
     want = set(_csv(args.ids))
     settings = post_settings(project)
+    segments = _vad_segments(project)
     work: list[tuple[dict[str, Any], dict[str, Any]]] = []
     up_to_date = missing_line = followers = 0
     for line_id in sorted(latest):
@@ -1328,7 +1349,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     methods: Counter[str] = Counter()
     for line, res in work:
         try:
-            row = _post_line(project, line, res, settings, args.stretch_method)
+            row = _post_line(project, line, res, settings, args.stretch_method, segments.get(line["id"]))
         except BabelDubError as err:
             if err.code == EXIT_ENV:
                 raise
@@ -1389,7 +1410,7 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
 
     p = sub.add_parser(
         "post",
-        help="fit duration, match loudness and format of synthesized lines to the originals",
+        help="fit duration (never slower, pauses then tempo), match loudness and format of synthesized lines to the originals",
     )
     common(p)
     p.add_argument("--ids", help="only these line ids or uids (comma-separated)")

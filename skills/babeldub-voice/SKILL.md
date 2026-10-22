@@ -22,7 +22,7 @@ Chosen in blind listening rounds on a real game (Low-Budget Repairs, English →
 1. **TTS: VoxCPM2** (`tts.engine=auto` on an NVIDIA GPU with 8 GB+ and the `voxcpm` env; 30 languages, 48 kHz, Apache-2.0).
 2. **Bootstrap voice prompts** (`tts.ref_strategy=auto` = `bootstrap` for VoxCPM2). Every line gets the character's *long timbre reference*: 3–4 clean original lines (4–7.5 s each) joined into ~15–20 s. The first `tts.bootstrap_lines` (4) lines of each character are dubbed with it alone (`bootstrap-src`). When QA accepted at least `tts.bootstrap_min_accepted` (3) of them, their final audio and exact text become a ~20–26 s *target-language prompt*, and the rest of the character's lines are dubbed with both (`bootstrap-tgt`): the actor's timbre, native pronunciation.
 3. **Best of N** (`tts.best_of=3`): N takes with different seeds; the one whose speech length is closest to the original's wins.
-4. **Exact fit** (`post`): tempo changes only within `post.tempo_min`..`post.tempo_max` (0.93–1.20, pitch kept), the rest of the difference is silence, the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness.
+4. **Exact fit** (`post`): never slower (a short dub keeps its tempo, the rest is silence); a long one loses part of its pauses, then speeds up to at most `post.tempo_max` (1.15, pitch kept); cutscene (`fixed_length`) chunks start where the original's segments start; the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness.
 5. **RVC timbre transfer** (`vc`): one RVC v2 model per main character, trained once on its clean original lines (`babeldub vc train`), converts every dub of that character. It works for any target language.
 6. **QA** (Whisper with VAD, ECAPA with cross-language calibration) accepts or sends lines back.
 
@@ -101,7 +101,7 @@ babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.s
 
 ## Step 5. Post-processing and timbre transfer
 
-`babeldub post` fits every take to its original (exact length, tempo within 0.93–1.20, loudness, true peak ≤ −1 dB, original format). Then `babeldub vc` converts the lines of characters with an RVC model and re-applies the exact length and loudness; characters without a model pass through (`passthrough`). Both are idempotent.
+`babeldub post` fits every take to its original (exact length, never slower, pauses then tempo up to 1.15, loudness, true peak ≤ −1 dB, original format). Then `babeldub vc` converts the lines of characters with an RVC model and re-applies the exact length and loudness; characters without a model pass through (`passthrough`). Both are idempotent.
 
 - `post` exit code 3, `over_length[]`: the dub does not fit even at the fastest allowed tempo; `not_exact[]`: such files run longer than the original (speech is never cut). QA decides (usually `shorten`).
 - Length rules and the fitting cascade: [references/length-policy.md](references/length-policy.md). Order of operations, loudness, format, RVC: [references/post.md](references/post.md).
