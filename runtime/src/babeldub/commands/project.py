@@ -36,6 +36,8 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "tts.ref_strategy": REF_STRATEGIES,
     "tts.engine": ("auto", "voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
+    "tts.best_of_mode": ("auto", "length", "score"),
+    "tts.stress": ("off", "on"),
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}
 STAGE_COMMANDS: dict[str, str] = {

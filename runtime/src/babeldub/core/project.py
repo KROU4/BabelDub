@@ -26,7 +26,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # ref_strategy: auto = bootstrap for voxcpm (long original timbre reference, then a target-language
     # prompt built from the character's first accepted dubs), else line/char: "line" = the original line
     # itself is the voice prompt (timbre AND delivery), "char" = best clean reference of the character.
-    # best_of: candidates per line (different seeds); the one closest to the original's speech length wins
+    # best_of: candidates per line (different seeds); best_of_mode auto = score when the qc env exists (every
+    # candidate is ranked by prosody, MOS, length and voice similarity), else the closest speech length wins.
+    # stress: on = homographs get a stress mark the engine reads (RUAccent in the qc env), off = plain text
     "tts": {
         "engine": "auto",
         "model": None,
@@ -37,6 +39,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_attempts": 3,
         "bootstrap_lines": 4,
         "bootstrap_min_accepted": 3,
+        "best_of_mode": "auto",
+        "stress": "off",
     },
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
     # its pauses, then speeds up to tempo_max (pitch kept); exact original length
@@ -51,6 +55,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "min_sim_abs": 0.25,
         "min_identity_margin": -0.05,
         "max_duration_ratio": 1.35,
+        "mos_drop": 1.0,
+        "min_f0_range_ratio": 0.5,
     },
     "build": {"codec": "auto"},
     "install": {"backup": True},
