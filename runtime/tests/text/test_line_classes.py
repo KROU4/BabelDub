@@ -10,7 +10,7 @@ from babeldub.analysis.classes import SHORT_WORD_S, classify, interjection_only,
 @pytest.mark.parametrize(
     "text",
     ["Hehe...", "Hmm.", "Um... uh", "Ugh!", "Oh!", "Ah...", "Ha!", "Haha!", "Huh?", "Mhm.", "Uh-huh.", "Oops!",
-     "Pfft.", "Argh!", "Whoa!", "Ох!", "Хм...", "Ага.", "Эх...", "Ой-ой!", "Ach!", "Oj!", "Uff."],
+     "Pfft.", "Argh!", "Whoa!", "Ох!", "Хм...", "Ага.", "Эх...", "Ой-ой!", "Ach!", "Oj!", "Uff.", "Eeeegh!", "Aaargh!", "...oAoaOaaOoaa!!!", "Аааа!"],
 )
 def test_interjections(text: str) -> None:
     assert interjection_only(text)
@@ -41,6 +41,8 @@ def test_tokens_drop_markup_and_note_stage_directions() -> None:
         ("Hehe...", ["nonverbal"], 0.5, None, None, "nonverbal"),
         ("Haha, okay, you got me.", [], 2.0, None, None, "mixed"),
         ("Okay [sighs] fine.", [], 2.0, None, None, "mixed"),
+        ("Fine (groans) okay.", [], 2.0, None, None, "mixed"),
+        ("Always! Only I get to be the Super(Handy)Man!", [], 2.0, None, None, "speech"),
         ("Fine, fine.", ["nonverbal"], 2.0, None, None, "mixed"),
         ("[laughs]", [], 1.0, None, None, "nonverbal"),
         (None, [], 1.0, "", None, "nonverbal"),

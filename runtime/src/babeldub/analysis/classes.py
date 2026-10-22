@@ -21,9 +21,9 @@ SUBTITLE_MISMATCH_CER = 0.35  # ASR of the original vs the subtitle: above this 
 
 # sounds rather than words: laughter, groans, growls; such a token next to words makes a line `mixed`
 _SOUNDS = [
-    r"a?(?:h[aeiouy]){2,}h?", r"h[aeiou]h", r"ha", r"bwa(?:ha)+", r"mu(?:ha)+", r"u+g+h+", r"a+r+g+h*", r"a+g+h+", r"g+a+h+", r"g+r+",
+    r"a?(?:h[aeiouy]){2,}h?", r"h[aeiou]h", r"ha", r"bwa(?:ha)+", r"mu(?:ha)+", r"[aeiou]*u+g+h+", r"e+g+h+", r"[aeiou]{2,}r*g+h+", r"a+r+g+h*", r"a+g+h+", r"g+a+h+", r"g+r+",
     r"p+f+t*", r"h+m+p+h+", r"z{3,}", r"a+c+h+o+", r"a+h+e+m+", r"s+n+i+f+",
-    r"(?:х[аеиоэы])+х?", r"г+р+", r"п+ф+", r"к+х+м*", r"а+п+ч+х+и+",
+    r"[aeiou]{2}[aeiouh]*[aeiou]", r"(?:х[аеиоэы])+х?", r"[аеиоуыэ]{2}[аеиоуыэх]*[аеиоуыэ]", r"г+р+", r"п+ф+", r"к+х+м*", r"а+п+ч+х+и+",
 ]
 # discourse interjections and hesitations (alone they still are not translatable speech)
 _INTERJECTIONS = _SOUNDS + [
@@ -40,7 +40,8 @@ _INTERJECTIONS = _SOUNDS + [
 ]
 _SOUND_RE = re.compile("(?:" + "|".join(_SOUNDS) + ")")
 _INTERJECTION_RE = re.compile("(?:" + "|".join(_INTERJECTIONS) + ")")
-_DIRECTION_RE = re.compile(r"\[[^\[\]]*\]|\*[^*]+\*|\([^()]*\)")  # [laughs], *sighs*, (groans)
+# [laughs], *sighs*, (groans); not "Super(Handy)Man": a parenthesis glued to a word is part of it
+_DIRECTION_RE = re.compile(r"\[[^\[\]]*\]|\*[^*]+\*|(?<!\w)\([^()]*\)(?!\w)")
 _MARKUP_RE = re.compile(r"\{[^{}]*\}|<[^<>]*>")
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
 

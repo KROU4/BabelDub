@@ -27,7 +27,7 @@ from babeldub.analysis.store import (
     vector_key,
     write_analysis,
 )
-from babeldub.commands.project import csv_list, load_lines, src_text, voiced_lines
+from babeldub.commands.project import csv_list, is_voiced_kind, load_lines, src_text
 from babeldub.core import layout
 from babeldub.core.ids import uid as uid_of
 from babeldub.core.jsonl import append_jsonl, now_iso, write_jsonl
@@ -144,7 +144,7 @@ def _sync_flags(project: Project, lines: list[dict[str, Any]], analysis: dict[st
 
 def _select(project: Project, lines: list[dict[str, Any]], ids_arg: str | None) -> tuple[list[dict[str, Any]], dict[str, int]]:
     follows = follower_map(lines)
-    voiced = voiced_lines(project, lines)
+    voiced = [ln for ln in lines if is_voiced_kind(ln)]  # every voiced kind: analysis does not depend on the cast selection
     skipped = {"follows": 0, "no_audio": 0}
     by_id = {ln["id"]: ln for ln in voiced}
     if ids_arg:
