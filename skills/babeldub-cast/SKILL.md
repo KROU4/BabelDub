@@ -4,7 +4,7 @@ description: "Cast a game for dubbing in the original characters' own voices: gr
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill). Voice clustering and typical-timbre references need the qc engine (babeldub setup --engines qc) and preferably an NVIDIA GPU; without it speakers come from game metadata only."
 metadata:
-  babeldub-cli: "0.1.0"
+  babeldub-cli: "0.2.0"
 ---
 
 # BabelDub: casting — who speaks, and in whose voice

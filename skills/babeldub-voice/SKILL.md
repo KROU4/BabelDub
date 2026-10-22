@@ -4,7 +4,7 @@ description: "Dub game lines in the original character's own voice: GPU-first lo
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); NVIDIA GPU with 8+ GB VRAM for the default chain (VoxCPM2 + RVC), smaller GPUs and the CPU fall back to Qwen3-TTS; engine venvs and weights are installed by babeldub setup."
 metadata:
-  babeldub-cli: "0.1.0"
+  babeldub-cli: "0.2.0"
 ---
 
 # BabelDub: voice — dubbing in the original character's voice

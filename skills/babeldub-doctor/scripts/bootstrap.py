@@ -37,7 +37,7 @@ EXIT_ERROR = 1
 EXIT_USAGE = 2
 EXIT_ENV = 4
 
-FALLBACK_VERSION = "0.1.0"
+FALLBACK_VERSION = "0.2.0"
 GIT_SOURCE = "git+https://github.com/KROU4/BabelDub@v{version}#subdirectory=runtime"
 PACKAGE = "babeldub"
 IS_WINDOWS = sys.platform == "win32"

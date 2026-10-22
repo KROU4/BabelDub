@@ -4,7 +4,7 @@ description: "Find out what is inside a video game before localizing it and dubb
 license: MIT
 compatibility: "Local agent with shell access to the game folder (read-only); babeldub CLI 0.1.0 installed via the babeldub-doctor skill; vgmstream-cli for decoding. Works without GPU."
 metadata:
-  babeldub-cli: "0.1.0"
+  babeldub-cli: "0.2.0"
 ---
 
 # BabelDub: game recon

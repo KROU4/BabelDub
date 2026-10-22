@@ -4,7 +4,7 @@ description: "Translate or adapt game dialogue for dubbing in the original chara
 license: MIT
 compatibility: "Any agent that can read and write files; babeldub CLI 0.1.0 for batch make, next and submit (install via the babeldub-doctor skill). Web chats without the CLI can translate an exported batch file by the same rules. No GPU needed."
 metadata:
-  babeldub-cli: "0.1.0"
+  babeldub-cli: "0.2.0"
 ---
 
 # BabelDub: text for the dub

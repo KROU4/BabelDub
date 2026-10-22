@@ -4,7 +4,7 @@ description: "Check and prepare the machine for BabelDub, which localizes and re
 license: MIT
 compatibility: "Local agent with shell access; Windows 10/11 or Linux; Python 3.10+ and uv; network access to PyPI, GitHub and Hugging Face for setup; NVIDIA GPU with 8+ GB VRAM recommended."
 metadata:
-  babeldub-cli: "0.1.0"
+  babeldub-cli: "0.2.0"
 ---
 
 # BabelDub: environment and installation

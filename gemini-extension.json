@@ -1,6 +1,6 @@
 {
   "name": "babeldub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI localization and dubbing of any game: translate voice-over and text, re-voice every line in the original character's own voice with local GPU voice-cloning TTS, repack into native engine formats with backup and rollback.",
   "contextFileName": "GEMINI.md",
   "settings": [

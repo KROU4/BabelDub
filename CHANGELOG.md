@@ -5,7 +5,9 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
-Work towards 0.2.0: the dubbing pipeline v0.2 (analysis of the originals, line classes, arousal-matched prompts, scored best-of, wider QA), each step checked by ear against the v0.1 chain.
+## [0.2.0] - 2026-10-22
+
+The dubbing pipeline v0.2: analysis of the originals, line classes, arousal-matched prompts, scored best-of, speech never slowed down, wider QA. Measured against v0.1 on a 38-line test set of Low-Budget Repairs (13 characters, the same Russian texts and metrics): slowed lines 17 → 0, time-stretched 74 % → 15 %, UTMOS 2.64 → 3.14 (originals 3.14), speaker similarity 0.544 → 0.606, the pitch-range gap to the original 5.6 → 3.4 semitones, CER of the dubbed lines 0.054 → 0.034; 5 of 38 lines keep the original.
 
 ### Added
 
@@ -13,7 +15,7 @@ Work towards 0.2.0: the dubbing pipeline v0.2 (analysis of the originals, line c
 - **Line classes drive the dub.** Interjections and nonverbal lines keep the original: `translate` leaves them out (`translate plan` → `keep_original`), `synth` skips them (`skipped.keep_original`) with one automatic `keep_original` decision (`tts.keep_original_classes`; an agent/human decision overrides it). A `short_word` line ("Freeze!") is voiced from the line itself (no target-language prompt) with `tts.short_word_best_of` = 6 candidates and one regen at most (`tts.short_word_attempts` = 2). A passing `mixed` line is accepted with attention.
 - **Arousal-matched voice prompts.** Each character's lines fall into calm / animated / loud / soft buckets by their prosody relative to the character (`cast/refs.py`, `bucket` in `refs.jsonl` and `synth/results.jsonl`). VoxCPM2 gets a long timbre reference per bucket (≥ 8 s of material, else calm) and a target-language **prompt bank**: per bucket 1–2 accepted dubs of 5–10 s ranked by MOS and prosody similarity to their original (CER only a gate), instead of one frozen prompt of the lowest-CER (and flattest) dubs. Each line takes the nearest bucket; a regen after a `flat`/`mos` failure takes the next one. A v0.1 `tgt.json` reads as the calm prompt.
 - **Scored best-of** (`tts.best_of_mode=score`, the default when the `qc` env exists; `synth score`): `synth` keeps every candidate, the TTS worker exits, and the qc worker scores them (CER and length gates; 0.35 prosody/emotion similarity + 0.25 MOS + 0.2 length + 0.2 voice similarity, 0.05 for characters with an RVC model); the winner gets a new results row (`key` = sha(key, seed)) and the rest is deleted.
-- **QA:** UTMOS22 naturalness against the median of the character's own originals (`mos`, `orig_mos`, `qa/mos_baseline.json`; reason `mos` below the median − `qa.mos_drop` 1.0), prosody similarity to the original (F0 range ratio and contour correlation, `prosody_sim`; reason `flat` below `qa.min_f0_range_ratio` 0.5 of the original's range), onset/offset deltas of `fixed_length` lines (`post` `offset_deltas`; reason `timing` beyond ±80 ms), and CER with digits spelled out on both sides. All three new reasons regen, then keep the original.
+- **QA:** UTMOS22 naturalness against the median of the character's own originals (`mos`, `orig_mos`, `qa/mos_baseline.json`; reason `mos` below the median − `qa.mos_drop` 1.0), prosody similarity to the original (F0 range ratio and contour correlation, `prosody_sim`; reason `flat` below `qa.min_f0_range_ratio` 0.5 of the original's range), onset/offset deltas of `fixed_length` lines (`post` `offset_deltas`; reason `timing` beyond ±80 ms), and CER with digits spelled out on both sides. `timing` regens, then keeps the original; `mos` and `flat` regen, then accept the last take with attention (delivery, not words or voice).
 - **Pronunciation and stress.** The glossary `pronounce` is applied to the dub text (stress-only entries reach inflected forms too). Engines declare `stress: none | upper | acute` in `models.yaml` (VoxCPM2 `upper`: a CAPITAL stressed vowel, since it reads `+` as "plus"; the ru-stress model `acute`). `tts.stress=on` (off by default: plain text was best in the A/B) marks Russian homographs with RUAccent through the qc worker's new `accent` op (cached in `synth/accent.jsonl`). The qc worker also gained `spell` (num2words) and an F0 contour in `prosody`/`score`.
 - **The default dubbing chain is VoxCPM2 + bootstrap prompts + best of 3 + exact fit + RVC** (chosen in blind listening rounds on Low-Budget Repairs, English → Russian: CER 0.045 vs 0.050 for Qwen3-TTS + RVC, ECAPA ~0.65–0.70 to the originals, which score 0.77 among themselves).
   - Engine `voxcpm` (VoxCPM2, Apache-2.0, 2B, 48 kHz, 30 languages; worker `tts_voxcpm.py`; peak VRAM 6.5 GB). `tts.engine=auto` (the new default written by `init`) runs it on CUDA when its env exists, else `qwen3tts-fast`/`qwen3tts`/`chatterbox`, with the choice in `notes`; CUDA-only engines fall back along their chain.
@@ -36,6 +38,29 @@ Work towards 0.2.0: the dubbing pipeline v0.2 (analysis of the originals, line c
 - **QA similarity is calibrated for cross-language dubs.** A dub in another language than the original audio (`source_lang` ≠ `target_lang`, the normal case) is judged with `qa.min_sim_ratio_xlang` = 0.45 × `sim_ref`; same-language dubs keep `qa.min_sim_ratio` = 0.75; an absolute floor `qa.min_sim_abs` = 0.25 applies to both. `qa.jsonl` records `sim_ratio` and `sim_threshold`. On Low-Budget Repairs (Russian Qwen3-TTS dub of English originals) the old bar 0.75 × 0.76 = 0.57 failed 27 of 30 dubs whose Whisper CER median was 0.0; good dubs scored 0.38–0.66 against the hero's centroid, clear failures 0.08–0.11.
 - **Nonverbal lines skip the voice and CER checks.** Screams and laughs (`nonverbal` flag) are measured but never fail on `sim`, `identity` or `cer` (`sim_skipped`, `cer_skipped` in `qa.jsonl`).
 - `babeldub set` knows the new settings (`cast.merge_threshold`, `qa.min_sim_ratio_xlang`, `qa.min_sim_abs`, `qa.min_identity_margin`, `tts.best_of_mode`, `tts.stress`, `qa.mos_drop`, `qa.min_f0_range_ratio`), and new projects get them in `project.json`.
+
+### Fixed
+
+- `babeldub install`/`reapply`: the names of the game's executables reach PowerShell through the environment, never as script text (a crafted file name with a typographic quote could run commands).
+- QA re-checks a line whose winner `synth score` swapped after the check (`src_key`, `post_ts` in `qa.jsonl`), and the bootstrap prompt bank takes only current QA rows; `synth score` writes each line's results row right after its winner, so a crash leaves finished lines consistent.
+- `post` re-places a `fixed_length` line after `analyze` changed its speech segments (`vad_key`).
+- The translation budget uses the speech span (first to last sound, pauses included), matching how the speaking rate is measured.
+- Projects created by 0.1 get the new tempo defaults once (`post.tempo_min` 0.93 → 1.0, `tempo_max` 1.2 → 1.15; `migrations` in `project.json`).
+- `analyze --limit` no longer marks the stage done while stale lines remain; `link` points to `analyze`, and `cast` warns when it was skipped.
+- A "dub anyway" decision on an interjection also reaches `translate`.
+- `vc train` keeps only the latest RVC checkpoint and rounds the epoch count to a multiple of 10.
+- An empty MOS baseline is not cached; stale emotion vectors are dropped on re-analysis.
+
+### Security
+
+- Workflows run with read-only tokens except the release job; actions are pinned by commit SHA, the Claude Code CLI by version.
+- Engine packages are pinned to exact versions, git engines to commits, Hugging Face models to revisions; the UTMOS22 checkpoint loads with `weights_only=True`.
+- The game-folder guard resolves Windows 8.3 short names and symlinks before comparing paths (it remains a heuristic, not a sandbox).
+
+### Not in this release
+
+- Emotion similarity and DNSMOS in QA: emotion2vec+ is opt-in (non-commercial license), so delivery is judged by prosody (F0 range and contour) and UTMOS22; arousal buckets come from prosody, not from emotion vectors.
+- Separation and EQ matching for radio/phone lines (plan step 6).
 
 ## [0.1.0] - 2026-10-21
 
