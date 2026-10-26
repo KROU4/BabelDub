@@ -479,6 +479,7 @@ class Job:
     bucket: str | None = None  # arousal bucket of the bootstrap reference/prompt (calm, animated, loud, soft)
     best_of_min: int = 1  # at least this many candidates (short_word lines: tts.short_word_best_of)
     delivery: Delivery | None = None  # ref_strategy=tags: the delivery tags and the control text sent
+    delivery_tags: str | None = None  # ... and the tts.delivery_tags it was planned under
 
     @property
     def ref_mode(self) -> str:
@@ -535,6 +536,18 @@ def delivery_matches(row: dict[str, Any], plan: Delivery) -> bool:
     if row.get("tags_source") == "dropped":
         return plan.control is None or list(row.get("tags") or []) == plan.tags
     return (row.get("control") or None) == plan.control
+
+
+def accepted_delivery_stands(row: dict[str, Any], plan: Delivery, setting: str) -> bool:
+    """A take QA accepted keeps its delivery when only the measured tags drifted (a re-cast, more analysed
+    lines, a z crossing the "slightly" threshold): it is voiced again only when tts.delivery_tags (to or from
+    off, or the agent's tags now ignored) or the agent's delivery changed its tags."""
+    made = row.get("delivery_tags")  # the setting the take was planned under (absent on older takes)
+    if setting == "off" or made == "off":
+        return not row.get("control") and not plan.control
+    if row.get("tags_source") == "agent" or plan.source == "agent":
+        return list(row.get("tags") or []) == plan.tags
+    return True
 
 
 def estimate_seconds(text: str, lang: str) -> float:
@@ -827,7 +840,8 @@ def _plan_synth(
     keep_original decision, skipped.keep_original); a short_word line is spoken with the line itself as
     the reference, tts.short_word_best_of candidates and tts.short_word_attempts attempts.
     Strategy `tags`: every job carries its Delivery (plan_delivery, drops_control); a changed control text
-    makes a done take stale (reason `delivery`). An engine without a control text ignores the tags and
+    makes a done take stale (reason `delivery`), unless QA accepted it and only the measured tags drifted
+    (accepted_delivery_stands). An engine without a control text ignores the tags and
     says so once in `notes` (control_ignored)."""
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
     if not lines_all:
@@ -983,6 +997,9 @@ def _plan_synth(
             )
             # tags: a changed control text is a new take of the same text (not a retranslation)
             same_delivery = plan is None or not controls or delivery_matches(latest_ok, plan)
+            accepted = decision.get("decision") == "accept" and int(decision.get("attempt") or ok_attempt) == ok_attempt
+            if plan is not None and not same_delivery and accepted:  # QA accepted it: measured drift alone stands
+                same_delivery = accepted_delivery_stands(latest_ok, plan, delivery_mode)
             if same and same_delivery:
                 skipped["done"] += 1
                 continue
@@ -1058,6 +1075,7 @@ def _plan_synth(
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
             job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
+            job.delivery_tags = delivery_mode
         elif plan is not None and plan.tags:
             ignored += 1
         job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
@@ -1390,7 +1408,8 @@ class _SynthRun:
         if job.bucket:
             row["bucket"] = job.bucket
         if job.delivery is not None:
-            row.update(control=job.delivery.control, tags=job.delivery.tags, tags_source=job.delivery.source)
+            row.update(control=job.delivery.control, tags=job.delivery.tags, tags_source=job.delivery.source,
+                       delivery_tags=job.delivery_tags)
         if reply.get("prompt_dropped"):
             row["prompt_dropped"] = True
         if job.line_class:

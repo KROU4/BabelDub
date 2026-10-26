@@ -108,6 +108,21 @@ def judge(project: Project, n: int, attempt: int, reasons: list[str]) -> None:
     append_jsonl(project.path(layout.DECISIONS), [{"id": line_id(n), "decision": "regen", "attempt": attempt, "by": "auto"}])
 
 
+def accept(project: Project, n: int, attempt: int) -> None:
+    append_jsonl(project.path(layout.DECISIONS), [{"id": line_id(n), "decision": "accept", "attempt": attempt, "by": "auto"}])
+
+
+def reanalyse(project: Project, shouts: tuple[int, ...]) -> None:
+    """New analysis rows: lines `shouts` are the shouted ones now (the measured tags drift)."""
+    rows = [r for r in read_jsonl(project.path(layout.ANALYSIS)) if "_schema" not in r]
+    for row in rows:
+        n = int(row["id"][-4:])
+        loud = n in shouts
+        row["prosody"]["f0_median_hz"] = 220.0 if loud else 130.0 + (n % 3 - 1)
+        row["prosody"]["rms_db"] = -10.0 if loud else -20.0 + 0.1 * (n % 5 - 2)
+    write_jsonl(project.path(layout.ANALYSIS), rows, schema="babeldub.analysis/1")
+
+
 def plan(project: Project, *argv: str) -> dict[str, voice.Job]:
     args = parser().parse_args(["synth", *argv])
     jobs, *_ = voice._plan_synth(project, args, voice.resolve_engine(project, "dummy"), "tags")
@@ -232,6 +247,60 @@ def test_agent_delivery_makes_a_new_take_not_a_retranslation(project: Project,
     # a delivery change is no retranslation: it counts toward tts.max_attempts of the same text
     assert code == EXIT_ATTENTION and out["skipped"]["max_attempts"] == 1 and out["attention"] == [line_id(3)]
     assert results(project)[line_id(3)]["attempt"] == 3
+
+
+def test_accepted_take_survives_measured_drift_not_an_agent_change(project: Project,
+                                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    assert results(project)[line_id(3)]["delivery_tags"] == "on"
+    accept(project, 3, 1)
+    reanalyse(project, (4, 5))  # line 3 measures plain now, line 5 shouted
+    code, out = run(capsys, project.root, "synth")
+    assert code == EXIT_OK and out["done"] == 1 and out["skipped"]["done"] == N_LINES - 1, out
+    assert results(project)[line_id(3)]["attempt"] == 1  # accepted: the drift alone does not burn an attempt
+    new = results(project)[line_id(5)]  # not accepted: voiced again with its new tags
+    assert new["attempt"] == 2 and new["reason"] == "delivery" and new["control"] == "shouting"
+    retranslate(project, 3, delivery=["urgent"])  # the agent's delivery does re-voice an accepted take
+    code, out = run(capsys, project.root, "synth")
+    row = results(project)[line_id(3)]
+    assert out["done"] == 1 and row["attempt"] == 2 and row["reason"] == "delivery" and row["control"] == "urgent"
+    accept(project, 3, 2)
+    retranslate(project, 3)  # the agent withdraws it (a new revision without delivery): measured, plain now
+    assert run(capsys, project.root, "synth")[1]["done"] == 1 and results(project)[line_id(3)]["tags_source"] == "none"
+
+
+def test_accepted_take_follows_a_delivery_tags_change(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    accept(project, 3, 1)
+    accept(project, 1, 1)
+    run(capsys, project.root, "set", "tts.delivery_tags=off")
+    code, out = run(capsys, project.root, "synth")
+    assert out["done"] == 2, out  # the accepted shout too: the setting changed, not the measurement
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 2 and row["control"] is None and row["delivery_tags"] == "off"
+    assert results(project)[line_id(1)]["attempt"] == 1
+    accept(project, 3, 2)
+    run(capsys, project.root, "set", "tts.delivery_tags=on")
+    code, out = run(capsys, project.root, "synth")
+    assert out["done"] == 2, out  # an accepted take made under `off` gets its tags back
+    assert results(project)[line_id(3)]["control"] == "shouting" and results(project)[line_id(3)]["attempt"] == 3
+
+
+def test_accepted_delivery_stands_rule() -> None:
+    measured = voice.Delivery(["shouting"], "measured", "shouting")
+    plain = voice.Delivery([], "none", None)
+    old = {"tags_source": "measured", "tags": ["calm"], "control": "calm"}  # no delivery_tags: an older take
+    assert voice.accepted_delivery_stands(old, measured, "on") and voice.accepted_delivery_stands(old, plain, "on")
+    assert not voice.accepted_delivery_stands(old, plain, "off")
+    agent = {"tags_source": "agent", "tags": ["urgent"], "control": "urgent", "delivery_tags": "on"}
+    assert not voice.accepted_delivery_stands(agent, measured, "measured")  # the agent's tags are ignored now
+    assert voice.accepted_delivery_stands(agent, voice.Delivery(["urgent"], "measured", "urgent"), "measured")
+    assert not voice.accepted_delivery_stands(old, voice.Delivery(["sad"], "agent", "sad"), "on")
+    off = {"tags_source": "none", "tags": [], "control": None, "delivery_tags": "off"}
+    assert not voice.accepted_delivery_stands(off, measured, "on") and voice.accepted_delivery_stands(off, plain, "on")
+    dropped = {"tags_source": "dropped", "tags": ["calm"], "control": None, "delivery_tags": "on"}
+    assert voice.accepted_delivery_stands(dropped, measured, "on")
+    assert not voice.accepted_delivery_stands(dropped, voice.Delivery(["sad"], "agent", "sad"), "on")
 
 
 def test_cer_regen_drops_the_control_flat_regen_keeps_it(project: Project,
