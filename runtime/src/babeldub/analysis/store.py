@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from babeldub.analysis.classes import CLASSES, KEEP_ORIGINAL_CLASSES
+from babeldub.analysis.prosody_tags import Measured, measure
 from babeldub.core import layout
 from babeldub.core.jsonl import latest_by, read_jsonl, write_jsonl
 from babeldub.core.project import Project
@@ -71,6 +73,31 @@ def keep_original_ids(project: Project, analysis: dict[str, dict[str, Any]] | No
     keep = keep_original_classes(project)
     classes = line_classes(load_analysis(project) if analysis is None else analysis)
     return {lid: cls for lid, cls in classes.items() if cls in keep}
+
+
+def line_characters(project: Project, lines: Iterable[dict[str, Any]] | None = None) -> dict[str, str]:
+    """{line id: char_id}: the cast assignment once `cast` ran (characters.jsonl and assign.jsonl exist),
+    else the line's speaker_hint (the way `synth` groups lines)."""
+    if lines is None:
+        lines = latest_by(read_jsonl(project.path(layout.LINES))).values()
+    assign = latest_by(read_jsonl(project.path(layout.ASSIGN)))
+    cast_done = bool(assign) and bool(read_jsonl(project.path(layout.CHARACTERS)))
+    out: dict[str, str] = {}
+    for line in lines:
+        char_id = (assign.get(line["id"]) or {}).get("char_id") if cast_done else line.get("speaker_hint")
+        if char_id:
+            out[str(line["id"])] = str(char_id)
+    return out
+
+
+def measured_tags(project: Project, analysis: dict[str, dict[str, Any]] | None = None,
+                  lines: Iterable[dict[str, Any]] | None = None) -> dict[str, Measured]:
+    """{line id: Measured} delivery tags of the originals (analysis.prosody_tags), computed on demand from
+    analysis.jsonl and the cast; a line without analysis or with too few comparable lines has no tags."""
+    analysis = load_analysis(project) if analysis is None else analysis
+    if not analysis:
+        return {}
+    return measure(analysis, line_characters(project, lines))
 
 
 def emotion_vectors(project: Project) -> dict[str, np.ndarray]:
