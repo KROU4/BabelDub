@@ -1199,11 +1199,12 @@ def cmd_synth(args: argparse.Namespace) -> int:
     if accent is not None and accent.note:
         notes.append(accent.note)
     planned = len(jobs)
+    # every planned take, --limit or not
+    delivery = delivery_counts({"tags_source": j.delivery.source, "tags": j.delivery.tags, "control": j.delivery.control}
+                               for j in jobs if j.delivery is not None)
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
     by_ref = Counter(j.ref_mode for j in jobs)
-    delivery = delivery_counts({"tags_source": j.delivery.source, "tags": j.delivery.tags, "control": j.delivery.control}
-                               for j in jobs if j.delivery is not None)
 
     if args.dry_run:
         dry: dict[str, Any] = {

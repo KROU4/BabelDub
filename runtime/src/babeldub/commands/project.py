@@ -287,7 +287,8 @@ def project_counts(project: Project) -> dict[str, Any]:
     voiced_ids = {ln["id"] for ln in voiced}
     chars = load_latest(project, layout.CHARACTERS, "char_id")
     translations = latest_translations(project)
-    synth = _count_latest(read_jsonl(project.path(layout.SYNTH_RESULTS)))
+    synth_rows = read_jsonl(project.path(layout.SYNTH_RESULTS))
+    synth = _count_latest(synth_rows)
     post = _count_latest(read_jsonl(project.path(layout.POST)))
     qa = _count_latest(read_jsonl(project.path(layout.QA)))
     manifest = read_json(project.path(layout.BUILD_MANIFEST), default=None) or {}
@@ -300,8 +301,9 @@ def project_counts(project: Project) -> dict[str, Any]:
         cls = (analysis.get(i) or {}).get("class")
         if cls:
             classes[cls] = classes.get(cls, 0) + 1
-    # ref_strategy=tags: lines by the source of their take's delivery tags and the tags sent
-    delivery = delivery_counts(r for i, r in synth.items() if i in voiced_ids and r.get("status") == "ok")
+    # ref_strategy=tags: lines by the source of their latest ok take's delivery tags and the tags sent
+    synth_ok = _count_latest(r for r in synth_rows if r.get("status") == "ok")
+    delivery = delivery_counts(r for i, r in synth_ok.items() if i in voiced_ids)
     counts: dict[str, Any] = {
         "lines": len(lines),
         "voiced": len(voiced),

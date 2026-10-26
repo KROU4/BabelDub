@@ -203,6 +203,20 @@ def test_default_chain_measures_and_records_tags(project: Project, capsys: pytes
     assert out["counts"]["delivery"] == {"by_source": {"none": N_LINES - 2, "measured": 2}, "tags": {"shouting": 2}}
 
 
+def test_delivery_summary_counts_every_planned_take_status_the_latest_ok(project: Project,
+                                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    every = {"by_source": {"measured": 2, "none": N_LINES - 2}, "tags": {"shouting": 2}}
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--limit", "1")
+    assert out["would_run"] == 1 and out["planned"] == N_LINES and out["delivery"] == every, out
+    code, out = run(capsys, project.root, "synth", "--limit", "3")
+    assert out["done"] == 3 and out["delivery"] == every, out
+    run(capsys, project.root, "synth")
+    append_jsonl(project.path(layout.SYNTH_RESULTS), [  # a later failed attempt does not hide the ok take
+        {"id": line_id(3), "attempt": 2, "status": "error", "wav": None, "text": dub(3), "error": "worker died"}])
+    code, out = run(capsys, project.root, "status")
+    assert out["counts"]["delivery"] == every, out["counts"]
+
+
 def test_request_carries_the_control_and_the_key_changes_with_it(project: Project) -> None:
     jobs = plan(project)
     shout, plain = jobs[line_id(3)], jobs[line_id(1)]
