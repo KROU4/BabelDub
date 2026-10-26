@@ -4,7 +4,7 @@ Read this when checking the references of the main characters, when `no_ref[]` i
 
 ## 1. What the references are for
 
-With the default engine VoxCPM2 (`tts.ref_strategy=bootstrap`, skill `babeldub-voice`), every line is voiced from the character's **long reference** of its arousal bucket (calm, animated, loud, soft; `bucket` in `refs.jsonl`): several clean original lines joined into ~15–20 s that carry the timbre. Once QA accepts the character's first dubs, a target-language prompt bank is built from them. So the references decide the timbre of the whole role.
+With the default engine VoxCPM2 (`tts.ref_strategy=tags`, skill `babeldub-voice`), every line is voiced from the character's **long reference**: several clean original lines joined into ~15–20 s that carry the timbre, plus the line's delivery tags (shouting, whispered, calm…) as a short control text. `tts.tags_reference` decides which long reference: `main` (default) — the calm/main one for every line, so the whole role keeps one timbre; `bucket` — the one of the arousal bucket nearest to the line's original (calm, animated, loud, soft). With the explicit `bootstrap`, the bucket's long reference is used and, once QA accepts the character's first dubs, a target-language prompt bank is built from them. So the references decide the timbre of the whole role.
 
 With the fallback engines (Qwen3-TTS, Chatterbox) the prompt is the original line itself (`tts.ref_strategy=line`), and the character reference (`char`) is needed where the line cannot serve as a prompt:
 
@@ -28,7 +28,7 @@ For every **selected** character, `babeldub cast` takes the character's original
 
 The best `--refs` (up to 3) candidates are copied to `cast/refs/<char_id>/<uid>.wav` and recorded in `cast/refs.jsonl`: `ref_id`, `char_id`, `line_id`, `wav`, `text`, `lang`, `dur_s`, `score`, `chosen`, `rank`, `bucket`. The top-ranked one is the primary reference (`chosen`).
 
-`bucket` is the arousal bucket of the reference line (`calm`, `animated`, `loud`, `soft`), from the `analyze` prosody relative to the character's own medians (loudness ±6 dB, pitch range ±4 semitones, speaking rate ±25 %; an opt-in emotion label moves a calm line). It is informational for the caster: the neutral `char` reference should be `calm`. The VoxCPM2 bootstrap does not use `refs.jsonl` buckets directly; it builds a long reference per bucket from all clean lines of the character (skill `babeldub-voice`, `references/ref-strategy.md`), so a character with few loud lines falls back to calm for shouts.
+`bucket` is the arousal bucket of the reference line (`calm`, `animated`, `loud`, `soft`), from the `analyze` prosody relative to the character's own medians (loudness ±6 dB, pitch range ±4 semitones, speaking rate ±25 %; an opt-in emotion label moves a calm line). It is informational for the caster: the neutral `char` reference should be `calm`. The VoxCPM2 voice stage does not use `refs.jsonl` buckets directly; it builds the long references from all clean lines of the character (skill `babeldub-voice`, `references/ref-strategy.md`): the calm/main one always, and one per other bucket with at least 8 s of clean material. With `tts.tags_reference=main` (default) every line uses the calm/main one and a shout comes from the `shouting` delivery tag; with `bucket` (or `bootstrap`) a shout takes the loud reference, and a character with few loud lines falls back to calm.
 
 ## 3. What makes a good reference
 

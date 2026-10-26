@@ -43,7 +43,7 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 ## Workflow
 
 1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `mos_median`, `prosody_median`, `errors[]`, `next`.
-2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `vc` → `qa`, skill `babeldub-voice`); if `next` mentions waiting lines (bootstrap phase 2), run `synth` → `post` → `vc` → `qa`; if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
+2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `vc` → `qa`, skill `babeldub-voice`); if `next` mentions waiting lines (bootstrap phase 2, only with an explicit `tts.ref_strategy=bootstrap`), run `synth` → `post` → `vc` → `qa`; if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
 3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
 4. **Look at the metrics** of the relevant lines only:
    `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.mos,qa.orig_mos,qa.prosody_sim,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
@@ -57,14 +57,14 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 | Decision | When | What happens next |
 |---|---|---|
 | `accept` | metrics within thresholds, or the deviation is acceptable and explained in `note` | the line goes into the build |
-| `regen` | a random defect (`cer`, peaks, silence, looping, `mos`, `flat`, `timing`) with a sound prompt, attempts remain | a new attempt with a different seed (after `mos`/`flat` also the next nearest arousal bucket) |
-| `reref` | the voice "drifted": low `sim`, especially `sim_line`, on shouting, whispering, noise, a radio effect | a new attempt with a different prompt (`line` → `char`) |
+| `regen` | a random defect (`cer`, peaks, silence, looping, `mos`, `flat`, `timing`) with a sound prompt, attempts remain | a new attempt with a different seed. With VoxCPM2's delivery tags (`tts.ref_strategy=tags`): after `cer`, and on any regen from attempt 3 on, the line is voiced without its tags (`tags_source: dropped`); after `mos`/`flat` the tags stay. The next nearest arousal bucket after `mos`/`flat` only with `bootstrap` or `tts.tags_reference=bucket` |
+| `reref` | the voice "drifted": low `sim`, especially `sim_line`, on shouting, whispering, noise, a radio effect | a new attempt with a different prompt (`line` → `char`; the long reference of `tags` → `char`, or the line itself when the character has one reference; delivery tags kept) |
 | `shorten` | `ratio` above the limit, `fixed_length` does not fit | the translator shortens the text, then a new synthesis |
 | `retranslate` | `cer` high again while the voice is fine: numbers, Latin script, hard words | the translator fixes the text, then a new synthesis |
 | `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
 | `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag — except a take that fails only `mos`/`flat` (delivery, not the words or the voice), which is then `accept` with a flag: listen to it; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions.
+CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag — except a take that fails only `mos`/`flat` (delivery, not the words or the voice), which is then `accept` with a flag: listen to it; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions. Neither the CLI nor QA changes a line's delivery tags: they come from the measurement or the translator's `delivery` (`translation.delivery` in `query`); a regen only drops them as described above. When many lines of one character fail `cer` or `mos` with clean texts, return it in `failing_chars`: the voice role checks its delivery settings (`tts.delivery_tags`, `tts.tags_reference`).
 
 ## Thresholds
 

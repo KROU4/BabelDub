@@ -40,14 +40,14 @@ Go from top to bottom; the first matching rule decides:
    - many lines of one character closest to the same other character → a reference or attribution problem: return the character in `failing_chars` (caster role), do not decide line by line.
 6. **Intelligibility** (`cer` > `max_cer`), the voice is fine:
    - compare `dub_text` and `asr_text`; if the difference is only in a name, a number or an interjection → `accept` with a `note`, or `retranslate` (numbers as words, `pronounce`);
-   - skipped words, repetitions, foreign words → `regen`;
+   - skipped words, repetitions, foreign words → `regen` (with VoxCPM2's `tags` the regen is voiced without the delivery control text, which can garble words);
    - high `cer` a second time in a row on the same text → `retranslate`, with a `note` on what to simplify.
 7. **Length** (`ratio` above the limit, or `fixed_length` does not fit):
    - `ratio` above 2 → `regen` (model failure);
    - otherwise → `shorten`; in `note`, give the `ratio` and how many syllables to cut;
    - two shortenings already done → `keep_original`, or `accept` with a `note` if audio in this game is not tied to timing (only for ordinary dialogue, not for `fixed_length`).
 8. **Peaks, clipping, silence** → `regen`.
-8a. **Unnatural or monotone** (`mos`, `flat`) → `regen` (a new seed and the next nearest arousal bucket); on repeat for many lines of one character → the character's prompts are the problem (`failing_chars`, voice role). **Off-time cutscene** (`timing`) → `regen`, then `shorten`.
+8a. **Unnatural or monotone** (`mos`, `flat`) → `regen` (a new seed; the delivery tags stay; the next nearest arousal bucket with `bootstrap` or `tts.tags_reference=bucket`); on repeat for many lines of one character → the character's prompts or delivery settings are the problem (`failing_chars`, voice role). **Off-time cutscene** (`timing`) → `regen`, then `shorten`.
 8b. **`mixed` line accepted with attention** (words with a laugh or groan) → you cannot hear it: `accept` when `cer` and `sim` are fine and the laugh is not part of the meaning; else `keep_original` with a `note`.
 9. **Everything within thresholds** → `accept`.
 
