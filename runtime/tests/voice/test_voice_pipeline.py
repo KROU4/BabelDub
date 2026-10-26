@@ -66,6 +66,9 @@ LINES = [
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Project:
     home = tmp_path / "home"
     monkeypatch.setenv("BABELDUB_HOME", str(home))
+    # here the dummy stands for a transcript engine without a delivery control text (Qwen3-TTS), so
+    # ref_strategy=auto means line/char, not tags
+    monkeypatch.setattr(voice, "CONTROL_ENGINES", ("voxcpm",))
     root = home / "projects" / "test-game"
     proj = Project.create(root, {"slug": "test-game", "game_name": "Test", "game_dir": str(tmp_path / "game"),
                                  "target_lang": "ru", "source_lang": "en",

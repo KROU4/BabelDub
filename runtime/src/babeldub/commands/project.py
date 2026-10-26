@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from babeldub.analysis.prosody_tags import delivery_counts
 from babeldub.core import layout
 from babeldub.core.games import active_project as registry_active_project
 from babeldub.core.games import load_registry, register_game, set_active_project
@@ -28,12 +29,14 @@ Common = Callable[[argparse.ArgumentParser], None]
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 CAST_POLICIES = ("all", "main", "list")
 TRANSLATION_MODES = ("auto", "translate", "adapt", "official")
-REF_STRATEGIES = ("auto", "bootstrap", "line", "char")
+REF_STRATEGIES = ("auto", "tags", "bootstrap", "line", "char")
 ENUMS: dict[str, tuple[str, ...]] = {
     "compute.device": ("auto", "cuda", "cpu"),
     "cast.policy": CAST_POLICIES,
     "translation.mode": TRANSLATION_MODES,
     "tts.ref_strategy": REF_STRATEGIES,
+    "tts.tags_reference": ("main", "bucket"),
+    "tts.delivery_tags": ("on", "measured", "off"),
     "tts.engine": ("auto", "voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
     "tts.best_of_mode": ("auto", "length", "score"),
@@ -297,7 +300,9 @@ def project_counts(project: Project) -> dict[str, Any]:
         cls = (analysis.get(i) or {}).get("class")
         if cls:
             classes[cls] = classes.get(cls, 0) + 1
-    return {
+    # ref_strategy=tags: lines by the source of their take's delivery tags and the tags sent
+    delivery = delivery_counts(r for i, r in synth.items() if i in voiced_ids and r.get("status") == "ok")
+    counts: dict[str, Any] = {
         "lines": len(lines),
         "voiced": len(voiced),
         # alt takes/duplicates: never synthesized, the build reuses their leader's dub
@@ -317,6 +322,9 @@ def project_counts(project: Project) -> dict[str, Any]:
         "replaced": sum(int(c.get("replaced") or 0) for c in containers),
         "installed": len(install.get("installed") or []) if install.get("state") == "installed" else 0,
     }
+    if delivery:
+        counts["delivery"] = delivery
+    return counts
 
 
 def cmd_status(args: argparse.Namespace) -> int:

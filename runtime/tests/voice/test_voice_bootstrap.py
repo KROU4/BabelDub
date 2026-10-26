@@ -202,7 +202,9 @@ def test_engine_auto_prefers_voxcpm_on_the_gpu(project: Project, capsys: pytest.
     python.write_bytes(b"")
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cuda")
     assert out["engine"] == "voxcpm" and out["model"] == "VoxCPM2" and out["notes"] == ["tts.engine=auto -> voxcpm"]
-    assert out["ref_strategy"] == "bootstrap" and out["by_ref"] == {"bootstrap-src": 4} and out["best_of"] == 2
+    # v0.3: auto on VoxCPM2 = the long reference plus delivery tags, no bootstrap phases
+    assert out["ref_strategy"] == "tags" and out["by_ref"] == {"tags": N_LINES} and out["best_of"] == 2
+    assert out["delivery"] == {"by_source": {"none": N_LINES}, "tags": {}}  # no analysis, no agent delivery
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cpu")
     assert out["engine"] == "qwen3tts" and "needs an NVIDIA GPU" in out["notes"][0] and "CUDA only" in out["notes"][1]
     code, out = run(capsys, project.root, "synth", "--dry-run", "--device", "cpu", "--engine", "voxcpm")

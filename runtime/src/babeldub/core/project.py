@@ -23,9 +23,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "cast": {"policy": "main", "list": [], "main_share": 0.7, "merge_threshold": 0.75},
     "translation": {"mode": "auto"},
     # engine: auto = voxcpm on an NVIDIA GPU when its env exists, else qwen3tts-fast (CUDA) / qwen3tts / chatterbox
-    # ref_strategy: auto = bootstrap for voxcpm (long original timbre reference, then a target-language
-    # prompt built from the character's first accepted dubs), else line/char: "line" = the original line
-    # itself is the voice prompt (timbre AND delivery), "char" = best clean reference of the character.
+    # ref_strategy: auto = tags for voxcpm (long original timbre reference plus a delivery control text
+    # "(shouting, fast pace)" from the agent's `delivery` or the tags measured on the original), else
+    # line/char: "line" = the original line itself is the voice prompt (timbre AND delivery), "char" = best
+    # clean reference of the character; bootstrap (explicit) = long reference, then a target-language prompt
+    # built from the character's first accepted dubs.
+    # tags_reference: main = the calm/main long reference, bucket = the nearest arousal bucket's.
+    # delivery_tags: on = agent delivery > measured tags, measured = ignore the agent's, off = no control text.
     # best_of: candidates per line (different seeds); best_of_mode auto = score when the qc env exists (every
     # candidate is ranked by prosody, MOS, length and voice similarity), else the closest speech length wins.
     # stress: on = homographs get a stress mark the engine reads (RUAccent in the qc env), off = plain text
@@ -41,6 +45,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "bootstrap_min_accepted": 3,
         "best_of_mode": "auto",
         "stress": "off",
+        "tags_reference": "main",
+        "delivery_tags": "on",
     },
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
     # its pauses, then speeds up to tempo_max (pitch kept); exact original length

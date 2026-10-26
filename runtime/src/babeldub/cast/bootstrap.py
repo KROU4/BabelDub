@@ -1,4 +1,5 @@
-"""Bootstrap voice prompts (tts.ref_strategy=bootstrap, the default for VoxCPM2).
+"""Bootstrap voice prompts (tts.ref_strategy=bootstrap; its long references also serve ref_strategy=tags,
+the default for VoxCPM2).
 
 1. Long timbre references: 3-4 clean original lines of the character (4-7.5 s each, no flags, the
    cast references first) joined with 0.35 s gaps, ~15-20 s. It is the `reference_wav_path` of every
