@@ -1,6 +1,6 @@
 ---
 name: babeldub-translate
-description: "Translate or adapt game dialogue for dubbing in the original characters' voices: keep the emotional shape of every line so it fits the cloned voice and delivery, fit the syllable budget of the original duration, preserve placeholders, tags and Smart Strings, follow the glossary, gender and formal or informal address. Use for the translate stage, glossary, style bible and shorten requests. Example requests: 'translate the dialogue', 'localize this game', 'adapt the translation for voice-over', 'make a glossary', 'shorten this line', 'переведи игру', 'переведи реплики', 'адаптируй перевод под озвучку', 'глоссарий', 'ты или вы', 'сократи реплику', 'traduce los diálogos', 'traduire les dialogues'."
+description: "Translate or adapt game dialogue for dubbing in the original characters' voices: keep the emotional shape of every line so it fits the cloned voice and delivery, check the measured delivery tags against the scene, fit the syllable budget of the original duration, preserve placeholders, tags and Smart Strings, follow the glossary, gender and formal or informal address. Use for the translate stage, glossary, style bible and shorten requests. Example requests: 'translate the dialogue', 'localize this game', 'adapt the translation for voice-over', 'make a glossary', 'shorten this line', 'переведи игру', 'переведи реплики', 'адаптируй перевод под озвучку', 'глоссарий', 'ты или вы', 'сократи реплику', 'traduce los diálogos', 'traduire les dialogues'."
 license: MIT
 compatibility: "Any agent that can read and write files; babeldub CLI 0.1.0 for batch make, next and submit (install via the babeldub-doctor skill). Web chats without the CLI can translate an exported batch file by the same rules. No GPU needed."
 metadata:
@@ -9,7 +9,7 @@ metadata:
 
 # BabelDub: text for the dub
 
-This skill covers the `translate` stage: the glossary, the style bible, translating or adapting batches of lines, and shortening lines after QA decisions. The text you write will be spoken in **the original character's voice**, cloned from that character's own line: the same timbre, emotion and pace. So the translation must sound natural in the target language, keep the emotional shape of the original, and fit its duration.
+This skill covers the `translate` stage: the glossary, the style bible, translating or adapting batches of lines, the delivery tags of each line, and shortening lines after QA decisions. The text you write will be spoken in **the original character's voice**, cloned from that character's own recordings: the same timbre, and the delivery of the original line (by default VoxCPM2 gets the character's long original reference plus short delivery tags such as `shouting` or `whispered`). So the translation must sound natural in the target language, keep the emotional shape of the original, fit its duration, and the delivery tags must fit the scene.
 
 The skill complements the `lexicon` and `translator` roles of the `babeldub-localize` skill (`references/roles/`). The CLI never translates by itself: it decides the mode, cuts batches, validates what the agent wrote and merges it into the canon.
 
@@ -17,12 +17,13 @@ Talk to the user in the user's language. Write `dub_text`, `sub_text` and `varia
 
 ## Core rules of translating for dubbing
 
-1. **Keep the emotional shape of the original.** An exclamation stays an exclamation, a question stays a question. Keep hesitations and repetitions ("I… I don't know"), cut-offs, laughter and interjections, the register and the level of profanity (no censoring and no amplifying). The voice prompt is the original line: a text "calmer" than the original fights its intonation.
+1. **Keep the emotional shape of the original.** An exclamation stays an exclamation, a question stays a question. Keep hesitations and repetitions ("I… I don't know"), cut-offs, laughter and interjections, the register and the level of profanity (no censoring and no amplifying). The voice is asked to deliver the line like the original: a text "calmer" than the original fights that delivery.
 2. **Length.** Aim for `budget_syll`, the number of syllables that fits into the original's speech at the character's measured pace. Keep the original's pauses marked ` / ` in `src_segmented` as punctuation. For `fixed_length: true` (cutscenes, videos) the budget is mandatory. If the line does not fit, provide shorter `variants`. Details: [references/length-budget.md](references/length-budget.md).
 3. **Two texts.** `dub_text` is what gets spoken: numbers in words, abbreviations expanded, difficult words per the glossary's `pronounce` (the CLI applies a stress-only `pronounce` itself), no stage directions. Interjection-only and nonverbal lines (`analyze` classes) are not in your batches: they keep the original audio. `sub_text` is the subtitle; write it only if it must differ from `dub_text` (in v0.1 in-game subtitles are not changed).
 4. **Placeholders and tags** (`{0}`, `{name}`, `%s`, `<color=…>`, `[b]`, Unity Smart Strings) are carried over byte for byte **into `dub_text`, `sub_text` and every variant**: `batch submit` checks all three, and before synthesis the CLI strips the markup itself so it is not spoken. Details: [references/placeholders.md](references/placeholders.md).
 5. **Names and terms come only from the glossary.** Do not invent your own: translate a missing term by meaning and list it in `notes` or in `new_terms` of the role's answer.
 6. **Target-language grammar:** gender of the speaker and the addressee, formal or informal "you", agreement. For Russian: [references/russian.md](references/russian.md).
+7. **Delivery tags.** Every batch line carries `delivery_hint`: tags measured from the original's prosody against the same character's other lines (often `[]`: the character's normal delivery). The voice engine performs the line with them. Read the scene (`context_prev`, `context_next`, `style`) and the line, and give `delivery` **only when you disagree** with the hint: up to 3 tags of `shouting, whispered, urgent, energetic, calm, sad, soft, loud, quick, slow, expressive, flat`; `[]` means an explicitly neutral delivery; no `delivery` field accepts the hint. A measurement hears loudness and pitch, not meaning: sarcasm, crying, a whisper inside a loud scene or a joke shouted for fun are where you correct it. Never ask the user about delivery. Rules and examples: [references/batch-format.md](references/batch-format.md), section 2a.
 
 ## Stage flow
 
@@ -67,10 +68,10 @@ Reacting to `batch submit`:
 | Code | Meaning | Action |
 |---|---|---|
 | 0 | the batch is merged | run `batch next` again |
-| 2 | `errors[]`: missing `id`, empty `dub_text`, broken placeholders, invalid JSON; details in `errors_file` | fix your `.out.jsonl` and submit again, up to 3 iterations |
+| 2 | `errors[]`: missing `id`, empty `dub_text`, broken placeholders, a `delivery` that is not a list of at most 3 vocabulary tags (`hint` lists them), invalid JSON; details in `errors_file` | fix your `.out.jsonl` and submit again, up to 3 iterations |
 | 3 | `over_budget[]`: lines more than 15% over budget | provide shorter `variants` and submit again (1 iteration); if a line cannot get shorter without losing meaning, leave it: `post` does the rest of the fitting |
 
-Resubmitting a changed `.out.jsonl` creates a new translation revision; an unchanged file is not merged twice.
+Resubmitting a changed `.out.jsonl` creates a new translation revision; an unchanged file is not merged twice. A changed `delivery` on an already voiced line makes `synth` voice the same text again with the new delivery.
 
 ### 4. Glossary check
 
@@ -93,7 +94,8 @@ In the batch, such lines carry `task` (`shorten` or `retranslate`) and `current`
 ## What not to do
 
 - Do not polish the translation into literary prose at the cost of length and intonation: this is a dub, not subtitles.
-- Do not add bracketed stage directions ("(laughs)"): they are not meant to be spoken, and the model will read them aloud.
+- Do not add bracketed stage directions ("(laughs)", "(whispering)") to the text: they are not meant to be spoken, and the model will read them aloud. The delivery goes into `delivery`, never into `dub_text`.
+- Do not set `delivery` on every line "to be safe": most lines are the character's normal delivery, and a tag the scene does not need over-acts the line.
 - Do not edit `translate/translations.jsonl`, `glossary.jsonl` or `.in.jsonl`: only the CLI writes the canon.
 - Do not read other batches or whole project files; get data through `query` and `sample`.
 - Do not change names already fixed by the glossary or the official translation.
@@ -104,5 +106,5 @@ In the batch, such lines carry `task` (`shorten` or `retranslate`) and `current`
 - On `over_budget[]`, `fixed_length`, `shorten`: [references/length-budget.md](references/length-budget.md).
 - When translating into Russian (gender, formal or informal "you", the letter «ё», stress marks, numbers, shortening for dubbing): [references/russian.md](references/russian.md).
 - Lexicon role, glossary and style bible format: [references/glossary-format.md](references/glossary-format.md).
-- Format of `.in.jsonl` and `.out.jsonl`, fields and examples: [references/batch-format.md](references/batch-format.md).
+- Format of `.in.jsonl` and `.out.jsonl`, fields, the delivery tags with examples: [references/batch-format.md](references/batch-format.md).
 - Choosing between `official`, `adapt` and `translate`, rules for adapting official text: [references/adapt-vs-translate.md](references/adapt-vs-translate.md).
