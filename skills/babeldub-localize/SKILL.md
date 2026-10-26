@@ -4,7 +4,7 @@ description: "Localize and dub any video game end to end in the voices of its or
 license: MIT
 compatibility: "Local agent with shell access; Windows 10/11 or Linux; Python 3.10+ with uv; ffmpeg. GPU-first: an NVIDIA GPU with 8+ GB VRAM runs all neural work (voice cloning, speech recognition, voice similarity); CPU works but is slow. Web chats without file access can only translate exported batches."
 metadata:
-  babeldub-cli: "0.2.0"
+  babeldub-cli: "0.3.0"
 ---
 
 # BabelDub: localize and dub a game in the voices of its original characters

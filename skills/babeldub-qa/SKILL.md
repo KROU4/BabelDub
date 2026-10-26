@@ -4,7 +4,7 @@ description: "Quality control of a game dub voiced in the original characters' v
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 with the qc engine installed (babeldub setup --engines qc, faster-whisper and SpeechBrain ECAPA); NVIDIA GPU recommended, CPU works slower."
 metadata:
-  babeldub-cli: "0.2.0"
+  babeldub-cli: "0.3.0"
 ---
 
 # BabelDub: dub quality control

@@ -4,7 +4,7 @@ description: "Put a finished dub back into the game as native files: rebuild eng
 license: MIT
 compatibility: "Local agent with shell access to the game folder; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); vgmstream-cli and ffmpeg for some formats. No GPU needed. Native rebuild in v0.1: FMOD Studio banks and loose audio files; other engines follow the format references."
 metadata:
-  babeldub-cli: "0.2.0"
+  babeldub-cli: "0.3.0"
 ---
 
 # BabelDub: build, install and rollback

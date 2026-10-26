@@ -5,6 +5,8 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 Delivery tags: VoxCPM2 voices every line from the character's long original reference plus a short instruction of how this particular line is delivered, measured on the original and corrected by the translator agent. Chosen in blind listening on the 38-line test set of Low-Budget Repairs over v0.2's target-language prompt bank, although its metrics were slightly lower than the same chain without tags (CER with numbers spelled out 0.030 vs 0.020, UTMOS 2.73 vs 2.81, single raw takes).
 
 ### Added
