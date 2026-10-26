@@ -921,10 +921,10 @@ def _plan_synth(
                               refs_by_char, analysis, tags_reference(project))
     delivery_mode = delivery_setting(project)
     controls = engine.name in CONTROL_ENGINES and strategy == "tags"
-    # a non-control engine plans the tags only to say once that it ignores them
-    plans = controls or (engine.name not in CONTROL_ENGINES and delivery_mode != "off")
-    measured = measured_tags(project, analysis, lines_all.values()) if plans and delivery_mode != "off" else {}
-    ignored = 0
+    # an engine without a control text measures nothing: one note says the tags are not voiced
+    ignores = engine.name not in CONTROL_ENGINES and delivery_mode != "off"
+    measured = measured_tags(project, analysis, lines_all.values()) if controls and delivery_mode != "off" else {}
+    agent_tagged = 0  # ignores: planned lines whose translation carries the agent's tags
 
     accent_map: dict[str, str] = {}
     if accent is not None:
@@ -956,7 +956,7 @@ def _plan_synth(
         if not text:
             skipped["empty_text"] += 1
             continue
-        plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if plans else None
+        plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)
@@ -1071,22 +1071,24 @@ def _plan_synth(
                 job.alt_ref = char_ref
         if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and job.ref.mode not in LONG_REF_MODES:
             job.x_vector_only = True  # a prompt without a transcript can only give the timbre
-        if plan is not None and controls:
+        if plan is not None:
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
             job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
             job.delivery_tags = delivery_mode
-        elif plan is not None and plan.tags:
-            ignored += 1
+        elif ignores and delivery_mode == "on" and clean_tags(tr.get("delivery")):
+            agent_tagged += 1
         job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
         job.key = _job_key(project, engine, job)
         job.seed = _seed(line_id, job.attempt)
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
     jobs.sort(key=lambda j: j.sort_key)
-    if ignored and notes is not None:
-        notes.append(f"control_ignored: the {engine.name} engine reads no delivery control text, {ignored} lines "
-                     "with delivery tags are voiced without them")
+    if ignores and jobs and (analysis or agent_tagged) and notes is not None:
+        sources = (["measured on the originals"] if analysis else []) + (
+            [f"the translator's on {agent_tagged} lines"] if agent_tagged else [])
+        notes.append(f"control_ignored: the {engine.name} engine reads no delivery control text, the delivery tags "
+                     f"({', '.join(sources)}) are not voiced")
     if keep_rows and not args.dry_run:
         _ensure_header(project.path(layout.DECISIONS), DECISIONS_SCHEMA)
         append_jsonl(project.path(layout.DECISIONS), keep_rows)

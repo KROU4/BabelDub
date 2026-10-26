@@ -362,16 +362,26 @@ def test_short_word_gets_tags_and_bucket_reference(project: Project, capsys: pyt
     assert ":loud:" not in jobs[line_id(1)].ref.ref_id and jobs[line_id(1)].bucket == "calm"
 
 
-def test_bootstrap_explicit_and_engines_without_control(project: Project,
-                                                       capsys: pytest.CaptureFixture[str]) -> None:
+def test_bootstrap_explicit_and_engines_without_control(project: Project, capsys: pytest.CaptureFixture[str],
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     run(capsys, project.root, "set", "tts.ref_strategy=bootstrap")
     code, out = run(capsys, project.root, "synth", "--dry-run")
     assert out["ref_strategy"] == "bootstrap" and "delivery" not in out and set(out["by_ref"]) == {"bootstrap-src"}
     run(capsys, project.root, "set", "tts.ref_strategy=auto")
+
+    def no_measuring(*_: Any, **__: Any) -> None:
+        raise AssertionError("an engine without a control text measures no tags")
+
+    monkeypatch.setattr(voice, "measured_tags", no_measuring)
     code, out = run(capsys, project.root, "synth", "--dry-run", "--engine", "qwen3tts", "--device", "cpu")
     assert out["engine"] == "qwen3tts" and out["ref_strategy"] == "auto" and "delivery" not in out
     ignored = [n for n in out["notes"] if n.startswith("control_ignored")]
-    assert len(ignored) == 1 and "2 lines" in ignored[0]
+    assert len(ignored) == 1 and "measured on the originals" in ignored[0] and "translator" not in ignored[0]
+    retranslate(project, 2, delivery=["sad"])
+    retranslate(project, 5, delivery=[])
+    code, out = run(capsys, project.root, "synth", "--dry-run", "--engine", "qwen3tts", "--device", "cpu")
+    ignored = [n for n in out["notes"] if n.startswith("control_ignored")]
+    assert len(ignored) == 1 and "the translator's on 1 lines" in ignored[0]
     run(capsys, project.root, "set", "tts.ref_strategy=tags")
     code, out = run(capsys, project.root, "synth", "--dry-run", "--engine", "chatterbox", "--device", "cpu")
     assert out["ref_strategy"] == "auto" and any("needs the voxcpm engine" in n for n in out["notes"])

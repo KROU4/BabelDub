@@ -113,21 +113,39 @@ def population(
     return feats, by_char
 
 
+def _median_without(ordered: np.ndarray, removed: np.ndarray) -> np.ndarray:
+    """np.median of the sorted array `ordered` with one occurrence of removed[i] taken out, for every i, bit for
+    bit: index k of the shortened array is ordered[k] below the removed value's rank and ordered[k + 1] from it."""
+    rank = np.searchsorted(ordered, removed)  # any occurrence of a repeated value leaves the same array
+    m = ordered.size - 1
+
+    def at(k: int) -> np.ndarray:
+        return np.where(rank <= k, ordered[k + 1], ordered[k])
+
+    return at(m // 2) if m % 2 else (at(m // 2 - 1) + at(m // 2)) / 2
+
+
 def _character_z(ids: list[str], feats: Mapping[str, Mapping[str, Any]]) -> dict[str, tuple[dict[str, float], dict[str, dict[str, float]]]]:
-    """Leave-one-out robust z of every feature of every line of one character."""
+    """Leave-one-out robust z of every feature of every line of one character, in O(n log n): the leave-one-out
+    median takes at most three values, and each one's MAD is the median of the sorted absolute deviations of
+    the whole population without the line's own deviation."""
     out: dict[str, tuple[dict[str, float], dict[str, dict[str, float]]]] = {lid: ({}, {}) for lid in ids}
     for key, (floor, needs_long) in FEATURES.items():
         members = [lid for lid in ids if feats[lid].get(key) is not None and (feats[lid]["long"] or not needs_long)]
         if len(members) <= MIN_POPULATION:  # each line is compared with the others: n - 1 >= MIN_POPULATION
             continue
         values = np.array([float(feats[lid][key]) for lid in members], dtype=float)
-        for i, lid in enumerate(members):
-            pop = np.delete(values, i)
-            med = float(np.median(pop))
-            scale = max(1.4826 * float(np.median(np.abs(pop - med))), floor)
-            x = float(values[i])
+        medians = _median_without(np.sort(values), values)
+        mads = np.empty_like(values)
+        for center in np.unique(medians):
+            pick = medians == center
+            deviations = np.abs(values - center)
+            mads[pick] = _median_without(np.sort(deviations), deviations[pick])
+        n = values.size - 1
+        for lid, x, med, mad in zip(members, values.tolist(), medians.tolist(), mads.tolist(), strict=True):
+            scale = max(1.4826 * mad, floor)
             out[lid][0][key] = round((x - med) / scale, 2)
-            out[lid][1][key] = {"x": round(x, 3), "median": round(med, 3), "scale": round(scale, 3), "n": int(pop.size)}
+            out[lid][1][key] = {"x": round(x, 3), "median": round(med, 3), "scale": round(scale, 3), "n": n}
     return out
 
 

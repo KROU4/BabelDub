@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import Any
 
+import numpy as np
 import pytest
 
 from babeldub.analysis import prosody_tags as pt
@@ -128,3 +130,51 @@ def test_delivery_counts() -> None:
     assert pt.delivery_counts(rows) == {"by_source": {"measured": 1, "agent": 2, "dropped": 1, "none": 1},
                                         "tags": {"shouting": 2, "quick": 1}}
     assert pt.delivery_counts([{"status": "ok"}]) is None
+
+
+def naive_character_z(ids: list[str], feats: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """The O(n^2) definition: np.median over each population without the line."""
+    out: dict[str, Any] = {lid: ({}, {}) for lid in ids}
+    for key, (floor, needs_long) in pt.FEATURES.items():
+        members = [lid for lid in ids if feats[lid].get(key) is not None and (feats[lid]["long"] or not needs_long)]
+        if len(members) <= pt.MIN_POPULATION:
+            continue
+        values = np.array([float(feats[lid][key]) for lid in members], dtype=float)
+        for i, lid in enumerate(members):
+            pop = np.delete(values, i)
+            med = float(np.median(pop))
+            scale = max(1.4826 * float(np.median(np.abs(pop - med))), floor)
+            x = float(values[i])
+            out[lid][0][key] = round((x - med) / scale, 2)
+            out[lid][1][key] = {"x": round(x, 3), "median": round(med, 3), "scale": round(scale, 3), "n": int(pop.size)}
+    return out
+
+
+@pytest.mark.parametrize("ties", ["none", "coarse", "integers"])
+def test_fast_leave_one_out_equals_the_naive_one(ties: str) -> None:
+    gen = np.random.default_rng({"none": 1, "coarse": 2, "integers": 3}[ties])
+    for _ in range(25):
+        n = int(gen.integers(5, 90))
+        feats: dict[str, dict[str, Any]] = {}
+        for i in range(n):
+            speech = float(gen.choice([0.8, 2.0, 4.0]))
+            feat: dict[str, Any] = {"speech_s": speech, "long": speech >= pt.LONG_S}
+            for key in pt.FEATURES:
+                value = float(gen.normal(0.0, 3.0)) if gen.random() > 0.1 else None
+                if value is not None and ties == "coarse":
+                    value = round(value, 1)
+                elif value is not None and ties == "integers":
+                    value = float(round(value / 3))  # mostly -1, 0, 1: zero MADs, the floors apply
+                feat[key] = value
+            feats[f"l{i}"] = feat
+        ids = list(feats)
+        assert pt._character_z(ids, feats) == naive_character_z(ids, feats)
+
+
+def test_leave_one_out_scales_to_a_big_character() -> None:
+    gen = np.random.default_rng(5)
+    analysis = {f"l{i}": row(f0=float(gen.normal(130, 8)), rms=float(gen.normal(-20, 2)), rate=float(gen.normal(4.5, 0.6)))
+                for i in range(20000)}
+    started = time.perf_counter()
+    measured = pt.measure(analysis, cast_of(analysis))
+    assert len(measured) == 20000 and time.perf_counter() - started < 15.0  # the O(n^2) version took ~40 s
