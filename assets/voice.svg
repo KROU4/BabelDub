@@ -139,8 +139,8 @@
     <text x="84" y="523" font-size="14" fill="#B7AEDF">then sharpened by an RVC model</text>
     <rect x="456" y="460" width="4" height="66" rx="2" fill="#FF5C8A"/>
     <text x="476" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Emotion</text>
-    <text x="476" y="503" font-size="14" fill="#B7AEDF">the voice prompt is chosen to match</text>
-    <text x="476" y="523" font-size="14" fill="#B7AEDF">the line’s energy: calm, loud, soft</text>
+    <text x="476" y="503" font-size="14" fill="#B7AEDF">delivery tags measured on the original</text>
+    <text x="476" y="523" font-size="14" fill="#B7AEDF">line steer the voice: shout, whisper, calm</text>
     <rect x="848" y="460" width="4" height="66" rx="2" fill="#9B7BFF"/>
     <text x="868" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Timing</text>
     <text x="868" y="503" font-size="14" fill="#B7AEDF">exactly the original’s length;</text>

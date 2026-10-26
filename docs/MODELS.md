@@ -9,8 +9,8 @@ This page explains which models BabelDub uses for each task and hardware tier, t
 Chosen by the project owner in blind listening rounds on a real game (Low-Budget Repairs, the character Zbyszek, English → Russian), against Qwen3-TTS with and without RVC, Seed-VC and Qwen3-TTS fine-tunes:
 
 1. **TTS: VoxCPM2** (`voxcpm`): 2B, 48 kHz, 30 languages, Apache-2.0.
-2. **Bootstrap voice prompts** (`tts.ref_strategy=auto` → `bootstrap`): every line gets the character's ~15–20 s long timbre reference made of 3–4 clean original lines; the first 4 lines of each character are dubbed with it alone; once QA accepted 3 of them, their final audio and exact text become a ~20–26 s target-language prompt for the rest of the character's lines.
-3. **Best of 3** (`tts.best_of`): three takes per line with different seeds; the one whose speech length (energy VAD at −42 dB) is closest to the original's wins.
+2. **The long original reference plus delivery tags** (`tts.ref_strategy=auto` → `tags`): every line gets the character's ~15–20 s long timbre reference made of 3–4 clean original lines (`tts.tags_reference=main`; `bucket` takes the reference of the line's arousal bucket) plus a short English control text that VoxCPM2 reads before the dub text, for example `(shouting, slightly faster)`. It is made of the line's delivery tags (12-tag vocabulary, at most 3 per line): measured on the original line against the same character's other lines (robust z-scores of pitch, loudness, voicing, pitch range and speaking rate), or set by the translator agent from the scene (`tts.delivery_tags=on|measured|off`). A regen after an intelligibility (`cer`) failure, and any regen from attempt 3 on, drops the control text. `tts.ref_strategy=bootstrap` (the v0.2 chain: the first lines with the long reference alone, then a target-language prompt bank from the character's accepted dubs) stays available.
+3. **Best of 3** (`tts.best_of`): three takes per line with different seeds; with the `qc` env they are scored (prosody similarity to the original, MOS, length, voice similarity), otherwise the one whose speech length (energy VAD at −42 dB) is closest to the original's wins.
 4. **Exact fit** (`post`): never slower; a long dub loses part of its pauses, then speeds up to at most 1.15 (pitch kept); the rest is silence; cutscene chunks start at the original's speech segments; the speech starts where the original's starts; the file has exactly the original's sample count, rate and channels; loudness follows the original speech.
 5. **RVC timbre transfer** (`vc`, Applio, MIT): one RVC v2 model per main character, trained once on its clean original lines (`babeldub vc train`, 20 epochs on up to 30 minutes by default), converts every dub of that character in any target language.
 6. **QA**: Whisper (with VAD) for CER and ECAPA speaker similarity with cross-language calibration.
@@ -18,7 +18,8 @@ Chosen by the project owner in blind listening rounds on a real game (Low-Budget
 
 Measured on Low-Budget Repairs with the QA models: VoxCPM2 + RVC CER **0.045** (Qwen3-TTS + RVC: 0.050); ECAPA similarity to the original actor **~0.65–0.70**, where the originals among themselves reach 0.77. Findings of the rounds:
 
-- **The per-language reference matters.** A reference in the source language alone gives the target-language speech the original's accent; the target-language prompt made of the character's own accepted dubs removes it while the long original reference keeps the actor's timbre.
+- **The per-language reference matters.** A reference in the source language alone can give the target-language speech the original's accent; the target-language prompt made of the character's own accepted dubs removes it while the long original reference keeps the actor's timbre (`tts.ref_strategy=bootstrap`, the default of v0.2).
+- **Delivery tags (v0.3).** In a blind listening round on a 38-line test set (13 characters) the long original reference with delivery tags was preferred over v0.2's target-language prompt bank, although its metrics were slightly lower than the same reference without tags (CER with numbers spelled out 0.030 vs 0.020, UTMOS 2.73 vs 2.81, single raw takes). VoxCPM2 reads the control text only in timbre-only mode, so the two are never combined.
 - **Seed-VC was rejected:** zero-shot voice conversion hallucinated words and sounds.
 - **Stress marks break Qwen3-TTS Base and VoxCPM2:** both voice U+0301 as extra sounds, so the CLI strips the marks for every model except an explicit stress model.
 
@@ -57,7 +58,7 @@ Each engine has its own venv in `BABELDUB_HOME/envs/<engine>` because the packag
 
 ## Measured on an RTX 3060 Ti (8 GB)
 
-- **VoxCPM2:** peak VRAM 6.5 GB. With `best_of=3` every line is generated three times; use `--best-of 1` for a fast draft.
+- **VoxCPM2:** peak VRAM 6.5 GB. With `best_of=3` every line is generated three times; use `--best-of 1` for a fast draft. The delivery control text is not spoken: the worker counts only the dub text for its length cap and bad-case check.
 - **RVC (Applio):** 50 epochs on 30 minutes of a character's speech took 37 minutes; the default of 20 epochs takes about 15 minutes per character.
 - **Qwen3-TTS-12Hz-1.7B-Base** on Low-Budget Repairs lines:
 

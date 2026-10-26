@@ -139,8 +139,8 @@
     <text x="84" y="523" font-size="14" fill="#B7AEDF">и уточняется моделью RVC</text>
     <rect x="456" y="460" width="4" height="66" rx="2" fill="#FF5C8A"/>
     <text x="476" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Эмоция</text>
-    <text x="476" y="503" font-size="14" fill="#B7AEDF">образец голоса подбирается под</text>
-    <text x="476" y="523" font-size="14" fill="#B7AEDF">энергию реплики: спокойно, крик, тихо</text>
+    <text x="476" y="503" font-size="14" fill="#B7AEDF">теги подачи, измеренные по оригиналу,</text>
+    <text x="476" y="523" font-size="14" fill="#B7AEDF">ведут голос: крик, шёпот, спокойно</text>
     <rect x="848" y="460" width="4" height="66" rx="2" fill="#9B7BFF"/>
     <text x="868" y="480" font-size="17" font-weight="700" fill="#F3F0FF">Тайминг</text>
     <text x="868" y="503" font-size="14" fill="#B7AEDF">ровно длина оригинала;</text>
