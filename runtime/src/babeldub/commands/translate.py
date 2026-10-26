@@ -623,7 +623,7 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
                 "context_next": nxt,
                 "delivery_hint": list(measured[ln["id"]].tags) if ln["id"] in measured else [],
             }
-            segmented =segment_text(src_text(ln), segments, str(project.data.get("source_lang") or "en"))
+            segmented = segment_text(src_text(ln), segments, str(project.data.get("source_lang") or "en"))
             if segmented:
                 row["src_segmented"] = segmented
             task = tasks.get(ln["id"], "translate")
