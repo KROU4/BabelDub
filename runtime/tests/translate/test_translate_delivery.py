@@ -83,3 +83,53 @@ def test_batch_submit_validates_and_stores_delivery(bd, project_with_lines, line
     assert merged[ids[1]]["delivery"] == []  # explicitly neutral
     assert "delivery" not in merged[ids[2]]  # not given: synth takes the measured tags
     assert merged[ids[3]]["delivery"] == ["whispered"]
+
+
+def test_rework_keeps_the_agent_delivery_and_null_is_not_given(bd, project_with_lines, line):
+    lines = [line(i, src=f"Line {i}.") for i in range(4)]
+    project = project_with_lines(lines)
+    ids = [ln["id"] for ln in lines]
+    bd("batch", "make")
+    _write_out(project.path(layout.BATCHES_DIR, "b0001.out.jsonl"), [
+        {"id": ids[0], "dub_text": "Реплика ноль.", "delivery": ["whispered"]},
+        {"id": ids[1], "dub_text": "Реплика один.", "delivery": None},  # null = not given, not an error
+        {"id": ids[2], "dub_text": "Реплика два.", "delivery": []},
+        {"id": ids[3], "dub_text": "Реплика три.", "delivery": ["sad"]},
+    ])
+    code, out = bd("batch", "submit", "b0001")
+    assert code == 0 and out["merged"] == 4, out
+    assert "delivery" not in latest_by(read_jsonl(project.path(layout.TRANSLATIONS)))[ids[1]]
+
+    # rework: retranslate (--ids) and shorten (a QA decision) rows show the current delivery
+    write_jsonl(project.path(layout.DECISIONS), [{"id": ids[2], "decision": "shorten", "attempt": 1, "by": "auto"}])
+    code, out = bd("batch", "make", "--ids", f"{ids[0]},{ids[1]},{ids[3]}", "--from-decisions")
+    assert code == 0 and out["lines"] == 4, out
+    header, rows = _in_rows(project.path(layout.BATCHES_DIR, "b0002.in.jsonl"))
+    assert "current_delivery" in header["rules"]
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[ids[0]]["task"] == "retranslate" and by_id[ids[0]]["current_delivery"] == ["whispered"]
+    assert "current_delivery" not in by_id[ids[1]]
+    assert by_id[ids[2]]["task"] == "shorten" and by_id[ids[2]]["current_delivery"] == []
+    _write_out(project.path(layout.BATCHES_DIR, "b0002.out.jsonl"), [
+        {"id": ids[0], "dub_text": "Ноль."},  # left out: the whisper stays
+        {"id": ids[1], "dub_text": "Один.", "delivery": None},  # nothing to keep: the hint applies
+        {"id": ids[2], "dub_text": "Два."},  # explicitly neutral stays neutral
+        {"id": ids[3], "dub_text": "Три.", "delivery": ["calm"]},  # changed
+    ])
+    code, out = bd("batch", "submit", "b0002")
+    assert code == 0 and out["merged"] == 4, out
+    merged = latest_by(read_jsonl(project.path(layout.TRANSLATIONS)))
+    assert merged[ids[0]]["rev"] == 2 and merged[ids[0]]["dub_text"] == "Ноль."
+    assert merged[ids[0]]["delivery"] == ["whispered"]
+    assert "delivery" not in merged[ids[1]]
+    assert merged[ids[2]]["delivery"] == []
+    assert merged[ids[3]]["delivery"] == ["calm"]
+
+    # a fresh translate row never inherits: no delivery accepts the hint
+    _write_out(project.path(layout.BATCHES_DIR, "b0001.out.jsonl"), [
+        {"id": ids[0], "dub_text": "Реплика ноль."}, {"id": ids[1], "dub_text": "Реплика один."},
+        {"id": ids[2], "dub_text": "Реплика два."}, {"id": ids[3], "dub_text": "Реплика три."},
+    ])
+    code, out = bd("batch", "submit", "b0001", "--force")
+    assert code == 0, out
+    assert "delivery" not in latest_by(read_jsonl(project.path(layout.TRANSLATIONS)))[ids[0]]

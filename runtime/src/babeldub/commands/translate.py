@@ -70,6 +70,7 @@ PAUSE_MARK_S = 0.25  # original pauses at least this long are shown as " / " in 
 STYLE_LIMIT = 8000
 MAX_ERRORS_SHOWN = 20
 _BATCH_ID_RE = re.compile(r"^b\d{4,}$")
+REWORK_TASKS = ("retranslate", "shorten")  # a new text for a line that has one: its agent delivery carries over
 
 RULES = (
     "Write {out}: one JSON object per line {{id, dub_text, sub_text?, variants?, delivery?, notes?}} for EVERY id below. "
@@ -90,7 +91,8 @@ RULES = (
     "(often empty); the voice engine performs the line with them. Give delivery = up to {max_tags} tags of "
     "[{tags}] when the scene or context calls for a delivery the measurement missed or got wrong (sarcasm, "
     "crying, a whisper in a loud scene...), delivery = [] for an explicitly neutral delivery, and leave delivery "
-    "out to accept the hint."
+    "out to accept the hint. task=retranslate/shorten rows may carry current_delivery, the delivery chosen for the "
+    "current text: leaving delivery out keeps it, delivery_hint's tags return to the measured delivery."
 )
 
 
@@ -632,6 +634,8 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
                 current = translations.get(ln["id"])
                 if current:
                     row["current"] = current.get("dub_text")
+                    if isinstance(current.get("delivery"), list):  # the agent's delivery, kept unless changed
+                        row["current_delivery"] = current["delivery"]
             rows.append(row)
         write_jsonl(in_path, rows)
         index["batches"][bid] = {
@@ -753,7 +757,9 @@ def validate_out(in_rows: list[dict[str, Any]], out_rows: list[dict[str, Any]]) 
         if variants is not None and (not isinstance(variants, list) or not all(isinstance(v, str) and v.strip() for v in variants)):
             errors.append({**where, "error": "variants must be a list of non-empty strings"})
             continue
-        if "delivery" in row:  # absent = accept the measured hint; [] = explicitly neutral
+        if row.get("delivery") is None:  # absent or null = not given; [] = explicitly neutral
+            row.pop("delivery", None)
+        else:
             try:
                 row["delivery"] = parse_tags(row["delivery"])
             except ValueError as exc:
@@ -843,10 +849,13 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
         sub = out.get("sub_text")
         if not (isinstance(sub, str) and sub.strip()) and in_row.get("task") == "adapt" and in_row.get("tgt_official"):
             sub = in_row["tgt_official"]  # an adapted dub keeps the official subtitle
+        delivery = out.get("delivery")  # absent = not given (None is dropped), [] = explicitly neutral
+        if delivery is None and in_row.get("task") in REWORK_TASKS and current and isinstance(current.get("delivery"), list):
+            delivery = list(current["delivery"])  # a rework keeps the delivery the agent chose before
         row = make_translation(
             line, dub, sub.strip() if isinstance(sub, str) and sub.strip() else None, lang, "agent", rev, timing,
             batch=bid, variants=variants or None, picked_variant=picked, notes=out.get("notes") or None,
-            delivery=out.get("delivery"),  # absent = not given (None is dropped), [] = explicitly neutral
+            delivery=delivery,
         )
         if picked is not None:
             row["agent_text"] = out["dub_text"].strip()

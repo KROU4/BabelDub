@@ -32,7 +32,7 @@ Then the lines:
 
 `delivery_hint` holds the delivery tags measured from the original's prosody against the same character's other lines; `[]` means the character's normal delivery (or no measurement).
 
-Lines with an official text in an `adapt` batch have `task: "adapt"`. Lines that came back from QA also have `task` (`shorten` — make it shorter, `retranslate` — translate again) and `current` (the current `dub_text`).
+Lines with an official text in an `adapt` batch have `task: "adapt"`. Lines that came back from QA also have `task` (`shorten` — make it shorter, `retranslate` — translate again) and `current` (the current `dub_text`); when an agent chose a delivery for the current text, also `current_delivery`.
 
 ## Modes
 
@@ -57,7 +57,8 @@ Never put U+0301 stress marks into `dub_text`: the default TTS engines voice the
 11. **Delivery tags.** Read `delivery_hint` with the scene (`context_prev`, `context_next`, `style`) and the line. The measurement hears loudness and pitch, not meaning, so correct it where the scene says otherwise; otherwise leave it alone:
     - you agree (the normal case) → no `delivery` field;
     - you disagree → `delivery`: up to 3 tags of `delivery_tags`, the main delivery first, no opposites (`shouting` + `whispered`, `quick` + `slow`, `expressive` + `flat`);
-    - the hint asks for a delivery the scene does not have → `delivery: []` (explicitly neutral).
+    - the hint asks for a delivery the scene does not have → `delivery: []` (explicitly neutral);
+    - a `shorten`/`retranslate` line with `current_delivery` → no `delivery` field keeps it for the new text; give `delivery` only to change it (repeat `delivery_hint` to return to the measured delivery).
 
     Examples: dry sarcasm the hint missed (`[]`) → `["calm", "flat"]`; sobbing heard as liveliness (`["expressive"]`) → `["sad", "soft", "slow"]`; a whisper while hiding in a loud scene, recorded at full voice (`["urgent"]`) → `["whispered", "urgent"]`; a friendly joke the hint marks `["shouting", "quick"]` → `["energetic", "expressive"]`. Tags do not count toward `budget_syll`, never go into `dub_text` as a bracketed direction, and are never a question for the human.
 

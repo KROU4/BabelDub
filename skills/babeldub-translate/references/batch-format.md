@@ -46,6 +46,7 @@ Then one line per voice line:
 | `delivery_hint` | delivery tags measured from the original's prosody against the same character's other lines; `[]` when the line is the character's normal delivery, or without a measurement (section 2a) |
 | `task` | only for rework: `adapt`, `shorten` or `retranslate` |
 | `current` | only with `task`: the line's current text, to be improved or shortened |
+| `current_delivery` | only with `task` and only when the current text has one: the `delivery` an agent chose for it; on `shorten`/`retranslate` it is kept unless you give `delivery` (section 2a) |
 
 You can and should read the batch in full. Do not read other batches or project files.
 
@@ -63,7 +64,7 @@ One object for **every** line of the batch, UTF-8 without BOM, no blank lines:
 | `dub_text` | yes | non-empty string; all placeholders and tags from `placeholders` |
 | `sub_text` | no | string; only if the subtitle must differ from `dub_text`; the same placeholders |
 | `variants` | no | list of non-empty strings, each shorter than the previous one; the same placeholders |
-| `delivery` | no | only when you disagree with `delivery_hint`: a list of at most 3 tags of `delivery_tags`; `[]` = explicitly neutral; leave the field out to accept the hint (section 2a) |
+| `delivery` | no | only when you disagree with `delivery_hint`: a list of at most 3 tags of `delivery_tags`; `[]` = explicitly neutral; leave the field out (or `null`) to accept the hint, on a `shorten`/`retranslate` line with `current_delivery` to keep that one (section 2a) |
 | `notes` | no | string: what was changed during adaptation, doubts, how a placeholder sounds |
 
 A repeated `id` in the file is allowed: the last line wins. Lines with `_batch` or `_schema` are ignored.
@@ -87,9 +88,10 @@ Rules:
 2. **Agree → leave `delivery` out.** That is the normal case: most hints are right, and most lines have `[]` (the character's normal delivery).
 3. **Disagree → give `delivery`:** up to 3 tags from `delivery_tags`, written as in the vocabulary (case and spaces do not matter, repeats are dropped), the main delivery first (`["whispered", "urgent"]`). Do not combine opposites (`shouting` + `whispered`, `quick` + `slow`, `expressive` + `flat`).
 4. **`[]`** = explicitly neutral: use it when the hint asks for a delivery the scene does not have (a "loud" line that is a calm explanation).
-5. Your `delivery` wins over the measurement for this line (unless the project ignores agent tags: `tts.delivery_tags=measured`). The text and the tags must agree: a whispered line gets no exclamation marks, a shouted one keeps them.
-6. Tags never count toward `budget_syll`, and `quick` does not make room for a longer text. Never put a delivery into `dub_text` as a bracketed direction.
-7. Decide yourself; never ask the user. A real doubt goes to `notes`.
+5. Your `delivery` wins over the measurement for this line (unless the project ignores agent tags: `tts.delivery_tags=measured`). The text and the tags must agree: a whispered line gets no exclamation marks, a shouted one keeps them. Repeating `delivery_hint` exactly is the same as leaving `delivery` out.
+6. **Rework lines** (`task: shorten` or `retranslate`) with `current_delivery`: an agent already chose that delivery for the line. Leave `delivery` out to keep it (the CLI carries it over to the new text), give a new `delivery` to change it, or repeat `delivery_hint` to return to the measured delivery. Without `current_delivery` a rework line works like any other: no `delivery` accepts the hint.
+7. Tags never count toward `budget_syll`, and `quick` does not make room for a longer text. Never put a delivery into `dub_text` as a bracketed direction.
+8. Decide yourself; never ask the user. A real doubt goes to `notes`.
 
 Examples (Russian target; the lines are illustrations):
 
@@ -118,7 +120,7 @@ Examples (Russian target; the lines are illustrations):
 | `delivery`, when present, is a list of at most 3 tags of the vocabulary | exit code 2: "unknown delivery tag 'angry'", "delivery takes at most 3 tags, got 4"; the output has a `hint` with the vocabulary |
 | syllables of `dub_text` are within 115% of the budget; if not, the first variant that fits | exit code 3 and `over_budget[]` if none fits |
 
-With exit code 2, the full error list is in the file named by the `errors_file` field. After fixing, submit the same `<bid>` again. After a successful submission the CLI writes to `translate/translations.jsonl`: `id`, `dub_text`, `sub_text`, `lang`, `by` (`agent`), `rev`, `est_syll`, `budget_syll`, `fit`, `batch`, `variants`, `picked_variant`, `notes`, `delivery` (only when you gave it; `[]` is kept as explicitly neutral).
+With exit code 2, the full error list is in the file named by the `errors_file` field. After fixing, submit the same `<bid>` again. After a successful submission the CLI writes to `translate/translations.jsonl`: `id`, `dub_text`, `sub_text`, `lang`, `by` (`agent`), `rev`, `est_syll`, `budget_syll`, `fit`, `batch`, `variants`, `picked_variant`, `notes`, `delivery` (only when you gave it, or carried over from `current_delivery` on a rework line; `[]` is kept as explicitly neutral).
 
 ## 4. Working without the CLI (web chats)
 
