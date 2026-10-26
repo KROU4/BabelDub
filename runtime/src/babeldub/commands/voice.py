@@ -797,7 +797,9 @@ def _tags_states(
 
 
 def delivery_setting(project: Project) -> str:
-    value = str(project.setting("tts", "delivery_tags", "on") or "on")
+    raw = project.setting("tts", "delivery_tags", "on")
+    # a hand-edited JSON boolean: false = off, true = on (never `false or "on"`)
+    value = ("on" if raw else "off") if isinstance(raw, bool) else str(raw or "on")
     if value not in DELIVERY_SETTINGS:
         raise BabelDubError(f"tts.delivery_tags must be one of {list(DELIVERY_SETTINGS)}", code=EXIT_USAGE,
                             hint="`babeldub set tts.delivery_tags=on`")

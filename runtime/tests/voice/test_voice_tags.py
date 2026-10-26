@@ -420,3 +420,12 @@ def test_settings_defaults_and_validation(project: Project, capsys: pytest.Captu
     project.save()
     with pytest.raises(BabelDubError, match="tts.delivery_tags"):
         plan(project)
+    for raw, setting in ((False, "off"), (True, "on"), (None, "on")):  # hand-edited project.json values
+        project.data["tts"]["delivery_tags"] = raw
+        assert voice.delivery_setting(project) == setting
+    project.data["tts"]["delivery_tags"] = False  # not "on": the measured shouts get no control text
+    jobs = plan(project)
+    assert len(jobs) == N_LINES and all(job.delivery == voice.Delivery([], "none", None) for job in jobs.values())
+    project.save()
+    code, out = run(capsys, project.root, "set", "tts.delivery_tags=on")  # `set` repairs it with a word
+    assert code == EXIT_OK and out["changed"]["tts.delivery_tags"] == {"old": False, "new": "on"}, out

@@ -389,8 +389,9 @@ def apply_setting(data: dict[str, Any], dotted: str, text: str) -> tuple[Any, An
     old = node.get(leaf)
     known_section = DEFAULT_SETTINGS.get(parts[0]) if len(parts) == 2 else None
     current = old if old is not None else (known_section or {}).get(leaf)
-    new = parse_value(text, current)
     allowed = ENUMS.get(dotted)
+    # an enumeration is a string even when project.json holds a hand-edited boolean (`on`/`off` stay words)
+    new = text.strip() if allowed else parse_value(text, current)
     if allowed and new not in allowed:
         raise BabelDubError(f"{dotted} must be one of {list(allowed)}", code=EXIT_USAGE)
     warning = None
