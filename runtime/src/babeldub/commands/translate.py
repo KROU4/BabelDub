@@ -5,6 +5,8 @@ agent needs (speaker, neighbours, syllable budget, the original's pauses, placeh
 bible), validates what the agent wrote and merges it into translate/translations.jsonl (single writer).
 The syllable budget is the original's speech span (not the file length) times the character's measured
 speaking rate (median over its accepted dubs, the language default until there are enough of them).
+Every batch line carries its measured delivery tags (`delivery_hint`, analysis/prosody_tags.py); the
+agent may answer with its own `delivery` tags, which submit validates and stores on the translation row.
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ from itertools import groupby
 from pathlib import Path
 from typing import Any
 
-from babeldub.analysis.store import keep_original_ids
+from babeldub.analysis.prosody_tags import MAX_TAGS, VOCABULARY, parse_tags
+from babeldub.analysis.store import keep_original_ids, measured_tags
 from babeldub.audio.fit import speech_segments_s
 from babeldub.audio.io import read_audio
 from babeldub.commands.project import (
@@ -69,7 +72,7 @@ MAX_ERRORS_SHOWN = 20
 _BATCH_ID_RE = re.compile(r"^b\d{4,}$")
 
 RULES = (
-    "Write {out}: one JSON object per line {{id, dub_text, sub_text?, variants?, notes?}} for EVERY id below. "
+    "Write {out}: one JSON object per line {{id, dub_text, sub_text?, variants?, delivery?, notes?}} for EVERY id below. "
     "dub_text is what the original character says in {lang}: natural spoken {lang} with the same meaning, emotion, "
     "register and delivery as src (the voice is cloned from the original line, so the performance must match). "
     "task=adapt: tgt_official is the game's official {lang} text; turn it into dub_text a voice actor would say: "
@@ -82,7 +85,12 @@ RULES = (
     "Write ё wherever it belongs (Russian) and avoid stress homographs (words whose meaning depends on the "
     "stress, like замок): pick an unambiguous word. "
     "variants = shorter alternatives, best first. "
-    "sub_text only if the subtitle must differ from dub_text (in adapt mode the subtitle is usually tgt_official)."
+    "sub_text only if the subtitle must differ from dub_text (in adapt mode the subtitle is usually tgt_official). "
+    "delivery_hint = delivery tags measured from the original's prosody against the character's other lines "
+    "(often empty); the voice engine performs the line with them. Give delivery = up to {max_tags} tags of "
+    "[{tags}] when the scene or context calls for a delivery the measurement missed or got wrong (sarcasm, "
+    "crying, a whisper in a loud scene...), delivery = [] for an explicitly neutral delivery, and leave delivery "
+    "out to accept the hint."
 )
 
 
@@ -570,6 +578,7 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
         style = style[:STYLE_LIMIT] + f"\n[... truncated, full text in {layout.STYLE_BIBLE}]"
 
     timing = Timing(project, lang)
+    measured = measured_tags(project, lines=lines) if candidates else {}
     made: list[str] = []
     number = _next_batch_number(index)
     for chunk in _chunk(candidates, args.size):
@@ -589,7 +598,8 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
             "glossary": [{k: g[k] for k in ("term", "translation", "pronounce", "note") if g.get(k)} for g in hits],
             "style": style,
             "out": out_path.name,
-            "rules": RULES.format(out=out_path.name, lang=lang),
+            "delivery_tags": list(VOCABULARY),
+            "rules": RULES.format(out=out_path.name, lang=lang, max_tags=MAX_TAGS, tags=", ".join(VOCABULARY)),
         }
         rows = [header]
         for ln in chunk:
@@ -611,8 +621,9 @@ def cmd_batch_make(args: argparse.Namespace) -> int:
                 "placeholders": extract_placeholders(src_text(ln)),
                 "context_prev": prev,
                 "context_next": nxt,
+                "delivery_hint": list(measured[ln["id"]].tags) if ln["id"] in measured else [],
             }
-            segmented = segment_text(src_text(ln), segments, str(project.data.get("source_lang") or "en"))
+            segmented =segment_text(src_text(ln), segments, str(project.data.get("source_lang") or "en"))
             if segmented:
                 row["src_segmented"] = segmented
             task = tasks.get(ln["id"], "translate")
@@ -742,6 +753,12 @@ def validate_out(in_rows: list[dict[str, Any]], out_rows: list[dict[str, Any]]) 
         if variants is not None and (not isinstance(variants, list) or not all(isinstance(v, str) and v.strip() for v in variants)):
             errors.append({**where, "error": "variants must be a list of non-empty strings"})
             continue
+        if "delivery" in row:  # absent = accept the measured hint; [] = explicitly neutral
+            try:
+                row["delivery"] = parse_tags(row["delivery"])
+            except ValueError as exc:
+                errors.append({**where, "error": str(exc), "field": "delivery"})
+                continue
         src = expected[rid].get("src") or ""
         bad = False
         for label, text in (("dub_text", dub), ("sub_text", sub), *[(f"variants[{i}]", v) for i, v in enumerate(variants or [])]):
@@ -787,17 +804,18 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
         write_json(err_path, {"batch": bid, "checked": now_iso(), "errors": errors})
         meta.update({"status": "error", "errors": len(errors), "checked": now_iso()})
         save_index(project, index)
-        return emit(
-            {
-                "batch": bid,
-                "merged": 0,
-                "errors": clip([f"{e.get('id') or 'line ' + str(e.get('line'))}: {e['error']}" for e in errors], MAX_ERRORS_SHOWN),
-                "errors_total": len(errors),
-                "errors_file": str(err_path),
-                "next": f"fix {out_path.name}, then `babeldub batch submit {bid}`",
-            },
-            EXIT_USAGE,
-        )
+        failed: dict[str, Any] = {
+            "batch": bid,
+            "merged": 0,
+            "errors": clip([f"{e.get('id') or 'line ' + str(e.get('line'))}: {e['error']}" for e in errors], MAX_ERRORS_SHOWN),
+            "errors_total": len(errors),
+            "errors_file": str(err_path),
+            "next": f"fix {out_path.name}, then `babeldub batch submit {bid}`",
+        }
+        if any(e.get("field") == "delivery" for e in errors):
+            failed["hint"] = (f"delivery is a list of at most {MAX_TAGS} tags of: {', '.join(VOCABULARY)} "
+                              "([] = neutral, leave it out to accept delivery_hint)")
+        return emit(failed, EXIT_USAGE)
 
     lang = project.target_lang
     lines = {ln["id"]: ln for ln in load_lines(project)}
@@ -828,6 +846,7 @@ def cmd_batch_submit(args: argparse.Namespace) -> int:
         row = make_translation(
             line, dub, sub.strip() if isinstance(sub, str) and sub.strip() else None, lang, "agent", rev, timing,
             batch=bid, variants=variants or None, picked_variant=picked, notes=out.get("notes") or None,
+            delivery=out.get("delivery"),  # absent = not given (None is dropped), [] = explicitly neutral
         )
         if picked is not None:
             row["agent_text"] = out["dub_text"].strip()
