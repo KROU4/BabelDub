@@ -45,8 +45,8 @@ Do not include ordinary words of the language "just in case": every term is chec
 
 A short markdown file (1–3 screens) with these sections:
 
-1. **Dubbing in the character's voice.** The translation keeps the emotional shape of the original: exclamations, questions, hesitations and repetitions, cut-offs, laughter, sighs, whispering. The voice prompt is the original line itself, so the text must "sit" on its intonation and pace.
-2. **Characters.** One or two lines per main character: register, speech character, pet words, age.
+1. **Dubbing in the character's voice.** The translation keeps the emotional shape of the original: exclamations, questions, hesitations and repetitions, cut-offs, laughter, sighs, whispering. The voice is cloned from the character's original recordings and asked for the delivery of the original line (delivery tags), so the text must "sit" on its intonation and pace.
+2. **Characters.** One or two lines per main character: register, speech character, pet words, age, and the usual delivery the translators should keep in mind when they correct delivery tags (for example "dry sarcasm, always read calm and flat"; "shouts when happy, not only when angry").
 3. **Formal and informal "you".** A matrix by character pairs, plus how the player is addressed; mark unclear cases "default".
 4. **Swearing and rudeness**: the same level as the original, with example substitutions.
 5. **Numbers, dates, units**: in words, in the correct grammatical case; for Russian, «ё» wherever it is pronounced.

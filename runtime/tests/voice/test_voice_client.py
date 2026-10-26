@@ -46,6 +46,20 @@ def test_load_and_synth_roundtrip(tmp_path: Path) -> None:
     assert (tmp_path / "worker.log").exists()
 
 
+def test_dummy_control_text_keeps_the_length_and_drops_a_prompt(tmp_path: Path) -> None:
+    prompt = tmp_path / "prompt.wav"
+    with make_client(tmp_path) as client:
+        client.load({"model": "dummy"})
+        plain = client.request(synth_req(tmp_path, "plain"))
+        tagged = client.request({**synth_req(tmp_path, "tagged"), "control": "shouting, fast pace"})
+        assert tagged["ok"] and tagged["control"] == "shouting, fast pace" and "prompt_dropped" not in tagged
+        assert tagged["dur_s"] == plain["dur_s"]  # the control phrase is not spoken: same seed, same length
+        prompt.write_bytes((tmp_path / "plain.wav").read_bytes())
+        both = client.request({**synth_req(tmp_path, "both"), "control": "calm", "prompt_wav": str(prompt),
+                               "prompt_text": "Ну что."})
+        assert both["ok"] and both["prompt_dropped"] is True and both["mode"] != "ref+prompt"
+
+
 def test_same_seed_is_deterministic(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         client.load({"model": "dummy"})

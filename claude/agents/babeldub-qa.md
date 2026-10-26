@@ -22,16 +22,18 @@ You decide the fate of the lines that failed the automatic thresholds. The main 
 
 | Reason | Meaning | CLI's automatic decision |
 |---|---|---|
-| `cer` | the recognized dub differs from `dub_text` by more than `qa.max_cer` (0.15) | `regen` while attempts remain, then `keep_original` |
+| `cer` | the recognized dub differs from `dub_text` by more than `qa.max_cer` (0.15) | `regen` while attempts remain (voiced without the delivery tags), then `keep_original` |
 | `sim` | the voice "drifted" from the hero: `sim` < `sim_threshold` = max(ratio × `sim_ref` (the character's baseline), `qa.min_sim_abs` 0.25); ratio `qa.min_sim_ratio_xlang` (0.45) for a dub in another language than the original audio, `qa.min_sim_ratio` (0.75) for a same-language dub | `regen`, then `keep_original` |
 | `identity` | the dub sounds more like another character (`qa.closest_char`) than its own: `qa.margin` < `qa.min_identity_margin` (−0.05) | `regen`, then `keep_original` |
-| `mos` | naturalness (UTMOS22) clearly below the character's originals: `qa.mos` < `qa.orig_mos` − `qa.mos_drop` (1.0) | `regen` (new seed, next arousal bucket), then `accept` with attention (delivery, not words or voice) |
-| `flat` | monotone: the dub's F0 range < 0.5 × the original's (originals moving ≥ 3 semitones) | `regen` (new seed, next arousal bucket), then `accept` with attention (delivery, not words or voice) |
+| `mos` | naturalness (UTMOS22) clearly below the character's originals: `qa.mos` < `qa.orig_mos` − `qa.mos_drop` (1.0) | `regen` (new seed, the delivery tags kept; the next arousal bucket with `bootstrap` or `tts.tags_reference=bucket`), then `accept` with attention (delivery, not words or voice) |
+| `flat` | monotone: the dub's F0 range < 0.5 × the original's (originals moving ≥ 3 semitones) | `regen` (new seed, the delivery tags kept; the next arousal bucket with `bootstrap` or `tts.tags_reference=bucket`), then `accept` with attention (delivery, not words or voice) |
 | `timing` | `fixed_length` line: a chunk starts more than ±80 ms off its original segment or ends more than 80 ms late | `regen`, then `keep_original` |
 | `peak` | peak above the ceiling, or clipping | `regen`, then `keep_original` |
 | `empty`, `silent` | empty file or silence | `regen`, then `keep_original` |
 | `duration` | longer than `qa.max_duration_ratio` (1.35) or, for `fixed_length`, longer than the original beyond the tolerance | `shorten` (up to 2 times), then `keep_original` |
 | `missing_file`, `no_dub_text`, `qc_error` | no file after `post`, no translation, worker failure | no decision — needs attention |
+
+With VoxCPM2 (`tts.ref_strategy=tags`) every take carries its line's delivery tags as a control text. A `regen` after `cer`, and any `regen` from the 3rd take of the same text on, is voiced without them (the words matter more than the delivery); after `flat`/`mos` they stay. The tags come from the measurement or the translator's `delivery` (`translation.delivery` in `query`); you never change them yourself and never ask the human about them. When many lines of one character fail `cer` or `mos` with clean texts, return the character in `failing_chars`: the voice role checks its references and delivery settings.
 
 Lines flagged `nonverbal` (screams, laughs) never fail on `sim`, `identity`, `cer`, `mos` or `flat` (`qa.sim_skipped`, `qa.cer_skipped`). Interjections and nonverbal lines classed by `analyze` keep the original and never reach QA. A `mixed` line (words with a laugh or groan) that passes is accepted with attention: `accept` it when the laugh is not part of the meaning, else `keep_original`. A `short_word` line gets one regen, then `keep_original`.
 
@@ -51,8 +53,7 @@ babeldub query --where verdict=fail --fields id,char_name,kind,fixed_length,deci
 
 | Situation | Agent's decision | Why |
 |---|---|---|
-| `sim` on a line prompted by its original, especially a shout, a whisper, a line with background | `reref` instead of the automatic `regen` | switching the prompt (original line → character reference) brings the hero's voice back more often than a new seed |
-| `sim` with a reference prompt (`qa.sim_char` low on many lines of the character) | do not decide line by line: return the character in `failing_chars` | a systemic reference or attribution problem — voice and caster handle it |
+| `sim` on a line prompted by its original, especially a shout, a whisper, a line with background | `reref` instead of the automatic `regen` | switching the prompt (original line → character reference) brings the hero's voice back more often than a new seed || `sim` with a reference prompt (`qa.sim_char` low on many lines of the character) | do not decide line by line: return the character in `failing_chars` | a systemic reference or attribution problem — voice and caster handle it |
 | high `cer`, and `qa.asr_text` shows that numbers, Latin script or rare words "trip up" the synthesis | `retranslate` | simplifying the text helps more than repeating the synthesis |
 | high `cer` with no obvious cause in the text | keep the automatic `regen` | |
 | `duration` | keep the automatic `shorten` | the translator shortens the text |

@@ -45,7 +45,7 @@ engines:
     cuda_only: true
     fallback: qwen3tts-fast
     stress: upper
-    notes: "Default on NVIDIA GPUs with 8 GB+ (tts.engine=auto): VoxCPM2, 2B, 48 kHz, 30 languages. Timbre from a long original reference (reference_wav_path) plus a target-language continuation prompt (ref_strategy=bootstrap). Peak VRAM 6.5 GB on an RTX 3060 Ti. Takes plain text: U+0301 marks become extra sounds and \"+\" is read as \"plus\"; with tts.stress=on a homograph gets a CAPITAL stressed vowel (stress: upper)."
+    notes: "Default on NVIDIA GPUs with 8 GB+ (tts.engine=auto): VoxCPM2, 2B, 48 kHz, 30 languages. Timbre from a long original reference (reference_wav_path) plus a delivery control text \"(shouting, fast pace)\" before the dub text (ref_strategy=tags; bootstrap adds a target-language continuation prompt instead). Peak VRAM 6.5 GB on an RTX 3060 Ti. Takes plain text: U+0301 marks become extra sounds and \"+\" is read as \"plus\"; with tts.stress=on a homograph gets a CAPITAL stressed vowel (stress: upper)."
   applio:
     env: applio
     role: vc

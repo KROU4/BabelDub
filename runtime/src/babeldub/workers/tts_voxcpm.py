@@ -3,8 +3,12 @@
 Runs inside BABELDUB_HOME/envs/voxcpm (torch + `voxcpm` from GitHub); never imports babeldub.
 JSONL protocol (contract §6):
   load  {"model": dir|repo, "device": "cuda", "options": {"optimize": false, "load_denoiser": false}}
-  synth {"id", "text", "ref_wav", "prompt_wav"?, "prompt_text"?, "out", "seed", "params": {...}}
+  synth {"id", "text", "ref_wav", "control"?, "prompt_wav"?, "prompt_text"?, "out", "seed", "params": {...}}
         ref_wav     -> reference_wav_path: the timbre (the character's long original reference)
+        control     -> "(control)text": a short English delivery instruction ("shouting, fast pace") before
+                       the dub text. It works with a timbre reference only: with a prompt as well the
+                       prompt is dropped (`prompt_dropped`), never the control put in the middle of the
+                       continuation text. The length cap and the bad-case check count the dub text alone.
         prompt_wav  -> prompt_wav_path + prompt_text: a continuation prompt in the target language
                        (the character's accepted dubs and their exact text); both or neither
         params      cfg_value (2.0), inference_timesteps (10), min_len, max_len, normalize,
@@ -31,8 +35,35 @@ GEN_KEYS = (
     "retry_badcase_max_times", "retry_badcase_ratio_threshold",
 )
 DEFAULTS = {"cfg_value": 2.0, "inference_timesteps": 10}
+BADCASE_RATIO = 6.0  # voxcpm's default retry_badcase_ratio_threshold (audio tokens per text token)
 
 STATE: dict[str, Any] = {"model": None, "sr": 48000, "device": None, "seed_kw": False}
+
+
+def build_text(text: str, control: str | None) -> str:
+    """The text VoxCPM2 reads: the control instruction in parentheses before the dub text
+    (voxcpm.cli build_final_text); no control = the dub text as is."""
+    control = (control or "").replace("(", " ").replace(")", " ").strip()
+    return f"({control}){text}" if control else text
+
+
+def plain_ratio(ratio: float, n_plain: int, n_full: int) -> float:
+    """retry_badcase_ratio_threshold that makes VoxCPM2 count the dub text alone: its length cap
+    min(tokens x ratio + 10, max_len) and its bad-case check measure the tokens of the whole text, control
+    phrase included, so the ratio is scaled by dub tokens / whole-text tokens."""
+    if n_plain <= 0 or n_full <= n_plain:
+        return ratio
+    return ratio * n_plain / n_full
+
+
+def _token_count(model: Any, text: str) -> int:
+    tokenizer = getattr(getattr(model, "tts_model", None), "text_tokenizer", None)
+    if tokenizer is None:
+        return 0
+    try:
+        return len(tokenizer(text))
+    except Exception:  # an unexpected tokenizer: VoxCPM2 keeps its own cap
+        return 0
 
 
 def log(msg: str) -> None:
@@ -102,6 +133,10 @@ def _parse(req: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     ref_wav = req.get("ref_wav")
     prompt_wav = req.get("prompt_wav") or None
     prompt_text = str(req.get("prompt_text") or "").strip() or None
+    control = str(req.get("control") or "").strip() or None
+    dropped = bool(control and (prompt_wav or prompt_text))
+    if dropped:  # a control text needs the timbre-only mode: the continuation prompt goes
+        prompt_wav = prompt_text = None
     if not text:
         return None, {"ok": False, "op": "synth", "id": rid, "error": "empty text"}
     if not ref_wav or not os.path.exists(ref_wav):
@@ -115,7 +150,7 @@ def _parse(req: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     params = dict(req.get("params") or {})
     gen = {**DEFAULTS, **{k: params[k] for k in GEN_KEYS if k in params}}
     return {
-        "id": rid, "text": text, "ref_wav": os.path.abspath(ref_wav),
+        "id": rid, "text": text, "ref_wav": os.path.abspath(ref_wav), "control": control, "prompt_dropped": dropped,
         "prompt_wav": os.path.abspath(prompt_wav) if prompt_wav else None, "prompt_text": prompt_text,
         "gen": gen, "out": req["out"], "seed": int(req.get("seed") or 0),
     }, {}
@@ -150,11 +185,17 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
         kwargs["prompt_text"] = item["prompt_text"]
     if STATE["seed_kw"]:
         kwargs["seed"] = item["seed"]
+    text = build_text(item["text"], item["control"])
+    if item["control"]:  # the cap and the bad-case check count the dub text, not the control phrase
+        ratio = float(kwargs.get("retry_badcase_ratio_threshold", BADCASE_RATIO))
+        n_plain, n_full = _token_count(model, item["text"]), _token_count(model, text)
+        if n_plain and n_full:
+            kwargs["retry_badcase_ratio_threshold"] = plain_ratio(ratio, n_plain, n_full)
     on_cuda = str(STATE["device"]).startswith("cuda")
     try:
         _seed_all(item["seed"])
         started = time.perf_counter()
-        wav = model.generate(text=item["text"], **kwargs)
+        wav = model.generate(text=text, **kwargs)
         if on_cuda:
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - started
@@ -177,6 +218,10 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
         "rtf": round(elapsed / max(dur, 1e-6), 4), "gen_s": round(elapsed, 3), "seed": item["seed"],
         "mode": "ref+prompt" if item["prompt_wav"] else "ref",
     }
+    if item["control"]:
+        reply["control"] = item["control"]
+    if item["prompt_dropped"]:
+        reply["prompt_dropped"] = True
     if on_cuda:
         reply["vram_peak_gb"] = round(torch.cuda.max_memory_allocated() / 2**30, 3)
     return reply

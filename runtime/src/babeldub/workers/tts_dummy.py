@@ -9,7 +9,9 @@ Standalone script: runs under any Python with numpy + soundfile; never imports b
 Test hooks in `params`: dummy_fail = "error" (answer ok=false) | "exit" (crash the process) |
 "batch" (fail a whole synth_batch); dummy_sleep = seconds to stall before answering.
 Like VoxCPM2 it accepts a continuation prompt (`prompt_wav` + `prompt_text`, mode "ref+prompt"), so the
-bootstrap reference strategy can be tested end to end.
+bootstrap reference strategy can be tested end to end, and a delivery `control` text (ref_strategy=tags):
+echoed in the reply, never voiced or counted in the length; with a prompt as well the prompt is dropped
+(`prompt_dropped`), as VoxCPM2's worker does.
 
 Runaway simulation (a TTS model stuck in a loop until its token cap), for the CLI's runaway guard:
   * the word RUNAWAY in `text` -> every request for that line runs away;
@@ -136,7 +138,11 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     text = str(req.get("text") or "").strip()
     if not text:
         return {"ok": False, "op": "synth", "id": req.get("id"), "error": "empty text"}
+    control = str(req.get("control") or "").strip() or None
     prompt_wav = req.get("prompt_wav")
+    dropped = bool(control and (prompt_wav or req.get("prompt_text")))
+    if dropped:
+        prompt_wav = None
     if prompt_wav and (not os.path.exists(prompt_wav) or not str(req.get("prompt_text") or "").strip()):
         return {"ok": False, "op": "synth", "id": req.get("id"), "error": "prompt_wav needs an existing file and prompt_text"}
     ref_text = str(req.get("ref_text") or "").strip()
@@ -168,6 +174,10 @@ def op_synth(req: dict[str, Any]) -> dict[str, Any]:
     }
     if hit:
         reply["hit_token_limit"] = True
+    if control:
+        reply["control"] = control
+    if dropped:
+        reply["prompt_dropped"] = True
     return reply
 
 

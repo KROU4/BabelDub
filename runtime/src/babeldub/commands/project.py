@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from babeldub.analysis.prosody_tags import delivery_counts
 from babeldub.core import layout
 from babeldub.core.games import active_project as registry_active_project
 from babeldub.core.games import load_registry, register_game, set_active_project
@@ -28,12 +29,14 @@ Common = Callable[[argparse.ArgumentParser], None]
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 CAST_POLICIES = ("all", "main", "list")
 TRANSLATION_MODES = ("auto", "translate", "adapt", "official")
-REF_STRATEGIES = ("auto", "bootstrap", "line", "char")
+REF_STRATEGIES = ("auto", "tags", "bootstrap", "line", "char")
 ENUMS: dict[str, tuple[str, ...]] = {
     "compute.device": ("auto", "cuda", "cpu"),
     "cast.policy": CAST_POLICIES,
     "translation.mode": TRANSLATION_MODES,
     "tts.ref_strategy": REF_STRATEGIES,
+    "tts.tags_reference": ("main", "bucket"),
+    "tts.delivery_tags": ("on", "measured", "off"),
     "tts.engine": ("auto", "voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy"),
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
     "tts.best_of_mode": ("auto", "length", "score"),
@@ -284,7 +287,8 @@ def project_counts(project: Project) -> dict[str, Any]:
     voiced_ids = {ln["id"] for ln in voiced}
     chars = load_latest(project, layout.CHARACTERS, "char_id")
     translations = latest_translations(project)
-    synth = _count_latest(read_jsonl(project.path(layout.SYNTH_RESULTS)))
+    synth_rows = read_jsonl(project.path(layout.SYNTH_RESULTS))
+    synth = _count_latest(synth_rows)
     post = _count_latest(read_jsonl(project.path(layout.POST)))
     qa = _count_latest(read_jsonl(project.path(layout.QA)))
     manifest = read_json(project.path(layout.BUILD_MANIFEST), default=None) or {}
@@ -297,7 +301,10 @@ def project_counts(project: Project) -> dict[str, Any]:
         cls = (analysis.get(i) or {}).get("class")
         if cls:
             classes[cls] = classes.get(cls, 0) + 1
-    return {
+    # ref_strategy=tags: lines by the source of their latest ok take's delivery tags and the tags sent
+    synth_ok = _count_latest(r for r in synth_rows if r.get("status") == "ok")
+    delivery = delivery_counts(r for i, r in synth_ok.items() if i in voiced_ids)
+    counts: dict[str, Any] = {
         "lines": len(lines),
         "voiced": len(voiced),
         # alt takes/duplicates: never synthesized, the build reuses their leader's dub
@@ -317,6 +324,9 @@ def project_counts(project: Project) -> dict[str, Any]:
         "replaced": sum(int(c.get("replaced") or 0) for c in containers),
         "installed": len(install.get("installed") or []) if install.get("state") == "installed" else 0,
     }
+    if delivery:
+        counts["delivery"] = delivery
+    return counts
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -379,8 +389,9 @@ def apply_setting(data: dict[str, Any], dotted: str, text: str) -> tuple[Any, An
     old = node.get(leaf)
     known_section = DEFAULT_SETTINGS.get(parts[0]) if len(parts) == 2 else None
     current = old if old is not None else (known_section or {}).get(leaf)
-    new = parse_value(text, current)
     allowed = ENUMS.get(dotted)
+    # an enumeration is a string even when project.json holds a hand-edited boolean (`on`/`off` stay words)
+    new = text.strip() if allowed else parse_value(text, current)
     if allowed and new not in allowed:
         raise BabelDubError(f"{dotted} must be one of {list(allowed)}", code=EXIT_USAGE)
     warning = None

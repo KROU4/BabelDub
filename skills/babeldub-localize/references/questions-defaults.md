@@ -4,7 +4,7 @@ Read this file before the first question to the user, when choosing any default 
 
 ## 1. The two-question rule
 
-The user is asked exactly two questions: **language** and **characters**. Everything else is decided by the defaults in this file and recorded in the report.
+The user is asked exactly two questions: **language** and **characters**. Everything else is decided by the defaults in this file and recorded in the report. That includes the delivery of each line: the delivery tags are measured on the originals and corrected by the translator agents, never asked from the user.
 
 - Ask in the user's language (the language of their messages). The wording below is a template: translate it, keep its meaning. Write the final report in the user's language too.
 - Only the main session asks. Roles (subagents) never address the human: they return anything ambiguous in `human_pending`.
@@ -63,11 +63,13 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `cast.merge_threshold` | 0.75 | a voice cluster at least this similar to a named character is merged into him |
 | `tts.engine` | `auto` | VoxCPM2 (`voxcpm`, Apache-2.0) on an NVIDIA GPU with its env; otherwise `qwen3tts-fast` (CUDA) / `qwen3tts` (CPU) / `chatterbox` by language |
 | `tts.model` | `null` | the model is picked by the engine, tier and language |
-| `tts.ref_strategy` | `auto` | VoxCPM2: `bootstrap` (long original timbre reference, then a target-language prompt from the character's accepted dubs); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char` |
+| `tts.ref_strategy` | `auto` | VoxCPM2: `tags` (the long original timbre reference plus the line's delivery tags as a short control text); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char`; `bootstrap` (long reference, then a target-language prompt from the character's accepted dubs) only explicitly |
+| `tts.tags_reference` | `main` | `tags`: the calm/main long reference for every line; `bucket` takes the reference of the line's arousal bucket |
+| `tts.delivery_tags` | `on` | `tags`: the translator's `delivery` > the measured tags > none; `measured` ignores the translator's tags; `off` sends no control text |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |
-| `tts.best_of` | 3 | takes per line; the one closest to the original's speech length is kept |
-| `tts.bootstrap_lines` | 4 | first lines of a character dubbed before its target-language prompt exists |
-| `tts.bootstrap_min_accepted` | 3 | accepted first lines needed to build the prompt |
+| `tts.best_of` | 3 | takes per line; scored with the `qc` env (delivery, naturalness, length, voice), else the one closest to the original's speech length is kept |
+| `tts.bootstrap_lines` | 4 | `bootstrap` only: first lines of a character dubbed before its target-language prompt exists |
+| `tts.bootstrap_min_accepted` | 3 | `bootstrap` only: accepted first lines needed to build the prompt |
 | `tts.max_attempts` | 3 | attempts before `keep_original` |
 | `post.tempo_min` / `post.tempo_max` | 1.0 / 1.15 | `post` never slows a dub down (slow speech sounds unnatural) and speeds it up at most 15% after shortening its pauses; the rest is silence, the file keeps the original's exact length |
 | `post.tolerance` | 0.03 | no tempo change when the dub's speech is within ±3 % of the original's |
@@ -108,7 +110,7 @@ Write it in the user's language, in plain words, briefly, without retelling JSON
 - Engine and audio: <engine>, <middleware>; support level <A/B/C>.
 - Text: mode <official/adapt/translate>; source — <official translation / translation from <language>>.
 - Characters: <list of dubbed characters with minutes>; everyone else keeps the original voice.
-- Voice: <model>, dubbed in the original hero's voice (prompt — the original line; for short lines — the character reference); device <GPU name / CPU>.
+- Voice: <model>, dubbed in the original hero's voice (VoxCPM2: the hero's long original reference plus delivery tags — N lines measured, N set by the translators, N neutral, from `counts.delivery` of `babeldub status`; other engines: the original line, for short lines the character reference); device <GPU name / CPU>.
 
 ### Quality
 - Passed QA on the first attempt: N; after retries: N; kept original: N (reasons: …).

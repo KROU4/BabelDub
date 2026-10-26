@@ -4,7 +4,7 @@ description: "Cast a game for dubbing in the original characters' own voices: gr
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill). Voice clustering and typical-timbre references need the qc engine (babeldub setup --engines qc) and preferably an NVIDIA GPU; without it speakers come from game metadata only."
 metadata:
-  babeldub-cli: "0.2.0"
+  babeldub-cli: "0.3.0"
 ---
 
 # BabelDub: casting — who speaks, and in whose voice
@@ -27,7 +27,7 @@ babeldub cast [--refs 1..3] [--min-ref-s 3] [--max-ref-s 12]
 3. **The `unknown` group** holds lines without a speaker that could not be compared (no `qc` worker, or the file could not be read). It is not one voice: it is not ranked and never dubbed as a character.
 4. **Tiers** (`tier`): `main`, `secondary`, `minor`, by minutes of speech (`references/tiers.md`).
 5. **Selection** by `cast.policy`: `main` (default), `all` or `list`.
-6. **References** for the selected characters: up to `--refs` clean original lines of 3–12 s with known text (`cast/refs.jsonl`, copies in `cast/refs/<char_id>/`). Selection rules: `references/ref-selection.md`. After `analyze`, each reference row also carries the line's arousal `bucket` (calm, animated, loud, soft): the voice stage builds one long timbre reference per bucket from the character's clean lines, so a shout is voiced from shouted originals.
+6. **References** for the selected characters: up to `--refs` clean original lines of 3–12 s with known text (`cast/refs.jsonl`, copies in `cast/refs/<char_id>/`). Selection rules: `references/ref-selection.md`. After `analyze`, each reference row also carries the line's arousal `bucket` (calm, animated, loud, soft): the voice stage builds the character's long timbre references from its clean lines (the calm/main one, plus one per bucket with enough material); by default every line uses the calm/main one and the delivery tags carry a shout, while `tts.tags_reference=bucket` voices a shout from shouted originals.
 7. **Casting sheet** `cast/casting_sheet.md`: a table of characters, their references and warnings.
 
 Output: `characters`, `selected`, `main[]`, `uncertain[]`, `no_ref[]`, `clusters` (left after merging), `merged`, `merged_into{char_id: [cluster_id]}`, `refs`, `warnings[]`, `next`. Exit code 3 means `uncertain[]` or `no_ref[]` is not empty.
@@ -80,7 +80,7 @@ Labels the agent has already set survive a repeated `cast` (they carry over by `
 
 ## References
 
-- How the CLI picks references, what makes a good reference, why emotion comes from the line itself: [references/ref-selection.md](references/ref-selection.md). Read it when checking references and when `no_ref[]` is not empty.
+- How the CLI picks references, what makes a good reference, where the delivery of a line comes from: [references/ref-selection.md](references/ref-selection.md). Read it when checking references and when `no_ref[]` is not empty.
 - Character tiers, `cast.policy`, `main_share`, what to tell the user about the choice: [references/tiers.md](references/tiers.md). Read it before question 2.
 - Format of `cast/labels.agent.jsonl`, rules for names, gender, age and notes: [references/labels-format.md](references/labels-format.md). Read it before labelling.
 - How voice clusters are merged into named characters, the measured numbers, how to tune `cast.merge_threshold`: [references/merging.md](references/merging.md). Read it when `merged` > 0 or a named character seems to have too few lines.

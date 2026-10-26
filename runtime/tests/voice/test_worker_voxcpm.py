@@ -70,6 +70,9 @@ class _Tts:
     def __init__(self, device):
         self.device = device
 
+    def text_tokenizer(self, text):
+        return list(text)  # one token per character
+
 
 class VoxCPM:
     def __init__(self, path, kwargs):
@@ -161,6 +164,35 @@ def test_synth_reference_prompt_and_errors(worker: Any, tmp_path: Path) -> None:
     assert w.op_synth(req(tmp_path, "oom", text="OOM"))["error"] == "CUDA out of memory"
     batch = w.op_synth_batch({"items": [req(tmp_path, "b1"), req(tmp_path, "b2", text="OOM"), req(tmp_path, "b3")]})
     assert batch["ok"] and [r["ok"] for r in batch["results"]] == [True, False, True]
+
+
+def test_control_text_building_is_a_pure_function() -> None:
+    from babeldub.workers.tts_voxcpm import build_text, plain_ratio
+
+    assert build_text("Стой!", "shouting, fast pace") == "(shouting, fast pace)Стой!"
+    assert build_text("Стой!", None) == build_text("Стой!", "  ") == "Стой!"
+    assert build_text("Стой!", "(calm)") == "(calm)Стой!"  # never nested parentheses
+    assert plain_ratio(6.0, 10, 30) == pytest.approx(2.0)  # cap: 30 x 2.0 + 10 = 10 x 6.0 + 10
+    assert plain_ratio(6.0, 10, 10) == 6.0 and plain_ratio(6.0, 0, 10) == 6.0
+
+
+def test_synth_with_control_drops_the_prompt_and_caps_on_the_dub_text(worker: Any, tmp_path: Path) -> None:
+    w, _torch, vox = worker
+    w.op_load({"model": "m", "device": "cuda"})
+    out = w.op_synth(req(tmp_path, "tag", text="Стой!", control="shouting"))
+    assert out["ok"] and out["mode"] == "ref" and out["control"] == "shouting" and "prompt_dropped" not in out
+    call = vox.CALLS[-1]
+    assert call["text"] == "(shouting)Стой!" and "prompt_wav_path" not in call
+    # 5 dub tokens of 15: the cap and the bad-case check count the dub text alone
+    assert call["retry_badcase_ratio_threshold"] == pytest.approx(6.0 * 5 / 15)
+    out = w.op_synth(req(tmp_path, "both", text="Стой!", control="calm", params={"retry_badcase_ratio_threshold": 3.0},
+                         prompt_wav=wav(tmp_path, "ru_prompt"), prompt_text="Ну что."))
+    assert out["ok"] and out["prompt_dropped"] is True and out["mode"] == "ref"
+    call = vox.CALLS[-1]
+    assert call["text"] == "(calm)Стой!" and "prompt_wav_path" not in call and "prompt_text" not in call
+    assert call["retry_badcase_ratio_threshold"] == pytest.approx(3.0 * 5 / 11)
+    w.op_synth(req(tmp_path, "plain", text="Стой!"))
+    assert vox.CALLS[-1]["text"] == "Стой!" and "retry_badcase_ratio_threshold" not in vox.CALLS[-1]
 
 
 def test_protocol_over_stdin_stdout(tmp_path: Path) -> None:

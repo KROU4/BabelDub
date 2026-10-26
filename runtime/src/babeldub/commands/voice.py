@@ -1,10 +1,13 @@
 """Voice stages: `synth` (dub in the ORIGINAL character's voice) and `post` (fit, level, format).
 
 synth  tts.engine=auto runs VoxCPM2 (voxcpm) on an NVIDIA GPU, else qwen3tts-fast/qwen3tts/chatterbox.
-       VoxCPM2 uses ref_strategy=bootstrap: the character's long original timbre reference for every
-       line, plus a target-language continuation prompt made of the character's first accepted dubs
-       once QA accepted enough of them (cast/bootstrap.py). Other engines use the original line itself
-       with its source transcript (line) or the character's best clean reference (char). Every line is
+       VoxCPM2 uses ref_strategy=tags: the character's long original timbre reference for every line
+       plus a short English delivery control text "(shouting, fast pace)" before the dub text, from the
+       translator agent's `delivery` or measured on the original against the character's other lines
+       (analysis/prosody_tags.py). ref_strategy=bootstrap (explicit) adds a target-language continuation
+       prompt made of the character's first accepted dubs instead (cast/bootstrap.py). Other engines use
+       the original line itself with its source transcript (line) or the character's best clean
+       reference (char). Every line is
        generated tts.best_of times with different seeds; the take whose speech length is closest to the
        original's wins. One worker process per run (the model loads once), results appended to
        synth/results.jsonl as they finish. ICL needs the exact transcript of the prompt: a line
@@ -36,7 +39,8 @@ from typing import Any
 
 import numpy as np
 
-from babeldub.analysis.store import keep_original_classes, line_classes, load_analysis
+from babeldub.analysis.prosody_tags import Measured, clean_tags, control_phrase, delivery_counts
+from babeldub.analysis.store import keep_original_classes, line_classes, load_analysis, measured_tags
 from babeldub.audio.dsp import fade, speech_seconds, to_mono
 from babeldub.audio.fit import fit_segments, length_score, speech_span
 from babeldub.audio.io import probe, read_audio, write_wav
@@ -64,6 +68,11 @@ AUTO = "auto"  # tts.engine=auto: voxcpm on CUDA when its env exists, else the p
 AUTO_PREFERENCE = ("qwen3tts-fast", "qwen3tts", "chatterbox")
 PREMIUM = "voxcpm"
 PROMPT_ENGINES = ("voxcpm", "dummy")  # timbre reference + target-language continuation prompt (bootstrap)
+CONTROL_ENGINES = ("voxcpm", "dummy")  # read a "(delivery control)" text before the dub text (ref_strategy=tags)
+LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags")  # the ~15-20 s long timbre reference, never cut
+TAGS_REFERENCES = ("main", "bucket")  # tts.tags_reference
+DELIVERY_SETTINGS = ("on", "measured", "off")  # tts.delivery_tags
+DROP_CONTROL_ATTEMPT = 3  # a QA regen from this take of the current text on is voiced without the control text
 # same models and the same output for one seed: a take of one is "done" for the other
 ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
@@ -435,7 +444,7 @@ def _usable(project: Project, row: dict[str, Any]) -> bool:
 
 @dataclass
 class Ref:
-    mode: str  # line | char | bootstrap-src | bootstrap-tgt
+    mode: str  # line | char | bootstrap-src | bootstrap-tgt | tags
     ref_id: str
     wav: Path
     text: str  # transcript (may be empty -> speaker-embedding-only cloning)
@@ -452,7 +461,7 @@ class Job:
     text: str
     attempt: int
     ref: Ref
-    reason: str  # new | retranslated | regen | reref | retry | force
+    reason: str  # new | retranslated | delivery | regen | reref | retry | force
     target_s: float
     sort_key: tuple[Any, ...]
     key: str = ""
@@ -469,11 +478,76 @@ class Job:
     line_class: str | None = None  # analyze class of the original (speech, short_word, mixed, ...)
     bucket: str | None = None  # arousal bucket of the bootstrap reference/prompt (calm, animated, loud, soft)
     best_of_min: int = 1  # at least this many candidates (short_word lines: tts.short_word_best_of)
+    delivery: Delivery | None = None  # ref_strategy=tags: the delivery tags and the control text sent
+    delivery_tags: str | None = None  # ... and the tts.delivery_tags it was planned under
 
     @property
     def ref_mode(self) -> str:
-        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt (-xvec: timbre only)."""
+        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt | tags (-xvec: timbre only)."""
         return f"{self.ref.mode}-xvec" if self.x_vector_only else self.ref.mode
+
+    @property
+    def control(self) -> str | None:
+        return self.delivery.control if self.delivery is not None else None
+
+
+@dataclass
+class Delivery:
+    """Delivery of one take under ref_strategy=tags."""
+    tags: list[str]
+    source: str  # agent | measured | none | dropped
+    control: str | None  # the phrase sent as "(control)text"; None = no control text
+
+
+def plan_delivery(setting: str, translation: dict[str, Any] | None, measured: Measured | None) -> Delivery:
+    """Final delivery tags of a line: the agent's `delivery` on the current translation (even []) wins over
+    the tags measured on the original, which win over none. An agent delivery equal to the measured tags is
+    the measured delivery (its "slightly faster/slower" stays). tts.delivery_tags=measured ignores the agent,
+    off ignores both."""
+    if setting == "off":
+        return Delivery([], "none", None)
+    if setting == "on" and translation is not None and isinstance(translation.get("delivery"), list):
+        tags = clean_tags(translation["delivery"])
+        if not (measured is not None and tags and tags == measured.tags):
+            return Delivery(tags, "agent", control_phrase(tags) or None)
+    if measured is not None and measured.tags:
+        return Delivery(list(measured.tags), "measured", measured.control or None)
+    return Delivery([], "none", None)
+
+
+def drops_control(reason: str, take: int, qa_reasons: list[str] | None) -> bool:
+    """A QA regen after a `cer` failure, or any regen that is take DROP_CONTROL_ATTEMPT or later of the current
+    text (`take`: counted like tts.max_attempts, a retranslation starts again at 1), is voiced without the
+    control text (a control phrase can garble words); after flat/mos the tags stay (new seed)."""
+    return reason == "regen" and ("cer" in (qa_reasons or []) or take >= DROP_CONTROL_ATTEMPT)
+
+
+def apply_drop(plan: Delivery, drop: bool) -> Delivery:
+    return Delivery(plan.tags, "dropped", None) if drop and plan.control else plan
+
+
+def delivery_matches(row: dict[str, Any], plan: Delivery) -> bool:
+    """The take already has the delivery the line asks for now. A take without `tags_source` (made before
+    v0.3 or by another strategy) stands; a take whose control a regen dropped stands while the tags are the
+    same; otherwise the control text must match (a changed agent delivery, re-measured tags or a changed
+    tts.delivery_tags make the take stale)."""
+    if "tags_source" not in row:
+        return True
+    if row.get("tags_source") == "dropped":
+        return plan.control is None or list(row.get("tags") or []) == plan.tags
+    return (row.get("control") or None) == plan.control
+
+
+def accepted_delivery_stands(row: dict[str, Any], plan: Delivery, setting: str) -> bool:
+    """A take QA accepted keeps its delivery when only the measured tags drifted (a re-cast, more analysed
+    lines, a z crossing the "slightly" threshold): it is voiced again only when tts.delivery_tags (to or from
+    off, or the agent's tags now ignored) or the agent's delivery changed its tags."""
+    made = row.get("delivery_tags")  # the setting the take was planned under (absent on older takes)
+    if setting == "off" or made == "off":
+        return not row.get("control") and not plan.control
+    if row.get("tags_source") == "agent" or plan.source == "agent":
+        return list(row.get("tags") or []) == plan.tags
+    return True
 
 
 def estimate_seconds(text: str, lang: str) -> float:
@@ -694,6 +768,52 @@ def _bootstrap_states(
     return states
 
 
+def _tags_states(
+    project: Project,
+    lines_all: dict[str, dict[str, Any]],
+    char_of: dict[str, str],
+    follows: dict[str, str],
+    refs_by_char: dict[str, list[dict[str, Any]]],
+    analysis: dict[str, dict[str, Any]],
+    reference: str,
+) -> dict[str, _Bootstrap]:
+    """Per character the long original timbre reference of ref_strategy=tags: `main` = the calm/main one
+    (the same file bootstrap uses), `bucket` = one per arousal bucket, picked per line like bootstrap."""
+    by_char: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for lid, cid in char_of.items():
+        if lid not in follows:
+            by_char[cid].append(lines_all[lid])
+    states: dict[str, _Bootstrap] = {}
+    for cid, lines in by_char.items():
+        if cid == "unknown":  # a mix of voices: no long reference, line/char like bootstrap
+            continue
+        banks = emotion_banks(lines, analysis)
+        if reference == "main":
+            banks = {"calm": banks.get("calm", [])}
+        long_refs = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks)
+        arousal = line_arousal(lines, analysis) if reference == "bucket" else {}
+        states[cid] = _Bootstrap(long_refs, {}, [], True, arousal)
+    return states
+
+
+def delivery_setting(project: Project) -> str:
+    raw = project.setting("tts", "delivery_tags", "on")
+    # a hand-edited JSON boolean: false = off, true = on (never `false or "on"`)
+    value = ("on" if raw else "off") if isinstance(raw, bool) else str(raw or "on")
+    if value not in DELIVERY_SETTINGS:
+        raise BabelDubError(f"tts.delivery_tags must be one of {list(DELIVERY_SETTINGS)}", code=EXIT_USAGE,
+                            hint="`babeldub set tts.delivery_tags=on`")
+    return value
+
+
+def tags_reference(project: Project) -> str:
+    value = str(project.setting("tts", "tags_reference", "main") or "main")
+    if value not in TAGS_REFERENCES:
+        raise BabelDubError(f"tts.tags_reference must be one of {list(TAGS_REFERENCES)}", code=EXIT_USAGE,
+                            hint="`babeldub set tts.tags_reference=main`")
+    return value
+
+
 # ---- synth --------------------------------------------------------------------------------
 REBUCKET_REASONS = frozenset({"flat", "mos"})  # QA reasons a regen answers with another arousal bucket
 
@@ -713,13 +833,18 @@ def _overridden(decision: dict[str, Any] | None) -> bool:
 def _plan_synth(
     project: Project, args: argparse.Namespace, engine: EngineChoice, strategy: str,
     catalog: Any | None = None, accent: Callable[[list[str]], dict[str, str]] | None = None,
+    notes: list[str] | None = None,
 ) -> tuple[list[Job], Counter[str], list[str], list[str]]:
     """Jobs of this run, skip counters, lines that need attention and lines that wait for the
     bootstrap target-language prompt (strategy `bootstrap`).
 
     Line classes (inventory/analysis.jsonl): interjection/nonverbal lines keep the original (an auto
     keep_original decision, skipped.keep_original); a short_word line is spoken with the line itself as
-    the reference, tts.short_word_best_of candidates and tts.short_word_attempts attempts."""
+    the reference, tts.short_word_best_of candidates and tts.short_word_attempts attempts.
+    Strategy `tags`: every job carries its Delivery (plan_delivery, drops_control); a changed control text
+    makes a done take stale (reason `delivery`), unless QA accepted it and only the measured tags drifted
+    (accepted_delivery_stands). An engine without a control text ignores the tags and
+    says so once in `notes` (control_ignored)."""
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
     if not lines_all:
         raise BabelDubError("no lines in inventory/lines.jsonl", code=EXIT_USAGE, hint="run `babeldub extract` and `babeldub link` first")
@@ -787,12 +912,21 @@ def _plan_synth(
         picked.append((line_id, line, char_id))
 
     states: dict[str, _Bootstrap] = {}
+    chars = {cid for _, _, cid in picked}
+    voiced = {lid: char_of(lid, ln) for lid, ln in lines_all.items() if ln.get("kind") in VOICED_KINDS}
     if strategy == "bootstrap":
-        chars = {cid for _, _, cid in picked}
-        voiced = {lid: char_of(lid, ln) for lid, ln in lines_all.items() if ln.get("kind") in VOICED_KINDS}
         states = _bootstrap_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars},
                                    translations, decisions, history, follows, refs_by_char, analysis,
                                    {lid for lid, c in classes.items() if c in keep_classes})
+    elif strategy == "tags":
+        states = _tags_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars}, follows,
+                              refs_by_char, analysis, tags_reference(project))
+    delivery_mode = delivery_setting(project)
+    controls = engine.name in CONTROL_ENGINES and strategy == "tags"
+    # an engine without a control text measures nothing: one note says the tags are not voiced
+    ignores = engine.name not in CONTROL_ENGINES and delivery_mode != "off"
+    measured = measured_tags(project, analysis, lines_all.values()) if controls and delivery_mode != "off" else {}
+    agent_tagged = 0  # ignores: planned lines whose translation carries the agent's tags
 
     accent_map: dict[str, str] = {}
     if accent is not None:
@@ -824,6 +958,7 @@ def _plan_synth(
         if not text:
             skipped["empty_text"] += 1
             continue
+        plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)
@@ -862,11 +997,18 @@ def _plan_synth(
                 and latest_ok.get("model") == engine.model_name
                 and _primary(latest_ok.get("lang")) == _primary(target)
             )
-            if same:
+            # tags: a changed control text is a new take of the same text (not a retranslation)
+            same_delivery = plan is None or not controls or delivery_matches(latest_ok, plan)
+            accepted = decision.get("decision") == "accept" and int(decision.get("attempt") or ok_attempt) == ok_attempt
+            if plan is not None and not same_delivery and accepted:  # QA accepted it: measured drift alone stands
+                same_delivery = accepted_delivery_stands(latest_ok, plan, delivery_mode)
+            if same and same_delivery:
                 skipped["done"] += 1
                 continue
             if latest_ok.get("text") != text:
                 reason = "retranslated"
+            elif same:
+                reason = "delivery"
         elif args.force and rows:
             reason = "force"
         tries_for_text = len({r.get("attempt") for r in rows if r.get("text") == text})  # a scored row repeats its attempt
@@ -892,7 +1034,9 @@ def _plan_synth(
         elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             bucket, long_ref, tgt = boot.pick(line_id, avoid_bucket)
-            if tgt is not None:
+            if strategy == "tags":  # the long original reference alone; the delivery comes from the control text
+                ref = Ref("tags", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+            elif tgt is not None:
                 ref = Ref("bootstrap-tgt", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
                 prompt = tgt
             elif line_id in boot.phase1 or boot.phase1_done:
@@ -904,8 +1048,8 @@ def _plan_synth(
                 waiting.append(line_id)
                 continue
         else:
-            choice = _choose_ref(project, line, refs_by_char.get(char_id, []), "auto" if strategy == "bootstrap" else strategy,
-                                 min_s, prefer, avoid, prepare)
+            choice = _choose_ref(project, line, refs_by_char.get(char_id, []),
+                                 "auto" if strategy in ("bootstrap", "tags") else strategy, min_s, prefer, avoid, prepare)
             if choice is None:
                 skipped["no_ref"] += 1
                 attention.append(line_id)
@@ -927,14 +1071,26 @@ def _plan_synth(
             _check_icl(job, None if prefer == "line" or cls == "short_word" else char_ref)
             if job.ref.mode == "line":
                 job.alt_ref = char_ref
-        if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and not job.ref.mode.startswith("bootstrap"):
+        if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and job.ref.mode not in LONG_REF_MODES:
             job.x_vector_only = True  # a prompt without a transcript can only give the timbre
-        job.est_s = estimate_seconds(text, target)
+        if plan is not None:
+            qa_row = qa_latest.get(line_id) or {}
+            qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
+            job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
+            job.delivery_tags = delivery_mode
+        elif ignores and delivery_mode == "on" and clean_tags(tr.get("delivery")):
+            agent_tagged += 1
+        job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
         job.key = _job_key(project, engine, job)
         job.seed = _seed(line_id, job.attempt)
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
     jobs.sort(key=lambda j: j.sort_key)
+    if ignores and jobs and (analysis or agent_tagged) and notes is not None:
+        sources = (["measured on the originals"] if analysis else []) + (
+            [f"the translator's on {agent_tagged} lines"] if agent_tagged else [])
+        notes.append(f"control_ignored: the {engine.name} engine reads no delivery control text, the delivery tags "
+                     f"({', '.join(sources)}) are not voiced")
     if keep_rows and not args.dry_run:
         _ensure_header(project.path(layout.DECISIONS), DECISIONS_SCHEMA)
         append_jsonl(project.path(layout.DECISIONS), keep_rows)
@@ -967,6 +1123,8 @@ def _job_key(project: Project, engine: EngineChoice, job: Job) -> str:
                         project.rel(ref.wav), ref.wav.stat().st_size, ref.text]
     if job.prompt is not None:
         parts += [job.prompt.ref_id, job.prompt.text]
+    if job.control:  # another delivery is another take
+        parts += ["control", job.control]
     return _sha(*parts)
 
 
@@ -980,9 +1138,12 @@ def _engine_params(project: Project, engine: EngineChoice, job: Job) -> dict[str
 
 
 def effective_strategy(configured: str, engine: str) -> tuple[str, str | None]:
-    """ref_strategy for this engine: auto -> bootstrap on voxcpm; bootstrap needs a prompt engine."""
-    if configured == "auto" and engine == PREMIUM:
-        return "bootstrap", None
+    """ref_strategy for this engine: auto -> tags on voxcpm (and the dummy test engine); tags needs an
+    engine that reads a control text, bootstrap one that takes a continuation prompt."""
+    if configured == "auto" and engine in CONTROL_ENGINES:
+        return "tags", None
+    if configured == "tags" and engine not in CONTROL_ENGINES:
+        return "auto", f"ref_strategy=tags needs the {PREMIUM} engine (delivery control text): using auto (line/char) with {engine}"
     if configured == "bootstrap" and engine not in PROMPT_ENGINES:
         return "auto", f"ref_strategy=bootstrap needs the {PREMIUM} engine: using auto (line/char) with {engine}"
     return configured, None
@@ -1036,23 +1197,29 @@ def cmd_synth(args: argparse.Namespace) -> int:
     if (_primary(project.target_lang) == "ru" and _on(project.setting("tts", "stress", "off"))
             and stress_mode(project, engine, catalog) != "none"):
         accent = Accenter(project, compute=not args.dry_run)
-    jobs, skipped, attention, waiting = _plan_synth(project, args, engine, strategy, catalog, accent)
+    jobs, skipped, attention, waiting = _plan_synth(project, args, engine, strategy, catalog, accent, notes)
     if accent is not None and accent.note:
         notes.append(accent.note)
     planned = len(jobs)
+    # every planned take, --limit or not
+    delivery = delivery_counts({"tags_source": j.delivery.source, "tags": j.delivery.tags, "control": j.delivery.control}
+                               for j in jobs if j.delivery is not None)
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
     by_ref = Counter(j.ref_mode for j in jobs)
 
     if args.dry_run:
-        return emit({
+        dry: dict[str, Any] = {
             "stage": "synth", "dry_run": True, "engine": engine.name, "model": engine.model_name,
             "model_source": engine.model_source, "env_ready": engine.python.exists(), "planned": planned,
             "would_run": len(jobs), "by_ref": dict(by_ref), "ref_strategy": strategy, "best_of": best_of,
             "best_of_mode": mode,
             "by_char": dict(Counter(j.char_id for j in jobs).most_common(12)),
             "skipped": dict(skipped), "attention": clip(attention), "notes": notes,
-        })
+        }
+        if delivery:
+            dry["delivery"] = delivery
+        return emit(dry)
     if not jobs:
         status = "attention" if attention else "done"
         project.mark_stage("synth", status, done=0, failed=0, remaining=0, skipped=dict(skipped),
@@ -1068,7 +1235,7 @@ def cmd_synth(args: argparse.Namespace) -> int:
 
     cache_dir = project.path("synth", "refcache")
     for job in jobs:
-        if job.ref.mode.startswith("bootstrap"):
+        if job.ref.mode in LONG_REF_MODES:
             continue  # the long timbre reference is meant to be ~15-20 s
         job.ref, trimmed = _fit_ref(job.ref, cache_dir, ref_max_s(engine.name))
         if trimmed:
@@ -1134,6 +1301,8 @@ def cmd_synth(args: argparse.Namespace) -> int:
         **summary, "by_ref": dict(by_ref), "skipped": dict(skipped),
         "results": layout.SYNTH_RESULTS, "log": project.rel(log_path),
     }
+    if delivery:
+        payload["delivery"] = delivery
     if scored is not None:
         payload["score"] = scored
     if t.errors:
@@ -1204,6 +1373,8 @@ class _SynthRun:
         if job.prompt is not None:  # target-language continuation prompt (VoxCPM2 prompt_wav_path + prompt_text)
             req["prompt_wav"] = str(job.prompt.wav)
             req["prompt_text"] = job.prompt.text
+        if job.control:  # VoxCPM2 "(control)text"; the worker builds it, `text` stays the dub text alone
+            req["control"] = job.control
         return req
 
     def n_for(self, job: Job) -> int:
@@ -1241,6 +1412,11 @@ class _SynthRun:
             row["prompt_wav"] = project.rel(job.prompt.wav)
         if job.bucket:
             row["bucket"] = job.bucket
+        if job.delivery is not None:
+            row.update(control=job.delivery.control, tags=job.delivery.tags, tags_source=job.delivery.source,
+                       delivery_tags=job.delivery_tags)
+        if reply.get("prompt_dropped"):
+            row["prompt_dropped"] = True
         if job.line_class:
             row["class"] = job.line_class
         if job.ref_reason:
@@ -1761,8 +1937,9 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
     p = sub.add_parser(
         "synth",
         help="dub translated lines in the original character's voice (TTS voice cloning)",
-        description="Synthesize dub_text of selected lines; the voice prompt is the original line "
-        "(ref_strategy=line) or the character's best reference (char).",
+        description="Synthesize dub_text of selected lines; the voice prompt is the character's long original "
+        "reference with delivery tags (ref_strategy=tags, VoxCPM2), the original line (line) or the character's "
+        "best reference (char).",
     )
     common(p)
     p.add_argument("action", nargs="?", choices=("score",),

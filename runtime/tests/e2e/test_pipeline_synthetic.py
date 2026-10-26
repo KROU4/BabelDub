@@ -284,7 +284,8 @@ def test_pipeline_end_to_end(tmp_path: Path, bd, monkeypatch: pytest.MonkeyPatch
     assert out["next"] == "babeldub scan"
     # post.tolerance: CI runners have no ffmpeg, so the dubs keep their natural tempo here (the bounded
     # tempo fit is covered by tests/voice); best of 2 candidates per line
-    code, out = bd("set", "tts.engine=dummy", "compute.device=cpu", "post.tolerance=100", "tts.best_of=2")
+    code, out = bd("set", "tts.engine=dummy", "compute.device=cpu", "post.tolerance=100", "tts.best_of=2",
+                   "tts.ref_strategy=line")
     assert code == EXIT_OK, out
     assert bd("set", "compute.device=gpu")[0] == EXIT_USAGE
 

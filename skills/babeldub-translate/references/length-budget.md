@@ -39,6 +39,7 @@ Also for the voice: in Russian write ё wherever it belongs (все / всё), a
 3. **Do not sacrifice** meaning, glossary names, the emotional shape (exclamation, question, cut-off), or a joke that moves the scene.
 4. **Variants.** If the full translation does not fit, give up to two shorter ones in `variants`: first a compact one, then the tightest. `batch submit` takes the first variant that fits (`picked_variant`) and keeps the agent's original text in `agent_text`.
 5. **Shorter than the budget is fine** if it sounds natural. `under` is a hint to check that no meaning was lost, not an error. Do not pad a line with filler words to reach the length.
+6. **Delivery tags do not change the budget.** The instruction made of the line's delivery tags is never spoken and never counted; `quick` does not buy room for a longer text, and `slow` makes the dub longer. On a tight or `fixed_length` line do not add `slow` (or `sad`, which is usually slower) unless the scene really needs it; the pace measured on the original is already in `delivery_hint` (`references/batch-format.md`, section 2a).
 
 ## 3. `fixed_length: true`
 
