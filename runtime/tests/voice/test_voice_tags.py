@@ -127,7 +127,11 @@ def test_final_tags_precedence() -> None:
     assert voice.plan_delivery("off", agent, measured) == voice.Delivery([], "none", None)
     quick = Measured(["quick"], {"rate": 1.7})
     assert voice.plan_delivery("on", {}, quick).control == "slightly faster"
-    assert voice.plan_delivery("on", {"delivery": ["quick", "bogus"]}, quick).control == "fast pace"
+    assert voice.plan_delivery("on", {"delivery": ["quick", "sad", "bogus"]}, quick).control == "fast pace, sad"
+    # the agent repeating the hint is the hint: measured, with its "slightly faster"
+    assert voice.plan_delivery("on", {"delivery": ["Quick"]}, quick) == voice.Delivery(["quick"], "measured", "slightly faster")
+    assert voice.plan_delivery("on", {"delivery": ["quick", "bogus"]}, quick).source == "measured"
+    assert voice.plan_delivery("on", {"delivery": []}, Measured([], {})) == voice.Delivery([], "agent", None)
 
 
 def test_regen_drop_rule() -> None:
@@ -197,8 +201,9 @@ def test_request_carries_the_control_and_the_key_changes_with_it(project: Projec
     retranslate(project, 3, delivery=["urgent"])
     again = plan(project, "--force")[line_id(3)]
     assert again.control == "urgent" and again.key != key and again.text == shout.text
-    retranslate(project, 3, delivery=["shouting"])  # the same control text as measured: the same key
-    assert plan(project, "--force")[line_id(3)].key == key
+    retranslate(project, 3, delivery=["shouting"])  # the hint repeated: the measured delivery, the same key
+    again = plan(project, "--force")[line_id(3)]
+    assert again.key == key and again.delivery == voice.Delivery(["shouting"], "measured", "shouting")
 
 
 def test_agent_delivery_makes_a_new_take_not_a_retranslation(project: Project,

@@ -500,13 +500,15 @@ class Delivery:
 
 def plan_delivery(setting: str, translation: dict[str, Any] | None, measured: Measured | None) -> Delivery:
     """Final delivery tags of a line: the agent's `delivery` on the current translation (even []) wins over
-    the tags measured on the original, which win over none. tts.delivery_tags=measured ignores the agent,
+    the tags measured on the original, which win over none. An agent delivery equal to the measured tags is
+    the measured delivery (its "slightly faster/slower" stays). tts.delivery_tags=measured ignores the agent,
     off ignores both."""
     if setting == "off":
         return Delivery([], "none", None)
     if setting == "on" and translation is not None and isinstance(translation.get("delivery"), list):
         tags = clean_tags(translation["delivery"])
-        return Delivery(tags, "agent", control_phrase(tags) or None)
+        if not (measured is not None and tags and tags == measured.tags):
+            return Delivery(tags, "agent", control_phrase(tags) or None)
     if measured is not None and measured.tags:
         return Delivery(list(measured.tags), "measured", measured.control or None)
     return Delivery([], "none", None)
