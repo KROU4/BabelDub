@@ -250,6 +250,27 @@ def test_cer_regen_drops_the_control_flat_regen_keeps_it(project: Project,
     assert third["attempt"] == 3 and third["tags_source"] == "dropped" and third["control"] is None
 
 
+def test_drop_rule_counts_the_takes_of_the_current_text(project: Project,
+                                                       capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    judge(project, 3, 1, ["flat"])
+    run(capsys, project.root, "synth", "--attempt-next")  # take 2 of the first text keeps the tags
+    append_jsonl(project.path(layout.TRANSLATIONS), [
+        {"id": line_id(3), "dub_text": "Совсем другая реплика, малой.", "lang": "ru", "by": "agent", "rev": 2}])
+    run(capsys, project.root, "synth")
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 3 and row["reason"] == "retranslated" and row["control"] == "shouting"
+    judge(project, 3, 3, ["flat"])  # attempt 4 of the line, but only take 2 of the new text: the tags stay
+    run(capsys, project.root, "synth", "--attempt-next")
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 4 and row["reason"] == "regen"
+    assert row["control"] == "shouting" and row["tags_source"] == "measured"
+    judge(project, 3, 4, ["flat"])  # take 3 of the new text drops them
+    run(capsys, project.root, "synth", "--attempt-next")
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 5 and row["tags_source"] == "dropped" and row["control"] is None
+
+
 def test_short_word_gets_tags_and_bucket_reference(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     rows = read_jsonl(project.path(layout.ANALYSIS))
     for row in rows:

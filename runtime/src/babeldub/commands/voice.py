@@ -72,7 +72,7 @@ CONTROL_ENGINES = ("voxcpm", "dummy")  # read a "(delivery control)" text before
 LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags")  # the ~15-20 s long timbre reference, never cut
 TAGS_REFERENCES = ("main", "bucket")  # tts.tags_reference
 DELIVERY_SETTINGS = ("on", "measured", "off")  # tts.delivery_tags
-DROP_CONTROL_ATTEMPT = 3  # a QA regen from this attempt on is voiced without the control text
+DROP_CONTROL_ATTEMPT = 3  # a QA regen from this take of the current text on is voiced without the control text
 # same models and the same output for one seed: a take of one is "done" for the other
 ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
@@ -512,10 +512,11 @@ def plan_delivery(setting: str, translation: dict[str, Any] | None, measured: Me
     return Delivery([], "none", None)
 
 
-def drops_control(reason: str, attempt: int, qa_reasons: list[str] | None) -> bool:
-    """A QA regen after a `cer` failure, or any regen from attempt DROP_CONTROL_ATTEMPT on, is voiced without
-    the control text (a control phrase can garble words); after flat/mos the tags stay (new seed)."""
-    return reason == "regen" and ("cer" in (qa_reasons or []) or attempt >= DROP_CONTROL_ATTEMPT)
+def drops_control(reason: str, take: int, qa_reasons: list[str] | None) -> bool:
+    """A QA regen after a `cer` failure, or any regen that is take DROP_CONTROL_ATTEMPT or later of the current
+    text (`take`: counted like tts.max_attempts, a retranslation starts again at 1), is voiced without the
+    control text (a control phrase can garble words); after flat/mos the tags stay (new seed)."""
+    return reason == "regen" and ("cer" in (qa_reasons or []) or take >= DROP_CONTROL_ATTEMPT)
 
 
 def apply_drop(plan: Delivery, drop: bool) -> Delivery:
@@ -1054,7 +1055,7 @@ def _plan_synth(
         if plan is not None and controls:
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
-            job.delivery = apply_drop(plan, drops_control(reason, job.attempt, qa_reasons))
+            job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
         elif plan is not None and plan.tags:
             ignored += 1
         job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
