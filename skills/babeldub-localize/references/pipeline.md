@@ -92,6 +92,7 @@ babeldub analyze [--ids a,b] [--limit N] [--force] [--device cuda|cpu] [--wait-l
 
 - The `qc` worker (on the GPU when present) measures every voiced original with audio (alt takes that follow a leader are skipped): Silero VAD speech segments (a 250 ms pause splits them), the ASR transcript with word times and confidences, pitch (F0 median and range in semitones), loudness and voiced share; an emotion label and embedding only when the user accepted the opt-in emotion2vec+ license. Rows go to `inventory/analysis.jsonl`, vectors to `inventory/analysis.npz`.
 - Each line gets a class: `speech`, `short_word` (real words in under 1.2 s of speech: "Freeze!", "Yes, Chief!"), `interjection` (the subtitle is only "Hehe…", "Hmm", "Um…", "Ugh", "Oh!", "Ах"…), `nonverbal` (screams, laughs, grunts, a `[laughs]` subtitle, or no subtitle and nothing the ASR is sure of) or `mixed` (words plus a laugh or groan). `interjection` and `nonverbal` lines keep the original audio: `translate` leaves them out (`translate plan` → `keep_original`), `synth` skips them (`skipped.keep_original`) with an automatic `keep_original` decision. `short_word` lines are voiced from the line itself with 6 candidates and one regen at most; `mixed` lines are voiced and QA flags them for listening. The prosody of each line also sorts it into an arousal bucket (calm, animated, loud, soft) for the voice prompts.
+- **Delivery tags.** The same measurements give each line its delivery tags (`shouting`, `whispered`, `urgent`, `energetic`, `calm`, `sad`, `soft`, `loud`, `quick`, `slow`, `expressive`, `flat`; at most 3): pitch, loudness, voiced share, and on lines with ≥ 1.5 s of speech pitch range and speaking rate, as robust z-scores against the same character's other lines; only strong deviations become tags. They need the character (`cast/assign.jsonl` once `cast` ran, else the metadata speaker) and at least 5 other comparable lines of that character; they are computed whenever `batch make` or `synth` needs them and never stored.
 - A line whose original says something else than its subtitle (CER of the ASR against `text.src` > 0.35) gets the flag `subtitle_mismatch` in `lines.jsonl`; no other line field changes. Tell the translator: such a subtitle may be an alt take, a shortened caption or the wrong line.
 - Idempotent: an unchanged wav is not measured again (`--force` does); the class and the flag are recomputed on every run, so a corrected subtitle is picked up.
 - Output: `analyzed`, `up_to_date`, `failed`, `lines`, `classes{}`, `subtitle_mismatch`, `mismatch_ids[]`, `flags_changed`, `skipped{}`, `emotion`, `device`, `elapsed_s`, `next`. Code 3: some lines failed or are left by `--limit` (run again); code 4: no `qc` env (`babeldub setup --engines qc`).
@@ -130,9 +131,9 @@ babeldub glossary check
 | `translate plan` | decides the mode; with `auto` — `adapt` when official target-language texts exist (the translator turns them into spoken dub texts; lines without one are translated in the same batches), otherwise `translate`; `official` (voice the official text as is) only when set explicitly | `mode`, `need_agent`, `translated`, `glossary`, `style_bible`, `next` |
 | `translate use-official` | mode `official`: copies the official translation into `translate/translations.jsonl` (`by=official`) | `copied`, `missing`, `next` |
 | `glossary apply` | validates `translate/glossary.agent.jsonl` and merges it into `translate/glossary.jsonl` | `added`, `updated`, `total` |
-| `batch make` | cuts batches by scene for the lines that need an agent; `--ids` and `--from-decisions` make batches for retranslation (QA decisions `shorten`, `retranslate`) | `mode`, `batches[]`, `lines`, `open`, `dir`, `next` |
+| `batch make` | cuts batches by scene for the lines that need an agent; every line carries its measured `delivery_hint`; `--ids` and `--from-decisions` make batches for retranslation (QA decisions `shorten`, `retranslate`) | `mode`, `batches[]`, `lines`, `open`, `dir`, `next` |
 | `batch next` | the first open batch | `batch`, `state`, `in`, `out`, `remaining`, `next` |
-| `batch submit <bid>` | validates `.out.jsonl` (every `id`, non-empty `dub_text`, placeholders as in `src`) and merges it into `translations.jsonl`; picks a variant that fits the budget | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants`, `open_batches`, `next` |
+| `batch submit <bid>` | validates `.out.jsonl` (every `id`, non-empty `dub_text`, placeholders as in `src`, `delivery` = at most 3 vocabulary tags) and merges it into `translations.jsonl` (`delivery` kept as given); picks a variant that fits the budget | `merged`, `errors[]`, `over_budget[]`, `over_fixed[]`, `picked_variants`, `open_batches`, `hint?`, `next` |
 | `glossary check` | checks glossary terms in the translations | `violations[]`, `next` |
 
 Order:
@@ -140,7 +141,7 @@ Order:
 1. `translate plan`. Mode `adapt` (the default with official texts) or `translate` → batches below; batch rows with `task: "adapt"` carry the official text in `tgt_official`, and an adapted dub keeps it as the subtitle. Mode `official` → `translate use-official`; if `need_agent` = 0 after that, go to the voice stage.
 2. Lexicon role: `translate/glossary.agent.jsonl` and `translate/style_bible.md`, then `babeldub glossary apply`. This must happen **before** `batch make`: the batch header only receives terms from `translate/glossary.jsonl` and the style bible text.
 3. `batch make`, then loop: `batch next` → translator → `batch submit <bid>`. `batch next` always returns the first open batch; for parallel work take different `bid` values from `batches[]` of the `batch make` output (or from the file names `translate/batches/<bid>.in.jsonl` that have no `.out.jsonl` yet).
-4. `batch submit`: code 2 — errors in `errors[]` (full list in `errors_file`). The translator fixes their `.out.jsonl` and submits again, up to 3 iterations. Code 3 — `over_budget[]`: lines longer than 115 % of the budget; `over_fixed[]` (fixed length) needs shorter `variants`, `post` fits the rest.
+4. `batch submit`: code 2 — errors in `errors[]` (full list in `errors_file`; a `delivery` error comes with a `hint` listing the tags). The translator fixes their `.out.jsonl` and submits again, up to 3 iterations. Code 3 — `over_budget[]`: lines longer than 115 % of the budget; `over_fixed[]` (fixed length) needs shorter `variants`, `post` fits the rest.
 5. End of the loop: `batch next` returns `batch: null`, `done: true`.
 6. `glossary check`: code 3 — `violations[]` (file `translate/glossary_violations.jsonl`). Fixes: `babeldub batch make --ids <id,...>` → translator → `batch submit`.
 
@@ -151,14 +152,14 @@ babeldub synth [--chars A,B] [--limit N] [--attempt-next] [--engine <name>] [--b
 ```
 
 - Engine: `tts.engine=auto` — `voxcpm` (VoxCPM2) on CUDA when its env exists, else `qwen3tts-fast`/`qwen3tts`/`chatterbox`; the choice is in `notes`.
-- Voice prompt by `tts.ref_strategy`: with VoxCPM2 `auto` = `bootstrap` — the character's ~15–20 s long original timbre reference of the line's arousal bucket (calm, animated, loud, soft; calm when a bucket has too little material); the first 4 lines of each character with it alone (`bootstrap-src`), the rest wait (`skipped.bootstrap_wait`) until QA accepted 3 of them, then a target-language prompt bank (per bucket 1–2 accepted dubs, ranked by MOS and intonation) joins the reference with the prompt of the nearest bucket (`bootstrap-tgt`). Other engines: `line` — the original of this line with its source text; `char` — the character's best reference; `auto` — `line` if the original is ≥ `tts.line_ref_min_s` and has text, otherwise `char`.
+- Voice prompt by `tts.ref_strategy`: with VoxCPM2 `auto` = `tags` — the character's ~15–20 s long original timbre reference (`tts.tags_reference`: `main`, the calm/main one, by default; `bucket`, the one of the line's arousal bucket) plus a delivery control text from the line's tags: the translator's `delivery` (even `[]`) > the measured tags > none (`tts.delivery_tags`: `on` | `measured` ignores the translator | `off` no control text). Every line is voiced in one run (`ref_mode: tags`; `control`, `tags`, `tags_source` in `synth/results.jsonl`). An explicit `bootstrap` (the v0.2 chain, no tags): the long reference of the line's arousal bucket; the first 4 lines of each character with it alone (`bootstrap-src`), the rest wait (`skipped.bootstrap_wait`) until QA accepted 3 of them, then a target-language prompt bank (per bucket 1–2 accepted dubs, ranked by MOS and intonation) joins the reference with the prompt of the nearest bucket (`bootstrap-tgt`). Other engines: `line` — the original of this line with its source text; `char` — the character's best reference; `auto` — `line` if the original is ≥ `tts.line_ref_min_s` and has text, otherwise `char`; they read no control text (a `control_ignored` note).
 - Best of N: `tts.best_of` (3) takes per line with different seeds. `tts.best_of_mode=score` (the default when the `qc` env exists): every take is kept, and after the TTS worker exits `synth` ranks them with the qc models (prosody similarity, MOS, length, voice similarity; CER and length as gates) and keeps the best; `babeldub synth score` does the same later for lines left unscored. Otherwise the take closest to the original's speech length is kept (`best_of` in the results row).
 - Stress marks are stripped from the text for every model except an explicit stress model; the glossary `pronounce` goes into the dub text; `tts.stress=on` marks homographs (RUAccent, qc env) in the form the engine reads.
 - Interjections and nonverbal lines are skipped (`skipped.keep_original`, an automatic `keep_original` decision).
 - The model loads once per run, on the GPU when present; lines go in groups by character. Results: `synth/raw/<uid>/a<attempt>.wav` and `synth/results.jsonl`. Holds `state/locks/gpu.lock`.
-- Output: `done`, `failed`, `rtf`, `best_of`, `best_of_mode`, `score{}`, `remaining`, `next`; skipped lines are counted by reason (character not selected, no translation, attempts exhausted, `bootstrap_wait`, `keep_original`). With waiting lines `next` says to run `post`, `vc`, `qa` and `synth` again; `status` and `qa` repeat it.
-- `--attempt-next`: a new attempt for lines with the decision `regen` (new seed; after a `flat`/`mos` failure also the next nearest arousal bucket) or `reref` (prompt switch: original → character reference or the other way round).
-- Lines with a changed translation (after `shorten`/`retranslate`) are picked up by a plain `synth`.
+- Output: `done`, `failed`, `rtf`, `best_of`, `best_of_mode`, `score{}`, `by_ref{}`, `delivery{by_source, tags}` (with `tags`), `remaining`, `next`; skipped lines are counted by reason (character not selected, no translation, attempts exhausted, `bootstrap_wait`, `keep_original`). With waiting lines (`bootstrap` only) `next` says to run `post`, `vc`, `qa` and `synth` again; `status` and `qa` repeat it. `status` sums the delivery of the latest takes in `counts.delivery`.
+- `--attempt-next`: a new attempt for lines with the decision `regen` (new seed; with `tags` a regen after a `cer` failure, and any regen from attempt 3 on, drops the control text, `tags_source: dropped`; after a `flat`/`mos` failure the tags stay, and the next nearest arousal bucket is taken with `bootstrap` or `tts.tags_reference=bucket`) or `reref` (prompt switch: long reference or original → character reference, or the other way round; the tags stay).
+- Lines with a changed translation (after `shorten`/`retranslate`) are picked up by a plain `synth`; so is a line whose control text changed (a new `delivery`, a new `analyze`, another `tts.delivery_tags`): `reason: delivery`, counted toward `tts.max_attempts`.
 - Code 3: `failed` > 0 — rerun for them; if the error repeats, see `troubleshooting.md`.
 - Code 4: engine venv or model weights missing → `babeldub-doctor`.
 - Run long jobs in chunks (`--chars`, `--limit`) and check `remaining`.
@@ -203,7 +204,7 @@ babeldub report
 
 ```text
 synth → post → vc → qa ─┬─ accept ──────────────────────────────────────────→ ready to build
-                        ├─ bootstrap_wait ──→ synth → post → vc → qa
+                        ├─ bootstrap_wait (bootstrap only) ──→ synth → post → vc → qa
                         ├─ regen / reref ──→ synth --attempt-next → post → vc → qa
                         ├─ shorten / retranslate ──→ batch make --from-decisions → batch next → translator
                         │                             → batch submit → synth → post → vc → qa
@@ -261,7 +262,7 @@ babeldub verify [--game-runtime]
 `query` is the main way to look at data. Always pass `--fields` and `--limit` (up to 50).
 
 - `--where` conditions: `field=value`, `field!=value`, `field~substring`, comma-separated.
-- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`; QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.sim_threshold`, `qa.margin`, `qa.closest_char`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; analysis — `analysis.speech_s`, `analysis.asr_text`, `analysis.asr_vs_sub_cer`, `analysis.prosody.f0_range_st`, `analysis.class_reason`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`, `class`.
+- Line fields: `id`, `kind`, `scene`, `fixed_length`, `flags`, `speaker_hint`, `entry.key`, `audio.dur_s`, `text.src`, `text.tgt_official`; casting — `char` (id or name), `char_name`; translation — `translation.dub_text`, `translation.fit`, `translation.delivery` (the translator's delivery tags, absent when it accepted the hint); QA — `qa.attempt`, `qa.cer`, `qa.sim`, `qa.sim_ref`, `qa.sim_threshold`, `qa.margin`, `qa.closest_char`, `qa.ratio`, `qa.reasons`, `qa.asr_text`; analysis — `analysis.speech_s`, `analysis.asr_text`, `analysis.asr_vs_sub_cer`, `analysis.prosody.f0_range_st`, `analysis.class_reason`; computed — `has_text`, `translated`, `verdict`, `decision`, `voiced`, `class`.
 - Example: `babeldub query --where char=Zbyszek,verdict=fail --fields id,qa.reasons,qa.cer,qa.sim,qa.sim_ref --limit 30`.
 
 ## 5. Project artifacts
@@ -276,7 +277,7 @@ BABELDUB_HOME/projects/<slug>/
 ├─ audio/orig/<uid>.wav                 decoded originals
 ├─ cast/ characters.jsonl assign.jsonl refs.jsonl refs/<char_id>/<uid>.wav casting_sheet.md labels.agent.jsonl
 ├─ translate/ glossary.jsonl glossary.agent.jsonl style_bible.md batches/<bid>.in.jsonl batches/<bid>.out.jsonl translations.jsonl
-├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav prompts/<char_id>/ (bootstrap: src-*.wav, tgt.json, tgt-*.wav)
+├─ synth/ results.jsonl raw/<uid>/a<attempt>.wav prompts/<char_id>/ (long references src-*.wav; bootstrap also tgt.json, tgt-*.wav)
 ├─ post/ post.jsonl audio/<uid>.wav
 ├─ vc/ <char_id>/model.pth model.index model.json dataset/  audio/<uid>.wav
 ├─ qa/ qa.jsonl decisions.jsonl decisions.agent.jsonl report.md
@@ -297,7 +298,7 @@ All JSONL files are UTF-8 without BOM, one object per line. A repeated `id` is a
 inventoried (extract) → linked (link; no text → original plays) → analyzed (analyze: line class, `subtitle_mismatch` flag)
 → cast (character not selected → original plays)
 → translated (translations.jsonl)
-→ synth (attempt k; bootstrap lines may wait for their character's target-language prompt) → post → vc → qa
+→ synth (attempt k; long reference + delivery tags; with bootstrap, lines may wait for their character's target-language prompt) → post → vc → qa
    ├─ accept → build → install
    ├─ regen / reref → synth (attempt k+1, at most tts.max_attempts per text)
    ├─ shorten / retranslate → new translation → synth
