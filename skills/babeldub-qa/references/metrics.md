@@ -4,7 +4,7 @@ Read this the first time you review defects. The metrics are computed by the `qc
 
 ## 1. Fields of `qa/qa.jsonl`
 
-`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `cer_skipped`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `sim_ratio`, `sim_threshold`, `sim_skipped`, `mos`, `orig_mos`, `prosody_sim`, `f0_range_st`, `orig_f0_range_st`, `contour_corr`, `margin`, `closest_char`, `ratio`, `dur_s`, `peak_db`, `class`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Inspect them with `babeldub query`; do not read the file whole. In `query` these fields are available with the `qa.` prefix (`--fields id,qa.cer,qa.sim,qa.reasons`), while `verdict` and `decision` use short names in `--where`.
+`id`, `attempt`, `char_id`, `wav`, `asr_text`, `cer`, `cer_skipped`, `sim`, `sim_line`, `sim_char`, `sim_ref`, `sim_ratio`, `sim_threshold`, `sim_skipped`, `mos`, `orig_mos`, `prosody_sim`, `f0_range_st`, `orig_f0_range_st`, `contour_corr`, `margin`, `closest_char`, `ratio`, `dur_s`, `peak_db`, `ltas_db`, `voice_wav`, `class`, `verdict` (`pass` | `fail`), `reasons[]`, `ts`. Inspect them with `babeldub query`; do not read the file whole. In `query` these fields are available with the `qa.` prefix (`--fields id,qa.cer,qa.sim,qa.reasons`), while `verdict` and `decision` use short names in `--where`.
 
 ## 2. Intelligibility: `cer`
 
@@ -23,7 +23,7 @@ For Russian, the BabelDub research recommends GigaAM-v3 as more accurate recogni
 
 ## 3. Is it the same voice: `sim`, `sim_line`, `sim_char`, `sim_ref`
 
-- **How.** SpeechBrain ECAPA (voxceleb) voice embeddings for the dub, for the original recording of this line and for the character's main reference; cosine similarity.
+- **How.** SpeechBrain ECAPA (voxceleb) voice embeddings for the dub, for the original recording of this line and for the character's main reference; cosine similarity. When `post.match` changed the take (the post row has `pre_match_wav`), the dub's embedding — like `margin`, `mos` and the prosody — comes from the take **before** the channel match (`voice_wav` in the QA row): an EQ or a radio chain is the channel, not the voice. ASR/CER and the levels use the final file.
   - `sim_line` — the dub against its own original (if the original is clean: at least 1 s long, without the `has_bed`, `nonverbal`, `alt_take`, `no_audio` flags);
   - `sim_char` — the dub against the character's reference (if the reference is not this same line);
   - `sim` — the mean of whatever could be computed.
@@ -68,6 +68,11 @@ Screams, laughs, groans: their embedding says little about the timbre (the origi
 - **How.** The qc worker tracks F0 (pyin) on the dub and on the clean original. `f0_range_st` is the 10–90 % pitch range in semitones; `contour_corr` the correlation of the two voiced pitch contours (both resampled to 32 points; null when either is too short or their lengths differ more than twice); `prosody_sim` = 0.6 × range ratio (smaller / larger) + 0.4 × (`contour_corr` + 1) / 2.
 - **Rule.** Reason `flat` when the original moves at least `qa.flat_min_orig_st` (3) semitones and the dub's range is below `qa.min_f0_range_ratio` (0.5) of it: the monotone "machine" read that the v0.2 baseline found in every group (the dub's range narrower than the original's).
 - **Where it goes wrong:** creaky or whispered originals have little voiced pitch; a different sentence structure in the translation moves the stresses, so a low `contour_corr` alone is no defect (it never fails a line).
+
+## 5b'. Channel: `ltas_db`
+
+- **How.** The long-term average spectrum of the speech frames of the final take and of the original line in 1/3-octave bands (80 Hz – 16 kHz); `ltas_db` is the mean absolute band difference in dB after removing the level offset (`qa.metrics.ltas_distance_db`). About 1–3 dB: the same kind of channel; 5 dB and more: a clean studio take inside a radio, phone or band-limited line (or the other way round).
+- **Rule.** None: it is informational and never fails a line. A high value on lines that sound "pasted in" is a reason to check `post.match` (`full` for baked-in radio/phone lines; skill `babeldub-voice`, `references/post.md` section 4), not to regenerate the take. The `post` row's `match.ltas_db` shows the same distance before and after the match.
 
 ## 5c. Timing of `fixed_length` lines
 

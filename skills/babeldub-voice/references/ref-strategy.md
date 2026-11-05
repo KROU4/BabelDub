@@ -110,7 +110,7 @@ Other dubbing pipelines do the same (SVR_TTS, YouDub, VideoLingo): the reference
 | `has_bed` flag, music or ambience under the voice | the model clones the background too: noise, music, hum | `auto` picks `char` itself; v0.1 has no voice/background separation |
 | `nonverbal` (laughter, wordless scream, breathing) | nothing to align with the text | `auto` picks `char` itself |
 | no original text | no transcript for ICL | `char`; in v0.1 such lines are usually not translated at all |
-| an effect in the original: radio, phone, echo, distortion | the effect becomes part of the timbre and does not match other lines | `reref` for these lines, or `char` for the character (section 6) |
+| an effect in the original: radio, phone, echo, distortion | the effect becomes part of the timbre and does not match other lines | `reref` for these lines, or `char` for the character (section 6); the channel itself comes back in `post` (`post.match=full`, `references/post.md` section 4) |
 | shouting or whispering from a character with few lines | extreme delivery distorts the timbre | `reref` (switch to `char`) by QA decision |
 
 `babeldub cast` picks the `char` reference: an original of 3–12 s with known text, without the `has_bed`/`nonverbal`/`alt_take` flags, without clipping and not quiet, closest to the character's "typical" voice (the embedding centroid, if the `qc` worker is installed). The caster role checks that the reference text is neutral (no shouting, whispering or laughter). Details: skill `babeldub-cast`.
