@@ -142,6 +142,33 @@ def test_short_line_pools_the_characters_originals_and_off_or_silence_do_nothing
         match.match_channel(dub, SR, short, SR, "loud")
 
 
+def test_character_pair_recovers_the_shared_channel_the_line_curves_over_fit() -> None:
+    # six "lines": each original has its own content colouring (phonemes) over one shared channel tilt, each dub
+    # another colouring of its own; the colourings average out of both pools, the tilt stays
+    idx = np.arange(len(match.BAND_CENTERS))
+    dubs, origs, line_eqs = [], [], []
+    for j in range(6):
+        phase = 2 * np.pi * j / 6
+        orig = channel(voice(2.0, seed=10 + j), TILT + 3.0 * np.sin(2 * np.pi * idx / 8.0 + phase))
+        dub = channel(voice(2.0, seed=30 + j), 3.0 * np.sin(2 * np.pi * idx / 5.0 + 2 * phase + 1.0))
+        origs.append(match.profile(orig, SR))
+        dubs.append(match.profile(dub, SR))
+        line_eqs.append(np.array(match.match_channel(dub, SR, orig, SR, "eq").info["eq_db"]))
+        if j == 0:
+            first = (dub, orig)
+    res = match.match_channel(first[0], SR, first[1], SR, "eq", pair=(dubs, origs))
+    assert res.applied and res.info["ref"] == "pair" and res.info["pair_lines"] == 6
+    pair_eq = np.array(res.info["eq_db"])
+    speech = [b for b, fc in enumerate(match.BAND_CENTERS) if 300 <= fc <= 3400]
+    shared = TILT - TILT[speech].mean()
+    assert np.mean(np.abs(pair_eq - shared)) < 0.5  # the channel itself
+    assert all(np.mean(np.abs(eq - shared)) > 1.0 for eq in line_eqs)  # each line curve carries its content
+    assert np.mean(np.abs(pair_eq)) < np.mean([np.mean(np.abs(eq)) for eq in line_eqs])
+    # ltas_db is still measured against the line's own original; an empty pair is no pair
+    assert res.info["ltas_db"]["after"] is not None
+    assert match.match_channel(first[0], SR, first[1], SR, "eq", pair=([], [])).info["ref"] == "line"
+
+
 def test_stereo_input_keeps_its_channels_and_ltas_distance_metric() -> None:
     dub = np.repeat(voice(1.5, seed=1)[:, None], 2, axis=1)
     orig = channel(voice(1.5, seed=2), TILT)

@@ -79,6 +79,10 @@ SLOW_HINT_MIN_LINES = 3  # ... measured on at least this many of the character's
 SLOW_HINT_MIN_S = 1.0  # ... each with at least this much original speech (shorter ratios are noise)
 SLOW_STRONG_RATIO = 0.7  # under this ratio the hint reads "slow pace", else "slightly slower"
 MATCH_POOL_LINES = 8  # post.match: a short line's EQ target pools up to this many of the character's originals
+MATCH_TARGETS = ("character", "line")  # post.match_target
+MATCH_PAIR_LINES = 16  # match_target=character: the pair pools up to this many of the character's lines ...
+MATCH_PAIR_MIN_LINES = 3  # ... and needs at least this many ...
+MATCH_PAIR_MIN_S = 10.0  # ... and this much speech on each side, else the line's own curve is used
 # same models and the same output for one seed: a take of one is "done" for the other
 ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
@@ -1960,17 +1964,80 @@ def match_mode(project: Project) -> str:
     return value
 
 
+def match_target(project: Project) -> str:
+    """post.match_target: character (default, also without the key) | line."""
+    value = str(project.setting("post", "match_target", "character") or "character")
+    if value not in MATCH_TARGETS:
+        raise BabelDubError(f"post.match_target must be one of {list(MATCH_TARGETS)}", code=EXIT_USAGE,
+                            hint="`babeldub set post.match_target=character`")
+    return value
+
+
+def match_current(row: dict[str, Any] | None, mode: str, target: str) -> bool:
+    """The row's channel match was made with this post.match mode and (unless off) post.match_target; a row
+    written before match_target existed counts as `line`."""
+    info = (row or {}).get("match") or {}
+    if info.get("mode", "off") != mode:
+        return False
+    return mode == "off" or info.get("target", "line") == target
+
+
 class ChannelPool:
     """Channel profiles of each character's original lines (up to MATCH_POOL_LINES, the longest first), measured
-    once per run: the EQ target of a line with too little speech of its own."""
+    once per run: the EQ target of a line with too little speech of its own. With post.match_target=character
+    also the character's pair (`pair`): dub-side takes (`dubs`: line id -> wav) and originals of the same lines."""
 
-    def __init__(self, project: Project, lines: dict[str, dict[str, Any]]) -> None:
+    def __init__(self, project: Project, lines: dict[str, dict[str, Any]], target: str = "line",
+                 dubs: dict[str, Path | None] | None = None) -> None:
         self.project = project
         self.lines = lines
+        self.target = target
         assign = latest_by(read_jsonl(project.path(layout.ASSIGN)))
         self.char_of = {lid: str((assign.get(lid) or {}).get("char_id") or line.get("speaker_hint") or "unknown")
                         for lid, line in lines.items()}
         self.cache: dict[str, list[tuple[str, channel.Profile]]] = {}
+        self.dubs: dict[str, Path | None] = dict(dubs or {})
+        self.pairs: dict[str, tuple[list[channel.Profile], list[channel.Profile]] | None] = {}
+
+    def use_dubs(self, dubs: dict[str, Path | None]) -> None:
+        """Other dub-side takes (vc: the converted takes before the match); the pairs are measured again."""
+        self.dubs.update(dubs)
+        self.pairs.clear()
+
+    def pair(self, line: dict[str, Any]) -> tuple[list[channel.Profile], list[channel.Profile]] | None:
+        """(dub profiles, original profiles) of the character's pair, None for target `line` or too few lines."""
+        cid = self.char_of.get(line["id"], "unknown")
+        if self.target != "character" or cid == "unknown":
+            return None
+        if cid not in self.pairs:
+            self.pairs[cid] = self._build_pair(cid)
+        return self.pairs[cid]
+
+    def _build_pair(self, cid: str) -> tuple[list[channel.Profile], list[channel.Profile]] | None:
+        mates = sorted((ln for lid, ln in self.lines.items() if self.char_of.get(lid) == cid and self.dubs.get(lid)),
+                       key=lambda ln: (-float((ln.get("audio") or {}).get("dur_s") or 0.0), ln["id"]))
+        dubs: list[channel.Profile] = []
+        origs: list[channel.Profile] = []
+        for mate in mates:
+            if len(dubs) >= MATCH_PAIR_LINES:
+                break
+            orig_path, dub_path = _orig_wav(self.project, mate), self.dubs.get(mate["id"])
+            if orig_path is None or dub_path is None or not dub_path.exists():
+                continue
+            try:
+                orig_p, dub_p = channel.profile(*read_audio(orig_path)), channel.profile(*read_audio(dub_path))
+            except (RuntimeError, ValueError, OSError):  # an unreadable file leaves only this line out
+                continue
+            if orig_p.speech_s < channel.MIN_SPEECH_S or dub_p.speech_s < channel.MIN_SPEECH_S:
+                continue
+            if channel.detect_cutoff(dub_p, orig_p) is not None:  # its highs are the channel's limit, not a tilt
+                continue
+            dubs.append(dub_p)
+            origs.append(orig_p)
+        if (len(dubs) < MATCH_PAIR_MIN_LINES or sum(p.speech_s for p in dubs) < MATCH_PAIR_MIN_S
+                or sum(p.speech_s for p in origs) < MATCH_PAIR_MIN_S):
+            return None
+        return dubs, origs
 
     def extra(self, line: dict[str, Any]) -> list[channel.Profile]:
         cid = self.char_of.get(line["id"], "unknown")
@@ -1997,14 +2064,33 @@ def channel_match(
     *, level_ref: float, measure: str, ceiling_db: float,
 ) -> tuple[np.ndarray, float | None, dict[str, Any] | None]:
     """post.match on a fitted (or converted) take: the matched audio with its speech level matched to
-    `level_ref` again and its true peak (None when nothing was applied), and the `match` info (None for off)."""
+    `level_ref` again and its true peak (None when nothing was applied), and the `match` info (None for off)
+    with the pool's post.match_target as `target`."""
     if mode == "off":
         return audio, None, None
-    res = channel.match_channel(audio, sr, orig, o_sr, mode, extra=(lambda: pool.extra(line)) if pool else ())
+    res = channel.match_channel(audio, sr, orig, o_sr, mode, extra=(lambda: pool.extra(line)) if pool else (),
+                                pair=pool.pair(line) if pool else None)
+    res.info["target"] = pool.target if pool else "line"
     if not res.applied:
         return audio, None, res.info
     out, peak = conform(res.audio, sr, audio, sr, level_ref=level_ref, measure=measure, ceiling_db=ceiling_db)
     return out, peak, res.info
+
+
+def count_match(counts: Counter[str], info: dict[str, Any] | None) -> None:
+    """Add one row's `match` info to the post/vc output counters."""
+    info = info or {}
+    if info.get("applied"):
+        counts["eq"] += 1
+        counts["cutoff"] += info.get("cutoff_hz") is not None
+        counts["radio"] += bool(info.get("radio_chain"))
+        counts["pair"] += info.get("ref") == "pair"
+    elif info:
+        counts["skipped"] += 1
+
+
+def match_summary(counts: Counter[str], mode: str, target: str) -> dict[str, Any]:
+    return {"mode": mode, "target": target, **{k: counts.get(k, 0) for k in ("eq", "cutoff", "radio", "pair", "skipped")}}
 
 
 def speech_level(audio: np.ndarray, sr: int, measure: str) -> float:
@@ -2122,6 +2208,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     want = set(_csv(args.ids))
     settings = post_settings(project)
     mode = match_mode(project)
+    target = match_target(project)
     segments = _vad_segments(project)
     work: list[tuple[dict[str, Any], dict[str, Any]]] = []
     up_to_date = missing_line = followers = 0
@@ -2140,7 +2227,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         prev_wav = _abs(project, (prev or {}).get("wav"))
         if (not args.force and prev and prev.get("attempt") == res.get("attempt")
                 and prev.get("src_key") == res.get("key") and prev.get("vad_key") == _vad_key(line, segments.get(line_id))
-                and (prev.get("match") or {}).get("mode", "off") == mode
+                and match_current(prev, mode, target)
                 and prev_wav is not None and prev_wav.exists()):
             up_to_date += 1
             continue
@@ -2150,7 +2237,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         work = work[: max(0, args.limit)]
     if args.dry_run:
         return emit({"stage": "post", "dry_run": True, "would_run": len(work), "pending": pending,
-                     "up_to_date": up_to_date, "settings": {**settings, "match": mode}})
+                     "up_to_date": up_to_date, "settings": {**settings, "match": mode, "match_target": target}})
 
     post_path = project.path(layout.POST)
     _ensure_header(post_path, POST_SCHEMA)
@@ -2160,7 +2247,9 @@ def cmd_post(args: argparse.Namespace) -> int:
     errors: list[str] = []
     methods: Counter[str] = Counter()
     matched: Counter[str] = Counter()
-    pool = ChannelPool(project, lines) if mode != "off" else None
+    # the pair's dub side: the raw take post fits for each line of the character, not only the lines of this run
+    pool = ChannelPool(project, lines, target, {lid: _abs(project, r.get("wav")) for lid, r in latest.items()
+                                                if lid not in follows}) if mode != "off" else None
     for line, res in work:
         try:
             row = _post_line(project, line, res, settings, args.stretch_method, segments.get(line["id"]), mode, pool)
@@ -2175,13 +2264,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         append_jsonl(post_path, [row])
         done += 1
         methods[row["stretch_method"]] += 1
-        info = row.get("match") or {}
-        if info.get("applied"):
-            matched["eq"] += 1
-            matched["cutoff"] += info.get("cutoff_hz") is not None
-            matched["radio"] += bool(info.get("radio_chain"))
-        elif info:
-            matched["skipped"] += 1
+        count_match(matched, row.get("match"))
         if row["over_length"]:
             over.append(row["id"])
         if not row["exact"]:
@@ -2203,7 +2286,7 @@ def cmd_post(args: argparse.Namespace) -> int:
     if not_exact:
         payload["not_exact"] = clip(not_exact)
     if mode != "off":
-        payload["match"] = {"mode": mode, **{k: matched.get(k, 0) for k in ("eq", "cutoff", "radio", "skipped")}}
+        payload["match"] = match_summary(matched, mode, target)
     payload["next"] = "babeldub post" if remaining else "babeldub vc"
     return emit(payload, EXIT_ATTENTION if (over or errors) else EXIT_OK)
 

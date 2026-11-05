@@ -56,9 +56,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
     # its pauses, then speeds up to tempo_max (pitch kept); exact original length.
     # match: the dub takes the original's channel: eq = long-term spectrum EQ + bandwidth, full = + radio chain,
-    # off = none (what a project created before v0.4 without this key keeps)
+    # off = none (what a project created before v0.4 without this key keeps); match_target: character = one EQ
+    # curve per character from its pooled dubs vs its pooled originals, line = the line's own curve
     "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0,
-             "match": "eq"},
+             "match": "eq", "match_target": "character"},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
     "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
            "pitch": "line"},

@@ -45,6 +45,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "tts.stress": ("off", "on"),
     "qa.mos_model": MOS_MODELS,
     "post.match": ("off", "eq", "full"),
+    "post.match_target": ("character", "line"),
     "vc.pitch": ("keep", "char", "line"),
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}

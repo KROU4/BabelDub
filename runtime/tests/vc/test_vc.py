@@ -317,6 +317,82 @@ def test_pitch_modes_shift_to_the_originals(project: Project, applio: Path, caps
     assert run(capsys, root, "vc", "--pitch", "char")[1]["up_to_date"] == 4
 
 
+def rich_originals(project: Project, speaker: str) -> None:
+    """Originals with highs (harmonics + noise), so no original shows a band limit against the converted takes."""
+    for k, line in enumerate(read_jsonl(project.path(layout.LINES))):
+        if line.get("speaker_hint") != speaker:
+            continue
+        secs = line["audio"]["dur_s"] - 0.3
+        t = np.arange(int(secs * 44100)) / 44100
+        rng = np.random.default_rng(k)
+        sig = sum(np.sin(2 * np.pi * m * 120.0 * t) / m for m in range(1, 60)) + 0.5 * rng.standard_normal(t.size)
+        sig = 0.3 * sig * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t)) / np.max(np.abs(sig))
+        audio = np.concatenate([np.zeros(4410), sig, np.zeros(8820)]).astype(np.float32)
+        write_wav(project.path(line["audio"]["wav"]), audio, 44100)
+
+
+def test_character_pair_uses_the_converted_takes_and_the_target_is_part_of_up_to_date(
+        project: Project, applio: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    root = project.root
+    rich_originals(project, "Zbyszek")
+    monkeypatch.setattr(voice, "MATCH_PAIR_MIN_S", 1.0)  # the dummy's takes are short
+    seen: list[dict[str, Any]] = []
+    build = voice.ChannelPool._build_pair
+
+    def spy(self: voice.ChannelPool, cid: str) -> Any:
+        seen.append({"cid": cid, "dubs": {lid: p for lid, p in self.dubs.items() if self.char_of.get(lid) == cid}})
+        return build(self, cid)
+
+    monkeypatch.setattr(voice.ChannelPool, "_build_pair", spy)
+    assert run(capsys, root, "vc", "train", "--chars", "Zbyszek", "--epochs", "2", "--minutes", "1")[0] == EXIT_OK
+    assert run(capsys, root, "synth")[0] == EXIT_OK
+    code, out = run(capsys, root, "post")
+    assert code == EXIT_OK and out["match"]["target"] == "character" and out["match"]["pair"] == 4, out
+    seen.clear()
+    code, out = run(capsys, root, "vc")
+    assert code == EXIT_OK and out["converted"] == 4 and out["match"]["pair"] == 4, out
+    assert out["match"]["target"] == "character"
+    # one pair for the character, measured on its converted takes before the match (not the synth takes),
+    # after every shift group was converted
+    zb = [s for s in seen if s["cid"] == "Zbyszek"]
+    assert len(zb) == 1 and len(zb[0]["dubs"]) == 4
+    staged = root / layout.VC_DIR / "Zbyszek" / vc_cmd.STAGED_WORK
+    assert all(Path(p).parent == staged for p in zb[0]["dubs"].values())
+    assert not staged.exists()  # the staged takes are removed after pass 2
+    rows = latest_by(read_jsonl(root / layout.POST))
+    lines = latest_by(read_jsonl(root / layout.LINES))
+    zb_ids = sorted(lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek")
+    for lid in zb_ids:
+        info = rows[lid]["match"]
+        assert info["ref"] == "pair" and info["pair_lines"] == 4 and info["target"] == "character", info
+        assert rows[lid]["pre_match_wav"].startswith(layout.VC_PRE_MATCH_DIR)
+    assert run(capsys, root, "vc")[1]["up_to_date"] == 4
+
+    # one line again: the pair takes the other lines' converted takes before their match from their vc rows
+    seen.clear()
+    code, out = run(capsys, root, "vc", "--ids", zb_ids[0], "--force")
+    assert code == EXIT_OK and out["converted"] == 1, out
+    dubs = seen[0]["dubs"]
+    assert Path(dubs[zb_ids[0]]).parent == staged
+    assert {project.rel(Path(dubs[lid])) for lid in zb_ids[1:]} == {rows[lid]["pre_match_wav"] for lid in zb_ids[1:]}
+    assert latest_by(read_jsonl(root / layout.POST))[zb_ids[0]]["match"]["pair_lines"] == 4
+
+    # another target makes the converted takes stale; rows without a target count as `line`
+    project.data["post"]["match_target"] = "line"
+    project.save()
+    code, out = run(capsys, root, "vc")
+    assert out["converted"] == 4 and out["match"]["pair"] == 0 and out["match"]["target"] == "line", out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert all(rows[lid]["match"]["target"] == "line" and rows[lid]["match"]["ref"] != "pair" for lid in zb_ids)
+    assert run(capsys, root, "vc")[1]["up_to_date"] == 4
+    legacy = [{**rows[lid], "match": {k: v for k, v in rows[lid]["match"].items() if k != "target"}} for lid in zb_ids]
+    append_jsonl(root / layout.POST, legacy)
+    assert run(capsys, root, "vc")[1]["up_to_date"] == 4
+    project.data["post"]["match_target"] = "character"
+    project.save()
+    assert run(capsys, root, "vc")[1]["converted"] == 4
+
+
 def test_pitch_keep_is_zero_and_unknown_mode_is_usage(project: Project, applio: Path,
                                                       capsys: pytest.CaptureFixture[str]) -> None:
     assert vc_cmd.pitch_shifts(project, "Zbyszek", [], "line", {}) == []

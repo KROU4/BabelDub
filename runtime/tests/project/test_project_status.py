@@ -128,6 +128,9 @@ def test_set_validation(bd, game):
     assert code == 0 and "not a known setting" in out["warnings"][0]
     assert bd("set", "qa.mos_model=utmos22")[0] == 0
     assert bd("set", "qa.mos_model=pesq")[0] == 2
+    assert bd("set", "post.match_target=line")[0] == 0
+    code, out = bd("set", "post.match_target=bogus")
+    assert code == 2 and "post.match_target" in out["error"], out
 
 
 def test_set_rank_weights(bd, game):

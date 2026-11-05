@@ -6,7 +6,9 @@ vc train  For each character: a dataset of its clean original lines (2-20 s, no 
           main character; it works for any target language.
 vc        Converts the latest post audio of every line whose character has a model, then re-applies
           the exact-length + loudness pass against the pre-conversion take, matches the channel of the
-          original again (post.match, from the take before post's match), writes vc/audio/<uid>.wav
+          original again (post.match, from the take before post's match; with post.match_target=character
+          after all takes of the character are converted, since its pair curve is measured on the
+          converted takes), writes vc/audio/<uid>.wav
           and appends a post/post.jsonl row (stage "vc"), so QA checks and the build packs the
           converted take. Characters without a model pass through unchanged. Order: synth -> post
           -> vc -> qa. GPU first (Applio uses CUDA when the device is cuda), under the project GPU lock.
@@ -25,6 +27,8 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from babeldub.analysis.store import load_analysis
 from babeldub.audio.dsp import level_db, to_mono
@@ -313,6 +317,7 @@ def cmd_vc(args: argparse.Namespace) -> int:
     post_latest = latest_by(read_jsonl(project.path(layout.POST)))
     models = load_models(project)
     mode = voice.match_mode(project)
+    target = voice.match_target(project)
     settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method", "pitch")}
     if args.pitch is not None:
         settings["pitch"] = args.pitch
@@ -346,7 +351,7 @@ def cmd_vc(args: argparse.Namespace) -> int:
         key = conversion_key(model, settings)
         current = _abs(project, row.get("wav"))
         if (not args.force and (row.get("vc") or {}).get("model_key") == key
-                and (row.get("match") or {}).get("mode", "off") == mode
+                and voice.match_current(row, mode, target)
                 and current is not None and current.exists()):
             up_to_date += 1
             continue
@@ -388,7 +393,8 @@ def cmd_vc(args: argparse.Namespace) -> int:
     ceiling = float(project.setting("post", "true_peak_db", -1.0))
     stamp = time.strftime("%Y%m%d-%H%M%S")
     log = project.path(layout.LOGS_DIR, f"vc-{stamp}.log")
-    pool = voice.ChannelPool(project, lines) if mode != "off" else None
+    pool = voice.ChannelPool(project, lines, target) if mode != "off" else None
+    matched: Counter[str] = Counter()
     with lock if device.startswith("cuda") else contextlib.nullcontext():
         for cid, items in jobs.items():
             model = models[cid]
@@ -398,6 +404,12 @@ def cmd_vc(args: argparse.Namespace) -> int:
             for i, shift in enumerate(shifts):
                 groups[shift].append(i)
             rows: list[dict[str, Any]] = []
+            # pass 1: convert every shift group and conform each take; with a character pair the takes wait in
+            # vc/<char_id>/staged/ (the pair's dub side) for pass 2
+            staged_dir = project.path(layout.VC_DIR, cid, STAGED_WORK)
+            if staged_dir.exists():
+                shutil.rmtree(staged_dir)
+            staged: list[tuple[int, int, Path, tuple[int, float, float, str]]] = []
             for shift, members in sorted(groups.items()):
                 work = project.path(layout.VC_DIR, cid, "batch")
                 if work.exists():
@@ -420,19 +432,41 @@ def cmd_vc(args: argparse.Namespace) -> int:
                         errors.append(f"{_uid(line)}: no output (Applio exit code {code})")
                         continue
                     try:
-                        rows.append(_finish(project, line, row, source, out, cid, key, model, settings, ceiling,
-                                            shift, mode, pool))
+                        take, sr, peak, level_ref, measure = _conform_take(row, source, out, ceiling)
+                        if pool is None or pool.target != "character":  # no pair: matched right away
+                            rows.append(_finish(project, line, row, source, take, sr, peak, level_ref, measure, cid,
+                                                key, model, settings, ceiling, shift, mode, pool))
+                        else:
+                            pre = write_wav(staged_dir / f"{_uid(line)}.wav", take, sr, subtype="PCM_16")
+                            staged.append((i, shift, pre, (sr, peak, level_ref, measure)))
                     except (RuntimeError, ValueError, OSError) as exc:
                         errors.append(f"{_uid(line)}: {type(exc).__name__}: {exc}")
                 shutil.rmtree(work, ignore_errors=True)
+            # pass 2: the character's pair from the converted takes, then the channel match of each take
+            if pool is not None and staged:
+                pool.use_dubs(_pair_dubs(project, cid, key, {items[i][0]["id"]: pre for i, _s, pre, _m in staged},
+                                         post_latest, char_of, follows))
+                for i, shift, pre, (sr, peak, level_ref, measure) in staged:
+                    line, row, source = items[i]
+                    try:
+                        take, _sr = read_audio(pre)
+                        rows.append(_finish(project, line, row, source, take, sr, peak, level_ref, measure, cid,
+                                            key, model, settings, ceiling, shift, mode, pool))
+                    except (RuntimeError, ValueError, OSError) as exc:
+                        errors.append(f"{_uid(line)}: {type(exc).__name__}: {exc}")
+            shutil.rmtree(staged_dir, ignore_errors=True)
             append_jsonl(project.path(layout.POST), rows)
             converted += len(rows)
+            for new in rows:
+                voice.count_match(matched, new.get("match"))
     failed = total - converted
     status = "attention" if (failed or missing) else "done"
     project.mark_stage("vc", status, converted=converted, failed=failed, up_to_date=up_to_date,
                        passthrough=sum(passthrough.values()))
     payload = {"stage": "vc", "converted": converted, "failed": failed, "up_to_date": up_to_date,
                "passthrough": dict(passthrough), "device": device, "log": project.rel(log), "next": "babeldub qa"}
+    if mode != "off":
+        payload["match"] = voice.match_summary(matched, mode, target)
     if errors:
         payload["errors"] = clip(errors, 5)
         payload["tail"] = rvc.log_tail(log, 4)
@@ -509,10 +543,13 @@ def _rounded(value: float) -> float | None:
     return round(value, 2) if math.isfinite(value) else None
 
 
-def _finish(project: Project, line: dict[str, Any], row: dict[str, Any], source: Path, converted: Path, cid: str,
-            key: str, model: dict[str, Any], settings: dict[str, Any], ceiling: float,
-            pitch_shift: int = 0, mode: str = "off", pool: voice.ChannelPool | None = None) -> dict[str, Any]:
-    """Exact length + loudness of the converted take against its pre-conversion post take, then post.match."""
+STAGED_WORK = "staged"  # vc/<char_id>/staged: conformed takes between the two passes (post.match_target=character)
+
+
+def _conform_take(row: dict[str, Any], source: Path, converted: Path,
+                  ceiling: float) -> tuple[np.ndarray, int, float, float, str]:
+    """Exact length + loudness of the converted take against its pre-conversion post take:
+    (audio, sr, true peak, level_ref, measure)."""
     ref, ref_sr = read_audio(source)
     data, sr = read_audio(converted)
     measure = str(row.get("measure") or "lufs")
@@ -522,27 +559,47 @@ def _finish(project: Project, line: dict[str, Any], row: dict[str, Any], source:
         bounds = speech_bounds(mono, ref_sr) or (0, len(mono))
         level_ref = level_db(mono[bounds[0] : bounds[1]], ref_sr, measure)
     final, peak = conform(data, sr, ref, ref_sr, level_ref=float(level_ref), measure=measure, ceiling_db=ceiling)
+    return final, ref_sr, peak, float(level_ref), measure
+
+
+def _pair_dubs(project: Project, cid: str, key: str, staged: dict[str, Path], post_latest: dict[str, dict[str, Any]],
+               char_of: dict[str, str], follows: dict[str, Any]) -> dict[str, Path | None]:
+    """The dub side of the character's post.match pair: the converted takes of this run before the match, and for
+    its other lines the latest vc row (same conversion key) before its match (its wav when no match changed it)."""
+    dubs: dict[str, Path | None] = dict(staged)
+    for lid, row in post_latest.items():
+        if lid in dubs or lid in follows or char_of.get(lid) != cid or (row.get("vc") or {}).get("model_key") != key:
+            continue
+        dubs[lid] = _abs(project, row.get("pre_match_wav") if (row.get("match") or {}).get("applied") else row.get("wav"))
+    return dubs
+
+
+def _finish(project: Project, line: dict[str, Any], row: dict[str, Any], source: Path, final: np.ndarray, sr: int,
+            peak: float, level_ref: float, measure: str, cid: str, key: str, model: dict[str, Any],
+            settings: dict[str, Any], ceiling: float, pitch_shift: int = 0, mode: str = "off",
+            pool: voice.ChannelPool | None = None) -> dict[str, Any]:
+    """post.match on a conformed converted take (`_conform_take`), vc/audio/<uid>.wav and its vc row."""
     extra: dict[str, Any] = {}
     if mode != "off":
-        orig, o_sr = voice.original_audio(project, line, final.shape[0] / ref_sr, ref_sr)
-        matched, m_peak, info = voice.channel_match(line, final, ref_sr, orig, o_sr, mode, pool,
-                                                    level_ref=float(level_ref), measure=measure, ceiling_db=ceiling)
+        orig, o_sr = voice.original_audio(project, line, final.shape[0] / sr, sr)
+        matched, m_peak, info = voice.channel_match(line, final, sr, orig, o_sr, mode, pool,
+                                                    level_ref=level_ref, measure=measure, ceiling_db=ceiling)
         extra["match"] = info
         if m_peak is not None:
             pre = project.path(layout.VC_PRE_MATCH_DIR, f"{_uid(line)}.wav")
-            write_wav(pre, final, ref_sr, subtype="PCM_16")
+            write_wav(pre, final, sr, subtype="PCM_16")
             extra["pre_match_wav"] = project.rel(pre)
             final, peak = matched, m_peak
     out = project.path(layout.VC_AUDIO_DIR, f"{_uid(line)}.wav")
-    write_wav(out, final, ref_sr, subtype="PCM_16")
+    write_wav(out, final, sr, subtype="PCM_16")
     mono = to_mono(final)
-    bounds = speech_bounds(mono, ref_sr)
-    level_out = level_db(mono[bounds[0] : bounds[1]], ref_sr, measure) if bounds else float("nan")
+    bounds = speech_bounds(mono, sr)
+    level_out = level_db(mono[bounds[0] : bounds[1]], sr, measure) if bounds else float("nan")
     new = {k: v for k, v in row.items() if k not in ("vc", "pre_vc_wav", "stage", "match", "pre_match_wav")}
     new.update({
         "wav": project.rel(out), "stage": "vc", "pre_vc_wav": project.rel(source),
         "peak_db": _rounded(peak), "lufs_out": _rounded(level_out),
-        "frames": int(final.shape[0]), "dur_s": round(final.shape[0] / ref_sr, 4),
+        "frames": int(final.shape[0]), "dur_s": round(final.shape[0] / sr, 4),
         "vc": {"char_id": cid, "engine": rvc.ENGINE, "model_key": key, "trained": model.get("trained"),
                "index_rate": settings["index_rate"], "protect": settings["protect"], "f0_method": settings["f0_method"],
                "pitch": settings.get("pitch", "keep"), "pitch_shift_st": pitch_shift},

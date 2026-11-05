@@ -352,6 +352,119 @@ def test_post_channel_match_settings_and_radio_chain(project: Project, capsys: p
     assert apply_setting(project.data, "post.match", "full")[1:] == ("full", None)
 
 
+def add_zbyszek_line(project: Project, suffix: str, secs: float, dub: str) -> None:
+    sr, line_id = 48000, line_id_of(suffix)
+    u = make_uid(line_id)
+    audio = speechlike(secs, sr, 1, 125.0, 0.12, 0.2, 0.25)
+    wav = write_wav(project.path(layout.ORIG_AUDIO_DIR, f"{u}.wav"), audio, sr)
+    append_jsonl(project.path(layout.LINES), [{
+        "id": line_id, "uid": u, "adapter": "fmod", "asset_id": "fmod:Audio/Dialogue_en.bank",
+        "entry": {"key": f"dlg_{suffix}", "sub": "fsb0", "index": int(suffix)}, "kind": "dialogue", "locale": "en-US",
+        "audio": {"sr": sr, "ch": 1, "dur_s": round(len(audio) / sr, 4), "codec": "vorbis", "wav": project.rel(wav)},
+        "speaker_hint": "Zbyszek", "scene": "s1", "order": int(suffix), "fixed_length": False, "flags": [],
+        "text": {"key": f"dlg_{suffix}", "src": "Another line of mine.", "src_lang": "en", "source": "test"}}])
+    append_jsonl(project.path(layout.TRANSLATIONS), [{"id": line_id, "dub_text": dub, "lang": "ru", "by": "agent", "rev": 1}])
+
+
+def rich_original(project: Project, suffix: str, lowpass: float | None = None) -> None:
+    """The original with highs (harmonics + noise where it speaks): no band limit against the dummy's takes,
+    unless `lowpass` cuts it."""
+    from babeldub.audio import match
+
+    orig, o_sr = _orig(project, suffix)
+    t = np.arange(orig.shape[0]) / o_sr
+    sig = sum(np.sin(2 * np.pi * k * 115.0 * t) / k for k in range(1, 70))
+    sig = sig + 0.5 * np.random.default_rng(int(suffix)).standard_normal(t.size)
+    s0, s1 = fit.speech_bounds(orig, o_sr)
+    sig[:s0] = sig[s1:] = 0.0
+    if lowpass is not None:
+        sig = match.apply_fir(sig, match.design_fir(o_sr, np.zeros(len(match.BAND_CENTERS)), lowpass=lowpass))
+    sig = (0.3 * sig / np.max(np.abs(sig))).astype(np.float32)
+    write_wav(project.path(layout.ORIG_AUDIO_DIR, f"{make_uid(line_id_of(suffix))}.wav"),
+              np.repeat(sig[:, None], orig.shape[1], axis=1), o_sr)
+
+
+def test_post_character_pair_match(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                   capsys: pytest.CaptureFixture[str]) -> None:
+    project.data["tts"]["params"] = {"syllables_per_s": 8.0}
+    project.data["post"]["tolerance"] = 100.0  # no stretch tool needed
+    project.save()
+    assert project.data["post"]["match_target"] == "character"  # new projects
+    add_zbyszek_line(project, "0006", 2.2, "Это ещё одна моя реплика, довольно длинная.")
+    add_zbyszek_line(project, "0007", 1.8, "И вот ещё одна, покороче.")
+    for suffix in ("0001", "0002", "0006"):
+        rich_original(project, suffix)
+    rich_original(project, "0007", lowpass=4000.0)  # a band-limited original: its highs are no channel tilt
+    monkeypatch.setattr(voice, "MATCH_PAIR_MIN_S", 2.0)  # the dummy's takes are short
+    builds: list[str] = []
+    build = voice.ChannelPool._build_pair
+
+    def spy(self: voice.ChannelPool, cid: str) -> Any:
+        builds.append(cid)
+        return build(self, cid)
+
+    monkeypatch.setattr(voice.ChannelPool, "_build_pair", spy)
+    assert run(capsys, project.root, "synth")[0] == EXIT_OK
+    code, out = run(capsys, project.root, "post")
+    assert code == EXIT_OK and out["match"]["target"] == "character", out
+    assert out["match"]["pair"] == 4 and out["match"]["eq"] == 4, out  # Zbyszek's four lines; Maciek's bark: skipped
+    assert builds.count("Zbyszek") == 1  # one pair per character and run
+    rows = latest_by(read_jsonl(project.path(layout.POST)))
+    zb = [line_id_of(s) for s in ("0001", "0002", "0006", "0007")]
+    for lid in zb:
+        info = rows[lid]["match"]
+        assert info["ref"] == "pair" and info["pair_lines"] == 3 and info["target"] == "character", info
+    assert rows[line_id_of("0007")]["match"]["cutoff_hz"] is not None  # its own band limit is still followed
+    assert rows[line_id_of("0003")]["match"]["target"] == "character"
+    assert run(capsys, project.root, "post")[1]["up_to_date"] == 5
+    # one line again: the pair still pools the takes of all the character's lines
+    code, out = run(capsys, project.root, "post", "--force", "--ids", line_id_of("0006"))
+    assert out["done"] == 1 and out["match"]["pair"] == 1, out
+    assert latest_by(read_jsonl(project.path(layout.POST)))[line_id_of("0006")]["match"]["pair_lines"] == 3
+
+    # target line: every matched take is stale and gets its own curve again
+    project.data["post"]["match_target"] = "line"
+    project.save()
+    code, out = run(capsys, project.root, "post")
+    assert out["done"] == 5 and out["match"]["pair"] == 0 and out["match"]["target"] == "line", out
+    rows = latest_by(read_jsonl(project.path(layout.POST)))
+    assert {rows[lid]["match"]["ref"] for lid in zb} == {"line"}
+    assert all(rows[lid]["match"]["target"] == "line" for lid in zb)
+    assert run(capsys, project.root, "post")[1]["up_to_date"] == 5
+    # rows written before post.match_target existed count as `line`; with off the target does not matter
+    assert voice.match_current({"match": {"mode": "eq"}}, "eq", "line")
+    assert not voice.match_current({"match": {"mode": "eq"}}, "eq", "character")
+    assert voice.match_current({}, "off", "character") and not voice.match_current({}, "eq", "line")
+    del project.data["post"]["match_target"]
+    assert voice.match_target(project) == "character"  # also without the key
+    project.data["post"]["match_target"] = "voice"
+    with pytest.raises(BabelDubError, match="post.match_target"):
+        voice.match_target(project)
+
+
+def test_post_character_pair_falls_back_to_the_line_curve(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    project.data["tts"]["params"] = {"syllables_per_s": 8.0}
+    project.data["post"]["tolerance"] = 100.0
+    project.save()
+    for suffix in ("0001", "0002"):
+        rich_original(project, suffix)
+    monkeypatch.setattr(voice, "MATCH_PAIR_MIN_S", 1.0)
+    assert run(capsys, project.root, "synth")[0] == EXIT_OK
+    code, out = run(capsys, project.root, "post")  # Zbyszek has two lines: too few for a pair
+    assert code == EXIT_OK and out["match"]["pair"] == 0 and out["match"]["target"] == "character", out
+    rows = latest_by(read_jsonl(project.path(layout.POST)))
+    assert {rows[line_id_of(s)]["match"]["ref"] for s in ("0001", "0002")} == {"line"}
+    add_zbyszek_line(project, "0006", 2.2, "Это ещё одна моя реплика, довольно длинная.")
+    rich_original(project, "0006")
+    assert run(capsys, project.root, "synth")[0] == EXIT_OK
+    code, out = run(capsys, project.root, "post", "--force")
+    assert out["match"]["pair"] == 3, out  # a third line: the pair
+    monkeypatch.setattr(voice, "MATCH_PAIR_MIN_S", 10.0)  # the default: three short takes are too little speech
+    code, out = run(capsys, project.root, "post", "--force")
+    assert out["match"]["pair"] == 0 and out["match"]["eq"] == 3, out
+
+
 @pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 def test_post_tempo_fit_is_bounded_and_flags_over_length(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     project.data["tts"]["params"] = {"syllables_per_s": 2.5}  # dummy speaks slowly: lines run long

@@ -18,6 +18,9 @@ The correction is one minimum-phase FIR (frequency sampling + homomorphic minimu
 deterministic, no pre-ringing, the length of the take is kept. A short original line (under
 MIN_LINE_SPEECH_S of speech) takes its EQ target from the line pooled with the character's other
 originals (`extra`); the bandwidth and the radio check always come from the line itself.
+With a character `pair` (the character's dubs and originals of the same lines, pooled on both sides) the EQ is
+the difference of the two pools instead: the content of the lines (the phonemes of two languages) averages out
+of both and only the channel difference remains. The bandwidth and the radio check still come from the line.
 The caller re-matches the loudness afterwards.
 """
 
@@ -273,11 +276,14 @@ def saturate(audio: np.ndarray, drive: float = RADIO_DRIVE) -> np.ndarray:
 def match_channel(
     dub: np.ndarray, sr: int, orig: np.ndarray, orig_sr: int, mode: str,
     extra: Sequence[Profile] | Callable[[], Sequence[Profile]] = (),
+    pair: tuple[Sequence[Profile], Sequence[Profile]] | None = None,
 ) -> MatchResult:
     """Match `dub` (at `sr`, any channels) to the channel of `orig` (see the module docstring). `extra`: profiles
     of the character's other originals for a short line's EQ target (or a function returning them, called only
-    for a short line). `info`: {mode, applied, ref, eq_db, cutoff_hz, cutoff_db, radio, radio_chain, low_hz,
-    low_db, ltas_db: {before, after}} (or `reason` when nothing was applied)."""
+    for a short line). `pair`: (dub profiles, original profiles) of the same lines of the character; when given
+    (non-empty) the EQ is pooled dubs -> pooled originals (`ref: "pair"`, `pair_lines`) and `extra` is not used.
+    `info`: {mode, applied, ref, pair_lines?, eq_db, cutoff_hz, cutoff_db, radio, radio_chain, low_hz, low_db,
+    ltas_db: {before, after}} (or `reason` when nothing was applied)."""
     if mode not in MODES:
         raise ValueError(f"match mode must be one of {MODES}")
     info: dict[str, Any] = {"mode": mode, "applied": False}
@@ -285,8 +291,11 @@ def match_channel(
         return MatchResult(dub, False, info)
     line, dub_p = profile(orig, orig_sr), profile(dub, sr)
     measured = line.speech_s >= MIN_SPEECH_S  # the line itself is long enough for its bandwidth and radio check
-    target, ref = line, "line"
-    others = (extra() if callable(extra) else extra) if line.speech_s < MIN_LINE_SPEECH_S else ()
+    target, ref, source = line, "line", dub_p
+    use_pair = pair is not None and len(pair[0]) > 0 and len(pair[1]) > 0
+    others = (extra() if callable(extra) else extra) if line.speech_s < MIN_LINE_SPEECH_S and not use_pair else ()
+    if use_pair and pair is not None:
+        source, target, ref = pooled(pair[0]), pooled(pair[1]), "pair"
     if others:
         pool, total = ([line], line.speech_s) if measured else ([], 0.0)
         for p in others:
@@ -306,7 +315,7 @@ def match_channel(
     radio = low is not None
     chain = radio and mode == "full"
     low_edge, low_db = low if chain and low is not None else (None, STOP_DB)
-    eq = eq_curve(dub_p, target, cutoff, low_edge)
+    eq = eq_curve(source, target, cutoff, low_edge)
     if chain:  # the band-pass comes after the saturation, which adds harmonics above the cutoff
         band = design_fir(sr, np.zeros(len(BAND_CENTERS)), lowpass=cutoff, highpass=low_edge,
                           lowpass_db=cut_db, highpass_db=low_db)
@@ -321,6 +330,8 @@ def match_channel(
         "low_hz": None if low_edge is None else round(low_edge), "low_db": None if low_edge is None else round(low_db, 1),
         "ltas_db": {"before": _round(band_distance(dub_p, line)), "after": _round(band_distance(after, line))},
     })
+    if ref == "pair" and pair is not None:
+        info["pair_lines"] = len(pair[0])
     return MatchResult(out, True, info)
 
 
