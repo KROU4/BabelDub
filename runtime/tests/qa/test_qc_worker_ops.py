@@ -154,6 +154,39 @@ def test_prosody_hint_sets_the_bounds_and_they_are_clipped(monkeypatch: pytest.M
     assert (calls[0]["fmin"], calls[0]["fmax"]) == (450.0, 1000.0)  # never above 1000 Hz
 
 
+def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 250 Hz tone for a 120 Hz character: pyin bounded at 2 x hint reads its subharmonic (125 Hz), so the dub
+    pass reaches DUB_F0_UP x hint and the original's pass stays at one octave."""
+    t = np.arange(2 * SR) / SR
+    tones = {"dub.wav": 250.0, "orig.wav": 120.0}
+    calls: list[tuple[float, float]] = []
+
+    def pyin(y: np.ndarray, **kw: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        spectrum = np.abs(np.fft.rfft(y))
+        true_f0 = float(np.fft.rfftfreq(y.size, 1.0 / SR)[int(np.argmax(spectrum))])
+        calls.append((kw["fmin"], kw["fmax"]))
+        f0 = true_f0 if kw["fmin"] <= true_f0 <= kw["fmax"] else true_f0 / 2.0  # pyin's subharmonic outside the band
+        frames = np.full(50, f0)
+        return frames, np.ones(50, dtype=bool), np.ones(50)
+
+    lib = ModuleType("librosa")
+    lib.pyin = pyin  # type: ignore[attr-defined]
+    lib.feature = SimpleNamespace(rms=lambda y, **kw: np.array([[0.1, 0.05]]))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "librosa", lib)
+    monkeypatch.setattr(qc_worker, "_read_16k",
+                        lambda path: [FakeTensor((0.3 * np.sin(2 * np.pi * tones[path] * t)).astype(np.float32))])
+    banded = qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 120.0})
+    assert banded["f0_bounds_hz"] == [60.0, 240.0] and banded["f0_median_hz"] == pytest.approx(125.0)  # +0.7 st
+    out = qc_worker.op_score({"id": "a", "wav": "dub.wav", "orig_wav": "orig.wav", "want": ["prosody"],
+                              "f0_hint_hz": 120.0})
+    assert out["prosody"]["f0_bounds_hz"] == [60.0, 480.0] and out["prosody"]["f0_median_hz"] == pytest.approx(250.0)
+    assert out["orig_prosody"]["f0_bounds_hz"] == [60.0, 240.0] and out["orig_prosody"]["f0_median_hz"] == 120.0
+    shift = 12 * np.log2(out["prosody"]["f0_median_hz"] / out["orig_prosody"]["f0_median_hz"])
+    assert shift > 12  # the register check sees the octave
+    assert qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 400.0, "f0_up": qc_worker.DUB_F0_UP})[
+        "f0_bounds_hz"] == [200.0, 1000.0]  # capped at F0_CLIP_HZ
+
+
 def test_prosody_without_a_voice_in_the_coarse_pass_keeps_the_wide_range(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _fake_pyin(monkeypatch, np.array([np.nan, np.nan, 300.0]), np.array([np.nan, np.nan, np.nan]))
     out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
