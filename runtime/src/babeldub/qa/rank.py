@@ -87,6 +87,8 @@ def check_weights(value: Any) -> str | None:
     merged = weights_from(value)
     if sum(merged[k] for k in SCORE_KEYS) <= 0:
         return "qa.rank_weights: at least one of " + ", ".join(SCORE_KEYS) + " must weigh more than 0"
+    if sum(effective_weights(merged, rvc=True).values()) <= 0:  # an RVC character scored unconverted: sim_rvc
+        return "qa.rank_weights: with sim_rvc 0 at least one of prosody, mos, liveliness, length must weigh more than 0"
     return None
 
 

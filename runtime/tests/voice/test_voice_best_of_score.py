@@ -433,6 +433,11 @@ def test_rank_weights_setting() -> None:
     assert "section" in rank.check_weights(0.3)
     zero = dict.fromkeys(rank.SCORE_KEYS, 0)
     assert "more than 0" in rank.check_weights(zero)
+    # sim alone is not enough: an RVC character scored unconverted weighs sim_rvc instead, and every term would be 0
+    only_sim = {**zero, "sim": 1, "sim_rvc": 0}
+    assert sum(rank.effective_weights(only_sim, rvc=True).values()) == 0
+    assert "sim_rvc 0" in rank.check_weights(only_sim)
+    assert rank.check_weights({**only_sim, "sim_rvc": 0.05}) is None and rank.check_weights({**only_sim, "mos": 0.1}) is None
     # a project's weights change the winner
     cands = [rank.Candidate(1, "c1.wav", 2.0, sim=0.9, liveliness=0.2),
              rank.Candidate(2, "c2.wav", 2.0, sim=0.3, liveliness=1.0)]
