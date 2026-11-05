@@ -314,6 +314,9 @@ def test_score_uses_the_second_asr_for_russian_only(monkeypatch: pytest.MonkeyPa
     assert out["asr2_text"] == "пасмотрим" and out["cer2"] == 0.0 and out["cer_folded"] is not None
     out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Hello", "lang": "en", "want": ["cer"]})
     assert "asr2_text" not in out and "cer_folded" not in out
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"],
+                              "asr2": False})  # the session turned the second ASR off
+    assert "asr2_text" not in out and "cer2" not in out and "unavailable" not in out and out["cer"] is not None
 
     def broken(path: str) -> str:
         raise RuntimeError("GigaAM needs transformers")

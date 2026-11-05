@@ -304,9 +304,10 @@ class QcSession:
               want: tuple[str, ...] = ("cer", "sim", "emo", "mos"), f0_hint: float | None = None) -> dict[str, Any]:
         """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?, asr2_error?}: metrics that
         cannot be computed are null; prosody (with its F0 contour) only when `want` has "prosody". A second-ASR
-        failure is reported once in `warnings`, as by `asr2`."""
+        failure turns the second ASR off for the session (later requests send `asr2: false`) and is reported once
+        in `warnings`, as by `asr2`."""
         req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
-                               "refs": [str(r) for r in refs or []], "want": list(want)}
+                               "refs": [str(r) for r in refs or []], "want": list(want), "asr2": self.has_asr2}
         if orig_wav is not None:
             req["orig_wav"] = str(orig_wav)
         if f0_hint:

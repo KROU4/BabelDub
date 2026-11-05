@@ -187,9 +187,16 @@ def test_session_score_reports_a_second_asr_failure_once() -> None:
 
     reply = {"ok": True, "cer": 0.0, "asr_text": "да", "unavailable": ["asr2"],
              "asr2_error": "RuntimeError: GigaAM failed to load (OSError: missing weights)"}
-    session = QcSession(SimpleNamespace(request=lambda req: reply, restarts=0, max_restarts=3), "cpu")
+    sent: list[dict] = []
+
+    def request(req: dict) -> dict:
+        sent.append(req)
+        return reply if len(sent) == 1 else {"ok": True, "cer": 0.0, "asr_text": "да"}
+
+    session = QcSession(SimpleNamespace(request=request, restarts=0, max_restarts=3), "cpu")
     session.has_asr2 = True
-    for _ in range(3):
-        out = session.score("a", Path("a.wav"), text="да", lang="ru", want=("cer",))
-    assert out["asr2_error"] == reply["asr2_error"] and not session.has_asr2
+    outs = [session.score("a", Path("a.wav"), text="да", lang="ru", want=("cer",)) for _ in range(3)]
+    assert outs[0]["asr2_error"] == reply["asr2_error"] and not session.has_asr2
     assert session.warnings == [f"second ASR (GigaAM) unavailable: {reply['asr2_error']}"]  # as `asr2` reports it
+    # the second ASR is off for the session: later score requests do not ask the worker for it
+    assert [r["asr2"] for r in sent] == [True, False, False]

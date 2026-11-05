@@ -28,7 +28,7 @@ answer per command on stdout; all logs go to stderr.
   {"op": "embed", "id": ..., "wav": ...}                   -> {"emb": [192 floats], "dur_s"}
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
   {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
-   "f0_hint_hz"?}
+   "f0_hint_hz"?, "asr2"? (false: skip the second ASR)}
       -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "asr2_text", "cer2" (ru with asr2), "sim",
           "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
   {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
@@ -806,7 +806,7 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             out["cer"] = round(_cer(ref, hyp), 4)
             if _lang(req) == "ru":
                 out["cer_folded"] = round(_cer(ref, hyp, fold=True), 4)
-        if _STATE["asr2_dir"] and _lang(req) == "ru":
+        if _STATE["asr2_dir"] and _lang(req) == "ru" and req.get("asr2", True) is not False:
             try:
                 out["asr2_text"] = _asr2_text(req["wav"])
             except Exception as exc:  # the second ASR is optional: report it, keep the other metrics
