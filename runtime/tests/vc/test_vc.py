@@ -395,10 +395,112 @@ def test_character_pair_uses_the_converted_takes_and_the_target_is_part_of_up_to
 
 def test_pitch_keep_is_zero_and_unknown_mode_is_usage(project: Project, applio: Path,
                                                       capsys: pytest.CaptureFixture[str]) -> None:
-    assert vc_cmd.pitch_shifts(project, "Zbyszek", [], "line", {}) == []
+    assert vc_cmd.pitch_shifts(project, [], "line") == []
     assert vc_cmd._clip_shift(None) == 0 and vc_cmd._clip_shift(30.0) == 12 and vc_cmd._clip_shift(-13.4) == -12
     project.data["vc"]["pitch"] = "octave"  # a hand-edited project.json
     project.save()
     project.mark_stage("post", "done")
     code, out = run(capsys, project.root, "vc", "--dry-run")
     assert code == EXIT_USAGE and "vc.pitch" in out["error"], out
+    _model(project)
+    with pytest.raises(BabelDubError) as err:  # `synth score` converts with the same setting: the same error
+        vc_cmd.convert_for_scoring(project, {"Zbyszek": [("u_s0", Path("c.wav"), {})]})
+    assert err.value.code == EXIT_USAGE and err.value.hint == "babeldub set vc.pitch=line"
+
+
+def _model(project: Project, cid: str = "Zbyszek") -> bool:
+    folder = project.path(layout.VC_DIR, cid)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "model.pth").write_bytes(b"G")
+    (folder / "model.index").write_bytes(b"I")
+    (folder / layout.VC_MODEL_JSON).write_text(json.dumps({"char_id": cid, "trained": "t"}), encoding="utf-8")
+    return True
+
+
+def _tone(path: Path, f0: float, like: Path | None = None) -> Path:
+    """A take at `f0` with the length and rate of `like` (or 2 s at 44.1 kHz)."""
+    frames, sr = (probe(like)["frames"], probe(like)["sr"]) if like is not None else (88200, 44100)
+    t = np.arange(frames) / sr
+    return write_wav(path, (0.3 * np.sin(2 * np.pi * f0 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))).astype(np.float32), sr)
+
+
+def test_pitch_char_is_one_shift_over_all_current_takes(project: Project, applio: Path, tmp_path: Path,
+                                                        capsys: pytest.CaptureFixture[str]) -> None:
+    root = project.root
+    assert run(capsys, root, "vc", "train", "--chars", "Zbyszek", "--epochs", "2", "--minutes", "1")[0] == EXIT_OK
+    assert run(capsys, root, "synth")[0] == EXIT_OK
+    assert run(capsys, root, "post")[0] == EXIT_OK
+    lines = latest_by(read_jsonl(root / layout.LINES))
+    post = latest_by(read_jsonl(root / layout.POST))
+    zb = sorted(lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek")
+    for lid, f0 in zip(zb, (100.0, 150.0, 200.0, 250.0), strict=True):  # takes in different registers
+        source = root / post[lid]["pre_match_wav"]
+        _tone(source, f0, like=source)
+    orig = np.median([vc_cmd._median_hz(root / lines[lid]["audio"]["wav"]) for lid in zb])
+
+    def expected(takes: list[Path]) -> int:
+        return vc_cmd._clip_shift(semitones(orig, float(np.median([vc_cmd._median_hz(p) for p in takes]))))
+
+    first = expected([root / post[lid]["pre_match_wav"] for lid in zb])
+    code, out = run(capsys, root, "vc", "--pitch", "char")
+    assert code == EXIT_OK and out["converted"] == 4, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert {rows[lid]["vc"]["pitch_shift_st"] for lid in zb} == {first}
+    # one line alone (or a partial run) keeps the character's shift, not the shift of that one take
+    assert expected([root / post[zb[3]]["pre_match_wav"]]) != first
+    code, out = run(capsys, root, "vc", "--pitch", "char", "--ids", zb[3], "--force")
+    assert code == EXIT_OK and latest_by(read_jsonl(root / layout.POST))[zb[3]]["vc"]["pitch_shift_st"] == first, out
+
+    # a regenerated take moves the character's median: every take is converted again with the new shift
+    rows = latest_by(read_jsonl(root / layout.POST))
+    regen = _tone(root / layout.POST_DIR / "regen.wav", 300.0, like=root / rows[zb[0]]["pre_vc_wav"])
+    new_row = {k: v for k, v in rows[zb[0]].items() if k not in ("vc", "pre_vc_wav", "stage")}
+    append_jsonl(root / layout.POST, [{**new_row, "wav": project.rel(regen), "pre_match_wav": project.rel(regen)}])
+    second = expected([regen, *(root / rows[lid]["pre_vc_wav"] for lid in zb[1:])])
+    assert second != first
+    code, out = run(capsys, root, "vc", "--pitch", "char")
+    assert code == EXIT_OK and out["converted"] == 4 and out["up_to_date"] == 0, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert {rows[lid]["vc"]["pitch_shift_st"] for lid in zb} == {second}
+
+    # `synth score` converts candidates with the same character-wide shift, not one from the candidates
+    project.data["vc"]["pitch"] = "char"
+    project.save()
+    (applio / "calls.log").unlink()
+    cand = _tone(tmp_path / "cand.wav", 400.0)
+    out_files, errors = vc_cmd.convert_for_scoring(project, {"Zbyszek": [("c_s0", cand, lines[zb[0]])]})
+    assert errors == [] and list(out_files) == ["c_s0"]
+    calls = (applio / "calls.log").read_text(encoding="utf-8").splitlines()
+    assert [int(c.split("--pitch ")[1].split()[0]) for c in calls] == [second]
+    vc_cmd.drop_scoring_files(project, {"Zbyszek"})
+
+
+def test_channel_pool_leaves_an_unreadable_mate_out(project: Project) -> None:
+    lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    zb = sorted(lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek")
+    project.path(lines[zb[2]]["audio"]["wav"]).write_bytes(b"")  # the character's longest original
+    pool = voice.ChannelPool(project, lines)
+    assert len(pool.extra(lines[zb[3]])) == 2  # the short line gets the readable mates
+    assert [lid for lid, _p in pool.cache["Zbyszek"]] == [zb[0], zb[1], zb[3]]  # measured once, without the bad one
+
+
+def test_an_unreadable_original_is_left_out_of_the_pitch_shift(project: Project, applio: Path,
+                                                              capsys: pytest.CaptureFixture[str]) -> None:
+    root = project.root
+    lines = latest_by(read_jsonl(root / layout.LINES))
+    zb = sorted(lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek")
+    assert run(capsys, root, "vc", "train", "--chars", "Zbyszek", "--epochs", "2", "--minutes", "1")[0] == EXIT_OK
+    assert run(capsys, root, "synth")[0] == EXIT_OK
+    project.data["post"]["match"] = "off"  # vc's channel match would need the original too
+    project.save()
+    assert run(capsys, root, "post")[0] == EXIT_OK
+    bad = root / lines[zb[1]]["audio"]["wav"]
+    bad.write_bytes(b"")  # a truncated original
+    assert vc_cmd._median_hz(bad) is None and vc_cmd._median_hz(root / "missing.wav") is None
+    for mode in ("line", "char"):
+        code, out = run(capsys, root, "vc", "--pitch", mode)
+        assert code == EXIT_OK and out["converted"] == 4, out
+        rows = latest_by(read_jsonl(root / layout.POST))
+        assert all(rows[lid]["vc"]["pitch"] == mode for lid in zb)
+        if mode == "line":
+            assert rows[zb[1]]["vc"]["pitch_shift_st"] == 0  # no measurable original: no shift

@@ -1752,7 +1752,7 @@ def _convert_for_scoring(project: Project, rows: list[dict[str, Any]], wait_lock
                          notes: list[str]) -> tuple[dict[str, Path], set[str]]:
     """RVC-convert the candidates of characters with a model before they are scored ({name: converted wav},
     the characters involved). Without Applio they are scored as they are, with the low `sim_rvc` weight."""
-    from babeldub.commands.vc import convert_for_scoring, load_models
+    from babeldub.commands.vc import convert_for_scoring, load_models, pitch_mode
     from babeldub.qa.qc import qc_missing
 
     models = load_models(project)
@@ -1771,6 +1771,7 @@ def _convert_for_scoring(project: Project, rows: list[dict[str, Any]], wait_lock
                 jobs.setdefault(cid, []).append((_cand_name(row, cand), wav, line))
     if not jobs:
         return {}, set()
+    pitch_mode(project)  # an invalid vc.pitch is the same usage error as in `vc`, not a skipped conversion
     try:
         converted, errors = convert_for_scoring(project, jobs, wait_lock)
     except BabelDubError as err:
@@ -1845,14 +1846,14 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
         cid = str(row.get("char_id"))
         hint = f0_hints.get(cid)
         ranked: list[best_rank.Candidate] = []
-        all_converted = True
+        # one line's candidates are compared on the same audio: all converted, or (a conversion failed) all raw
+        all_converted = all(converted.get(_cand_name(row, cand)) is not None for cand in cands)
         for cand in cands:
             wav = _abs(project, cand["wav"])
             assert wav is not None
-            score_wav = converted.get(_cand_name(row, cand))
-            all_converted = all_converted and score_wav is not None
+            score_wav = converted[_cand_name(row, cand)] if all_converted else wav
             try:
-                sc = session.score(f"{row['id']}#s{cand['seed']}", score_wav or wav, text=row.get("text"), lang=lang,
+                sc = session.score(f"{row['id']}#s{cand['seed']}", score_wav, text=row.get("text"), lang=lang,
                                    orig_wav=orig, refs=refs, want=SCORE_WANTS, f0_hint=hint)
             except QcItemError as exc:
                 errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
@@ -2051,8 +2052,10 @@ class ChannelPool:
                 path = _orig_wav(self.project, mate)
                 if path is None:
                     continue
-                data, sr = read_audio(path)
-                found.append((mate["id"], channel.profile(data, sr)))
+                try:
+                    found.append((mate["id"], channel.profile(*read_audio(path))))
+                except (RuntimeError, ValueError, OSError):  # an unreadable original leaves only this mate out
+                    continue
                 if len(found) >= MATCH_POOL_LINES:
                     break
             self.cache[cid] = found

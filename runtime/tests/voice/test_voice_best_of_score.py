@@ -272,6 +272,52 @@ def test_without_applio_rvc_characters_keep_the_low_sim_weight(project: Project,
     assert final["best_of"]["scored_after_rvc"] is False and final["best_of"]["sim_weight"] == 0.05
 
 
+def test_a_partial_rvc_failure_scores_the_whole_line_unconverted(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                                 capsys: pytest.CaptureFixture[str]) -> None:
+    import babeldub.commands.vc as vc_cmd
+    import babeldub.qa.qc as qc
+
+    run(capsys, project.root, "synth")
+    cid = str(voice._pending_scores(project)[0]["char_id"])
+    _rvc_model(project, cid)
+
+    def half_convert(proj: Project, jobs: dict[str, list[tuple[str, Path, dict[str, Any]]]], wait_lock: float = 0.0):
+        name, wav, _line = jobs[cid][0]  # only the first candidate converts, Applio fails on the others
+        work = proj.path(layout.VC_DIR, cid, vc_cmd.SCORE_WORK, "out")
+        work.mkdir(parents=True, exist_ok=True)
+        out = work / f"{wav.stem}_output.wav"
+        out.write_bytes(wav.read_bytes())
+        return {name: out}, [f"{n}: no RVC output (Applio exit code 1)" for n, _w, _l in jobs[cid][1:]]
+
+    monkeypatch.setattr(vc_cmd, "convert_for_scoring", half_convert)
+    fake = FakeScoreQc()
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: fake)
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    code, out = run(capsys, project.root, "synth", "score")
+    assert code == EXIT_OK and out["scored"] == 1 and "scored unconverted" in out["notes"][0], out
+    scored = [r for r in fake.requests if r["op"] == "score"]
+    assert len(scored) == 3 and not any("_output.wav" in r["wav"] for r in scored)  # never a mix of the two
+    final = latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[LID]
+    assert final["best_of"]["scored_after_rvc"] is False and final["best_of"]["sim_weight"] == 0.05
+
+
+def test_an_invalid_vc_pitch_is_a_usage_error_in_synth_score(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                             capsys: pytest.CaptureFixture[str]) -> None:
+    import babeldub.qa.qc as qc
+    from babeldub.core.output import EXIT_USAGE, BabelDubError
+
+    run(capsys, project.root, "synth")
+    _rvc_model(project, str(voice._pending_scores(project)[0]["char_id"]))
+    project.data.setdefault("vc", {})["pitch"] = "lines"  # a hand-edited project.json
+    project.save()
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: FakeScoreQc())
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    with pytest.raises(BabelDubError) as err:
+        run(capsys, project.root, "synth", "score")
+    assert err.value.code == EXIT_USAGE and "vc.pitch" in str(err.value) and err.value.hint == "babeldub set vc.pitch=line"
+    assert latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[LID]["best_of"]["scored"] is False
+
+
 def test_post_redoes_fixed_length_line_when_analysis_segments_change(project: Project, fake_qc: FakeScoreQc,
                                                                     capsys: pytest.CaptureFixture[str]) -> None:
     lines = read_jsonl(project.path(layout.LINES))

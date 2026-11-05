@@ -59,6 +59,15 @@ def _setting(project: Project, key: str) -> Any:
     return project.setting("vc", key, DEFAULTS[key])
 
 
+def pitch_mode(project: Project, override: str | None = None) -> str:
+    """vc.pitch (or the --pitch override); anything outside PITCH_MODES is a usage error."""
+    mode = override if override is not None else _setting(project, "pitch")
+    if mode not in PITCH_MODES:
+        raise BabelDubError(f"vc.pitch must be one of {'|'.join(PITCH_MODES)}, got {mode!r}",
+                            code=EXIT_USAGE, hint="babeldub set vc.pitch=line")
+    return str(mode)
+
+
 def _csv(value: str | None) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
 
@@ -104,13 +113,17 @@ def load_models(project: Project) -> dict[str, dict[str, Any]]:
 CONVERSION_VERSION = "keep-f0"
 
 
-def conversion_key(model: dict[str, Any], settings: dict[str, Any]) -> str:
+def conversion_key(model: dict[str, Any], settings: dict[str, Any], char_st: int | None = None) -> str:
+    """Identity of a conversion; with vc.pitch=char also the character's shift (`char_st`), so a changed
+    shift converts all of the character's takes again instead of mixing two registers."""
     pth: Path = model["pth"]
     stat = pth.stat()
     raw = (f"{model.get('trained')}|{stat.st_size}|{settings['index_rate']}|{settings['protect']}"
            f"|{settings['f0_method']}|{CONVERSION_VERSION}")
     if settings.get("pitch", "keep") != "keep":  # keep: the same key as before vc.pitch existed
         raw += f"|pitch={settings['pitch']}"
+    if settings.get("pitch") == "char":
+        raw += f"{int(char_st or 0):+d}"
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
@@ -262,11 +275,26 @@ def _train_one(project: Project, python: Path, applio: Path, cid: str, data: lis
 
 
 # ---- pitch shift per line -------------------------------------------------------------------
+_F0_CACHE: dict[tuple[str, int, int], float | None] = {}
+
+
 def _median_hz(path: Path | None) -> float | None:
-    if path is None or not path.exists():
+    """Median F0 of a file; None when it is missing or unreadable (left out of the medians, like a file
+    without voiced speech). Cached per process by path, size and mtime."""
+    if path is None:
         return None
-    data, sr = read_audio(path)
-    return f0_median_hz(data, sr)
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_size, stat.st_mtime_ns)
+    if key not in _F0_CACHE:
+        try:
+            data, sr = read_audio(path)
+            _F0_CACHE[key] = f0_median_hz(data, sr)
+        except (RuntimeError, ValueError, OSError):
+            _F0_CACHE[key] = None
+    return _F0_CACHE[key]
 
 
 def _orig_median(project: Project, line: dict[str, Any], analysis: dict[str, dict[str, Any]]) -> float | None:
@@ -282,29 +310,43 @@ def _clip_shift(st: float | None) -> int:
     return int(max(-MAX_SHIFT_ST, min(MAX_SHIFT_ST, round(st))))
 
 
-def pitch_shifts(project: Project, cid: str, items: list[tuple[dict[str, Any], dict[str, Any], Path]], mode: str,
-                 char_of: dict[str, str]) -> list[int]:
+def _pre_vc_source(project: Project, row: dict[str, Any]) -> Path | None:
+    """The take RVC converts: the pre-conversion take of a vc row, else post's take before its channel match."""
+    return _abs(project, row.get("pre_vc_wav") if row.get("vc") else (row.get("pre_match_wav") or row.get("wav")))
+
+
+def char_shift(project: Project, cid: str, char_of: dict[str, str], lines: dict[str, dict[str, Any]],
+               post_latest: dict[str, dict[str, Any]], follows: dict[str, Any], fallback: list[Path] | None = None) -> int:
+    """vc.pitch=char: the character's one shift, the median F0 of its originals over the median F0 of all its
+    current pre-conversion takes (every latest post row, followers left out). A character without a measurable
+    take yet uses the files in `fallback` (the candidates `synth score` converts)."""
+    analysis = load_analysis(project)
+    orig_values = [v for lid, ln in lines.items() if char_of.get(lid) == cid
+                   if (v := _orig_median(project, ln, analysis))]
+    dub_values = [v for lid, row in post_latest.items() if lid in lines and lid not in follows and char_of.get(lid) == cid
+                  if (v := _median_hz(_pre_vc_source(project, row)))]
+    if not dub_values:
+        dub_values = [v for path in fallback or [] if (v := _median_hz(path))]
+    if not orig_values or not dub_values:
+        return 0
+    return _clip_shift(semitones(statistics.median(orig_values), statistics.median(dub_values)))
+
+
+def pitch_shifts(project: Project, items: list[tuple[dict[str, Any], dict[str, Any], Path]], mode: str,
+                 char_st: int = 0) -> list[int]:
     """RVC `--pitch` (semitones) for each take of one character.
 
     keep  0: the take keeps the F0 the TTS cloned from the character's reference.
-    char  one shift for the character: its originals' median F0 over its takes' median F0.
-    line  per take: the median F0 of the take's own original line over the take's median F0.
-    A take or an original without enough voiced speech gets 0 (line) or is left out of the medians (char)."""
+    char  `char_st` for every take (`char_shift`: one shift for the whole character).
+    line  per take: the median F0 of the take's own original line over the take's median F0; a take or an
+          original without enough voiced speech (or unreadable) gets 0."""
     if mode == "keep" or not items:
         return [0] * len(items)
+    if mode == "char":
+        return [char_st] * len(items)
     analysis = load_analysis(project)
-    dubs = [_median_hz(source) for _line, _row, source in items]
-    if mode == "line":
-        return [_clip_shift(semitones(_orig_median(project, line, analysis), dub))
-                for (line, _row, _src), dub in zip(items, dubs, strict=True)]
-    lines = latest_by(read_jsonl(project.path(layout.LINES)))
-    origs = [_orig_median(project, ln, analysis) for lid, ln in lines.items() if char_of.get(lid) == cid]
-    orig_values = [v for v in origs if v]
-    dub_values = [v for v in dubs if v]
-    if not orig_values or not dub_values:
-        return [0] * len(items)
-    shift = _clip_shift(semitones(statistics.median(orig_values), statistics.median(dub_values)))
-    return [shift] * len(items)
+    return [_clip_shift(semitones(_orig_median(project, line, analysis), _median_hz(source)))
+            for line, _row, source in items]
 
 
 # ---- vc (convert) ---------------------------------------------------------------------------
@@ -318,12 +360,8 @@ def cmd_vc(args: argparse.Namespace) -> int:
     models = load_models(project)
     mode = voice.match_mode(project)
     target = voice.match_target(project)
-    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method", "pitch")}
-    if args.pitch is not None:
-        settings["pitch"] = args.pitch
-    if settings["pitch"] not in PITCH_MODES:
-        raise BabelDubError(f"vc.pitch must be one of {'|'.join(PITCH_MODES)}, got {settings['pitch']!r}",
-                            code=EXIT_USAGE, hint="babeldub set vc.pitch=line")
+    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method")}
+    settings["pitch"] = pitch_mode(project, args.pitch)
     if args.index_rate is not None:
         settings["index_rate"] = args.index_rate
     if args.protect is not None:
@@ -335,6 +373,13 @@ def cmd_vc(args: argparse.Namespace) -> int:
     passthrough: Counter[str] = Counter()
     up_to_date = 0
     missing: list[str] = []
+    char_st: dict[str, int] = {}  # vc.pitch=char: the shift of each character, over all its current takes
+
+    def key_of(cid: str, model: dict[str, Any]) -> str:
+        if settings["pitch"] == "char" and cid not in char_st:
+            char_st[cid] = char_shift(project, cid, char_of, lines, post_latest, follows)
+        return conversion_key(model, settings, char_st.get(cid))
+
     for lid, row in post_latest.items():
         line = lines.get(lid)
         if line is None or lid in follows:
@@ -348,7 +393,7 @@ def cmd_vc(args: argparse.Namespace) -> int:
         if model is None:
             passthrough[cid] += 1
             continue
-        key = conversion_key(model, settings)
+        key = key_of(cid, model)
         current = _abs(project, row.get("wav"))
         if (not args.force and (row.get("vc") or {}).get("model_key") == key
                 and voice.match_current(row, mode, target)
@@ -356,7 +401,7 @@ def cmd_vc(args: argparse.Namespace) -> int:
             up_to_date += 1
             continue
         # RVC converts the take as post fitted it, before any channel match
-        source = _abs(project, row.get("pre_vc_wav") if row.get("vc") else (row.get("pre_match_wav") or row.get("wav")))
+        source = _pre_vc_source(project, row)
         if source is None or not source.exists():
             missing.append(lid)
             continue
@@ -398,8 +443,8 @@ def cmd_vc(args: argparse.Namespace) -> int:
     with lock if device.startswith("cuda") else contextlib.nullcontext():
         for cid, items in jobs.items():
             model = models[cid]
-            key = conversion_key(model, settings)
-            shifts = pitch_shifts(project, cid, items, str(settings["pitch"]), char_of)
+            key = key_of(cid, model)
+            shifts = pitch_shifts(project, items, str(settings["pitch"]), char_st.get(cid, 0))
             groups: dict[int, list[int]] = defaultdict(list)
             for i, shift in enumerate(shifts):
                 groups[shift].append(i)
@@ -483,19 +528,23 @@ SCORE_WORK = "score"  # vc/<char_id>/score: candidates converted for `synth scor
 def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path, dict[str, Any]]]],
                         wait_lock: float = 0.0) -> tuple[dict[str, Path], list[str]]:
     """RVC-convert best-of candidates before `synth score` ranks them, so voice similarity (and MOS, prosody)
-    is measured on the timbre that ships, with the `vc.pitch` shift `vc` would apply. `jobs`: {char_id:
-    [(name, wav, line)]} of characters with a model. Returns ({name: converted wav}, errors); the files stay
-    in vc/<char_id>/score/ until `drop_scoring_files`. Without Applio the BabelDubError of
-    `rvc.require_applio` propagates."""
+    is measured on the timbre that ships, with the `vc.pitch` shift `vc` would apply (char: `char_shift` over
+    the character's current takes). `jobs`: {char_id: [(name, wav, line)]} of characters with a model. Returns
+    ({name: converted wav}, errors); the files stay in vc/<char_id>/score/ until `drop_scoring_files`. An
+    invalid vc.pitch is a usage error, as in `vc`; without Applio the BabelDubError of `rvc.require_applio`
+    propagates."""
     models = load_models(project)
     jobs = {cid: items for cid, items in jobs.items() if cid in models and items}
     if not jobs:
         return {}, []
+    mode = pitch_mode(project)
     python, applio = rvc.require_applio()
     device = _device(project, None)
-    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method", "pitch")}
-    mode = str(settings["pitch"]) if settings["pitch"] in PITCH_MODES else "keep"
-    char_of = _char_map(project, latest_by(read_jsonl(project.path(layout.LINES)))) if mode == "char" else {}
+    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method")}
+    lines = latest_by(read_jsonl(project.path(layout.LINES))) if mode == "char" else {}
+    char_of = _char_map(project, lines) if mode == "char" else {}
+    post_latest = latest_by(read_jsonl(project.path(layout.POST))) if mode == "char" else {}
+    follows = follower_map(lines.values()) if mode == "char" else {}
     from babeldub.workers.client import GpuLock
 
     lock = GpuLock(project.path(layout.GPU_LOCK), owner="vc:score", wait_s=wait_lock)
@@ -508,7 +557,9 @@ def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path, 
             work = project.path(layout.VC_DIR, cid, SCORE_WORK)
             if work.exists():
                 shutil.rmtree(work)
-            shifts = pitch_shifts(project, cid, [(line, {}, wav) for _name, wav, line in items], mode, char_of)
+            char_st = (char_shift(project, cid, char_of, lines, post_latest, follows, [wav for _n, wav, _l in items])
+                       if mode == "char" else 0)
+            shifts = pitch_shifts(project, [(line, {}, wav) for _name, wav, line in items], mode, char_st)
             groups: dict[int, list[int]] = defaultdict(list)
             for i, shift in enumerate(shifts):
                 groups[shift].append(i)
