@@ -11,6 +11,7 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ### Fixed
 
+- **`vc --device cpu` works again.** Applio ran with `CUDA_VISIBLE_DEVICES=""`, under which torch 2.11 reports CUDA as available with no device and Applio's start-up check fails (`Invalid device id`); the CPU run now sets `-1`.
 - **RVC no longer moves every line to 155 Hz.** `vc` passed Applio's `--proposed-pitch`, which shifts each line's median F0 to a fixed 155 Hz target (up to ±12 semitones): on the Low-Budget Repairs test set the median F0 after `vc` was 4.6 semitones off the original on average (20 of 37 lines by more than 3), female characters went down to −12 semitones and male cutscene characters up by about +4. `vc` now keeps the dub's own F0; the conversion key changed, so `vc` converts existing takes again.
 
 ## [0.3.0] - 2026-10-26

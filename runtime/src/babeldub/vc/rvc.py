@@ -115,7 +115,7 @@ def run(cmd: list[str], cwd: Path, log: Path, timeout: float, cpu: bool = False)
     env = dict(os.environ)
     env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"})
     if cpu:
-        env["CUDA_VISIBLE_DEVICES"] = ""
+        env["CUDA_VISIBLE_DEVICES"] = "-1"  # "" leaves torch.cuda.is_available() True with no device (torch 2.11)
     with log.open("a", encoding="utf-8", errors="replace") as fh:
         fh.write(f"\n[{now_iso()}] $ {subprocess.list2cmdline(cmd)}\n")
         fh.flush()
