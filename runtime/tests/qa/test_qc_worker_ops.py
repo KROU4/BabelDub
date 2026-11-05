@@ -110,6 +110,53 @@ def test_prosody_semitone_range(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out["rms_db"] == pytest.approx(-20.0) and out["voiced_ratio"] == 0.8
     contour = out["contour"]  # semitones from the median, None where unvoiced
     assert len(contour) == 10 and contour[0] is None and contour[1] == pytest.approx(round(12 * np.log2(100 / 140), 2))
+    assert out["voiced_s"] == 0.08 and out["rms_std_db"] is not None
+
+
+def _fake_pyin(monkeypatch: pytest.MonkeyPatch, coarse: np.ndarray, fine: np.ndarray) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def pyin(y: np.ndarray, **kw: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        calls.append(kw)
+        f0 = coarse if kw["hop_length"] == qc_worker.COARSE_HOP else fine
+        return f0, ~np.isnan(f0), np.ones_like(f0)
+
+    lib = ModuleType("librosa")
+    lib.pyin = pyin  # type: ignore[attr-defined]
+    lib.feature = SimpleNamespace(rms=lambda y, **kw: np.array([[0.1, 0.05, 0.0001]]))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "librosa", lib)
+    return calls
+
+
+def test_prosody_second_pass_is_one_octave_around_the_coarse_median(monkeypatch: pytest.MonkeyPatch) -> None:
+    coarse = np.array([200.0, 205.0, 410.0, np.nan, 198.0])  # one octave jump in the coarse pass
+    fine = np.array([200.0, 210.0, 190.0, np.nan, 220.0, 180.0])
+    calls = _fake_pyin(monkeypatch, coarse, fine)
+    out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
+    assert [c["hop_length"] for c in calls] == [qc_worker.COARSE_HOP, 160]
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (qc_worker.F0_MIN_HZ, qc_worker.F0_MAX_HZ)
+    assert calls[1]["fmin"] == pytest.approx(101.25) and calls[1]["fmax"] == pytest.approx(405.0)
+    assert out["f0_bounds_hz"] == [101.2, 405.0] and out["f0_bounds_source"] == "coarse"
+    assert out["f0_median_hz"] == 200.0 and out["voiced_s"] == 0.05
+
+
+def test_prosody_hint_sets_the_bounds_and_they_are_clipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_pyin(monkeypatch, np.array([np.nan]), np.array([120.0, 130.0, 125.0]))
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 140.0})
+    assert len(calls) == 1 and (calls[0]["fmin"], calls[0]["fmax"]) == (70.0, 280.0)
+    calls.clear()
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 80.0})
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (50.0, 160.0)  # never below 50 Hz
+    calls.clear()
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 900.0})
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (450.0, 1000.0)  # never above 1000 Hz
+
+
+def test_prosody_without_a_voice_in_the_coarse_pass_keeps_the_wide_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_pyin(monkeypatch, np.array([np.nan, np.nan, 300.0]), np.array([np.nan, np.nan, np.nan]))
+    out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
+    assert (calls[1]["fmin"], calls[1]["fmax"]) == (qc_worker.F0_MIN_HZ, qc_worker.F0_MAX_HZ)
+    assert out["f0_bounds_source"] == "wide" and out["f0_median_hz"] is None and out["voiced_s"] == 0.0
 
 
 def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,9 +200,16 @@ def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_score_prosody_of_the_take_and_the_original(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(qc_worker, "op_prosody", lambda req: {"f0_range_st": 5.0 if req["wav"] == "a.wav" else 7.0})
-    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "orig_wav": "o.wav", "want": ["prosody"]})
+    hints: list[Any] = []
+
+    def prosody(req: dict[str, Any]) -> dict[str, Any]:
+        hints.append(req.get("f0_hint_hz"))
+        return {"f0_range_st": 5.0 if req["wav"] == "a.wav" else 7.0}
+
+    monkeypatch.setattr(qc_worker, "op_prosody", prosody)
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "orig_wav": "o.wav", "want": ["prosody"], "f0_hint_hz": 150})
     assert out["prosody"]["f0_range_st"] == 5.0 and out["orig_prosody"]["f0_range_st"] == 7.0
+    assert hints == [150, 150]  # the character's median bounds both passes
 
 
 def test_accent_marks_homographs_only(monkeypatch: pytest.MonkeyPatch) -> None:

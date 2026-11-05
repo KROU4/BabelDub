@@ -334,8 +334,14 @@ QC worker (`workers/qc_worker.py`, env `qc`):
 → {"op": "sim", "id": "...", "wav": "...", "refs": ["..."]}         ← {"ok": true, "id": "...", "sim": 0.71, "sims": [...]}
 → {"op": "vad", "id", "wav", "options"?}     ← {"segments": [[0.08, 0.91], ...], "speech_s": 1.81, "dur_s": 2.35}
 → {"op": "asr_words", "id", "wav", "lang"?}  ← {"text", "lang", "lang_prob", "words": [{"w", "start", "end", "prob"}], "avg_logprob", "no_speech_prob", "dur_s"}
-→ {"op": "prosody", "id", "wav"}             ← {"f0_median_hz", "f0_range_st", "rms_db", "voiced_ratio", "dur_s",
+→ {"op": "prosody", "id", "wav", "f0_hint_hz"?}
+                                             ← {"f0_median_hz", "f0_range_st", "rms_db", "rms_std_db", "voiced_ratio", "voiced_s",
+                                                   "f0_bounds_hz": [fmin, fmax], "f0_bounds_source": "hint|coarse|wide", "dur_s",
                                                    "contour": [semitones from the median or null, 20 per second]}
+     (two-pass pyin: the median comes from `f0_hint_hz` (the character's median F0) or a coarse pyin pass (60–700 Hz,
+      40 ms hop); the fine pass searches median / 2 … median × 2, clipped to 50–1000 Hz, so octave jumps cannot
+      inflate the range; without a voiced frame in the coarse pass the fine pass keeps 60–700 Hz. `voiced_s`: voiced
+      frames × 10 ms; `rms_std_db`: spread of the active (within 30 dB of the peak) frame levels)
 → {"op": "emotion", "id", "wav"}             ← {"label", "score", "emb": [768 floats]}      (opt-in emotion2vec+, needs funasr)
 → {"op": "mos", "id", "wav"}                 ← {"mos": 3.42}                                 (UTMOS22 strong)
 → {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs": [...], "want": ["cer", "sim", "emo", "mos", "prosody"]}

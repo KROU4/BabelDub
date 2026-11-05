@@ -7,6 +7,8 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ### Fixed
 
+- **Robust F0 (two-pass pyin).** The qc worker's `prosody` op searched 60–700 Hz in one pass, so octave jumps gave originals F0 ranges of 26–35.7 semitones, false `flat` flags and inflated dub ranges. It now takes a coarse median first (a pyin pass on 40 ms frames, or the `f0_hint_hz` it is given, such as the character's median F0) and runs pyin within one octave of it (median / 2 … median × 2, clipped to 50–1000 Hz). The reply adds `voiced_s`, `rms_std_db` and the bounds used (`f0_bounds_hz`, `f0_bounds_source`).
+
 - **RVC no longer moves every line to 155 Hz.** `vc` passed Applio's `--proposed-pitch`, which shifts each line's median F0 to a fixed 155 Hz target (up to ±12 semitones): on the Low-Budget Repairs test set the median F0 after `vc` was 4.6 semitones off the original on average (20 of 37 lines by more than 3), female characters went down to −12 semitones and male cutscene characters up by about +4. `vc` now keeps the dub's own F0; the conversion key changed, so `vc` converts existing takes again.
 
 ## [0.3.0] - 2026-10-26

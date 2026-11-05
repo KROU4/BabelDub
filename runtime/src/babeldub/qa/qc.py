@@ -206,9 +206,13 @@ class QcSession:
         """Silero speech segments: {segments [[start_s, end_s]], speech_s, dur_s}."""
         return self._call({"op": "vad", "id": key, "wav": str(wav)})
 
-    def prosody(self, key: str, wav: Path) -> dict[str, Any]:
-        """{f0_median_hz, f0_range_st, rms_db, voiced_ratio, dur_s}."""
-        return self._call({"op": "prosody", "id": key, "wav": str(wav)})
+    def prosody(self, key: str, wav: Path, f0_hint: float | None = None) -> dict[str, Any]:
+        """{f0_median_hz, f0_range_st, rms_db, rms_std_db, voiced_ratio, voiced_s, f0_bounds_hz, dur_s, contour};
+        `f0_hint` (the character's median F0) bounds pyin to one octave either side of it."""
+        req: dict[str, Any] = {"op": "prosody", "id": key, "wav": str(wav)}
+        if f0_hint:
+            req["f0_hint_hz"] = round(float(f0_hint), 1)
+        return self._call(req)
 
     def emotion(self, key: str, wav: Path) -> dict[str, Any]:
         """{label, score, emb (np.float32)}; only when the session was opened with an emotion model."""
@@ -221,13 +225,15 @@ class QcSession:
 
     def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
               orig_wav: Path | None = None, refs: list[Path] | None = None,
-              want: tuple[str, ...] = ("cer", "sim", "emo", "mos")) -> dict[str, Any]:
+              want: tuple[str, ...] = ("cer", "sim", "emo", "mos"), f0_hint: float | None = None) -> dict[str, Any]:
         """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?}: metrics that cannot be
         computed are null; prosody (with its F0 contour) only when `want` has "prosody"."""
         req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
                                "refs": [str(r) for r in refs or []], "want": list(want)}
         if orig_wav is not None:
             req["orig_wav"] = str(orig_wav)
+        if f0_hint:
+            req["f0_hint_hz"] = round(float(f0_hint), 1)
         reply = self._call(req)
         return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody",
                                           "unavailable")}
