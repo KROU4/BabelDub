@@ -216,6 +216,37 @@ def test_missing_applio_is_exit_env(project: Project, capsys: pytest.CaptureFixt
     assert code == 4 and out["hint"].startswith("babeldub setup --engines applio")
 
 
+def test_convert_for_scoring(project: Project, applio: Path, tmp_path: Path) -> None:
+    folder = project.path(layout.VC_DIR, "Zbyszek")
+    folder.mkdir(parents=True)
+    (folder / "model.pth").write_bytes(b"G")
+    (folder / "model.index").write_bytes(b"I")
+    (folder / layout.VC_MODEL_JSON).write_text(json.dumps({"char_id": "Zbyszek", "trained": "t"}), encoding="utf-8")
+    wavs = [write_wav(tmp_path / f"c{k}.wav", speech(1.0, 24000, 150.0), 24000) for k in range(2)]
+    lines = read_jsonl(project.path(layout.LINES))
+    jobs = {"Zbyszek": [(f"u_s{k}", w, lines[0]) for k, w in enumerate(wavs)], "Maciek": [("m_s0", wavs[0], lines[4])]}
+    project.data["vc"]["pitch"] = "keep"
+    out, errors = vc_cmd.convert_for_scoring(project, jobs)
+    assert errors == [] and sorted(out) == ["u_s0", "u_s1"]  # Maciek has no model
+    assert all(p.exists() and probe(p)["sr"] == 40000 for p in out.values())
+    calls = [c for c in (applio / "calls.log").read_text(encoding="utf-8").splitlines() if c.startswith("batch-infer")]
+    assert len(calls) == 1 and "--pitch 0" in calls[0]  # vc.pitch keep
+    vc_cmd.drop_scoring_files(project, {"Zbyszek"})
+    assert not (folder / vc_cmd.SCORE_WORK).exists() and (folder / "model.pth").exists()
+    assert vc_cmd.convert_for_scoring(project, {"Maciek": [("m_s0", wavs[0], lines[4])]}) == ({}, [])
+    # vc.pitch=line: each candidate is shifted toward its own original line, as `vc` will shift the winner
+    project.data["vc"]["pitch"] = "line"
+    project.save()
+    (applio / "calls.log").unlink()
+    jobs = {"Zbyszek": [("u_s0", wavs[0], lines[0]), ("u_s1", wavs[1], lines[2])]}  # originals 110 / 130 Hz
+    out, errors = vc_cmd.convert_for_scoring(project, jobs)
+    assert errors == [] and sorted(out) == ["u_s0", "u_s1"]
+    calls = (applio / "calls.log").read_text(encoding="utf-8").splitlines()
+    pitches = sorted(int(c.split("--pitch ")[1].split()[0]) for c in calls)
+    assert len(pitches) == 2 and pitches[0] < pitches[1] < 0  # 150 Hz takes go down, more for the 110 Hz line
+    vc_cmd.drop_scoring_files(project, {"Zbyszek"})
+
+
 def test_rvc_helpers(tmp_path: Path) -> None:
     name = rvc.model_name("low-budget-repairs", "збышек")
     assert name.startswith("bd_lowbudgetrepai") and name.isascii()

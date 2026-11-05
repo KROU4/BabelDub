@@ -19,12 +19,28 @@ def test_init_creates_project_registry_and_active(bd, game, home):
     # auto: synth runs voxcpm on a GPU with its env, else qwen3tts-fast/qwen3tts/chatterbox
     assert data["tts"]["engine"] == "auto" and data["tts"]["ref_strategy"] == "auto"
     assert data["tts"]["best_of"] == 3 and data["post"]["tempo_max"] == 1.15 and data["vc"]["epochs"] == 20
+    # no qc env yet: `setup` installs the current spec, which has the distillmos package
+    assert data["qa"]["mos_model"] == "distillmos" and data["qa"]["max_cer"] == 0.15
     assert Path(data["game_dir"]) == game.resolve()
     progress = read_json(root / layout.PROGRESS)
     assert progress["init"]["status"] == "done"
     assert active_project() == root.resolve()
     games = load_registry()["games"]
     assert games[0]["slug"] == "low-budget-repairs" and Path(games[0]["game_dir"]) == game.resolve()
+
+
+def test_init_keeps_utmos22_when_the_installed_qc_env_lacks_distillmos(bd, game, home):
+    from babeldub.core.jsonl import write_json
+    from babeldub.core.paths import env_python
+    from babeldub.envsetup.catalog import ENV_MARKER
+
+    python = env_python("qc")
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    write_json(home / "envs" / "qc" / ENV_MARKER, {"spec": {"packages": ["faster-whisper==1.2.1", "speechmos"]}})
+    code, out = bd("init", game, "--lang", "ru")
+    assert code == 0, out
+    assert read_json(Path(out["project"]) / layout.PROJECT_JSON)["qa"]["mos_model"] == "utmos22"
 
 
 def test_init_is_idempotent_and_refuses_other_language(bd, game):

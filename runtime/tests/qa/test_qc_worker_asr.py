@@ -61,3 +61,38 @@ def test_asr_retries_without_vad_when_it_hears_nothing(whisper: FakeWhisper) -> 
     whisper.vad_hears_nothing = True  # e.g. a short quiet bark the VAD drops entirely
     out = qc_worker.op_asr({"id": "a", "wav": "a.wav", "lang": "ru"})
     assert out["text"] == "Привет, как дела?" and whisper.calls == [True, False]
+
+
+@pytest.mark.parametrize(
+    ("heard", "reference", "kept"),
+    [
+        ("Закрыто. Продолжение следует...", "Закрыто.", "Закрыто."),
+        ("Пойдём. Субтитры сделал DimaTorzok", "Пойдём.", "Пойдём."),
+        ("Ладно. Редактор субтитров А.Синецкая Корректор А.Егорова", "Ладно.", "Ладно."),
+        ("Хорошо! Спасибо за просмотр! Продолжение следует...", "Хорошо!", "Хорошо!"),
+        ("Okay. Thanks for watching!", "Okay.", "Okay."),
+        ("Dobrze. Napisy stworzone przez społeczność Amara.org", "Dobrze.", "Dobrze."),
+        ("Продолжение следует...", "", ""),  # a silent take: nothing was said
+        # the dub text itself says it: kept
+        ("Продолжение следует.", "Продолжение следует!", "Продолжение следует."),
+        ("To be continued, he said.", "To be continued, he said.", "To be continued, he said."),
+        # only at the end
+        ("Продолжение следует, сказал он.", "Это всё, сказал он.", "Продолжение следует, сказал он."),
+        ("Всё в порядке.", "Всё в порядке.", "Всё в порядке."),
+    ],
+)
+def test_hallucination_tails_are_stripped_unless_the_reference_says_them(heard: str, reference: str, kept: str) -> None:
+    assert qc_worker.strip_hallucinations(heard, reference) == kept
+
+
+def test_asr_returns_the_raw_text_and_strips_tails_against_the_reference(whisper: FakeWhisper,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    def transcribe(audio: np.ndarray, **kwargs: Any) -> tuple[Any, Any]:
+        segs = iter([SimpleNamespace(text=" Закрыто."), SimpleNamespace(text=" Продолжение следует...")])
+        return segs, SimpleNamespace(language="ru", language_probability=0.9, duration=1.0)
+
+    monkeypatch.setattr(whisper, "transcribe", transcribe)
+    out = qc_worker.op_asr({"id": "a", "wav": "a.wav", "lang": "ru", "text": "Закрыто."})
+    assert out["text"] == "Закрыто." and out["text_raw"] == "Закрыто. Продолжение следует..."
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "lang": "ru", "text": "Закрыто.", "want": ["cer"]})
+    assert out["cer"] == 0.0 and out["asr_text_raw"].endswith("следует...")

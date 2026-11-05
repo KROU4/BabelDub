@@ -11,6 +11,7 @@ from babeldub.qa.metrics import (
     cer,
     cosine,
     duration_ratio,
+    folds_vowels,
     identity_margin,
     levenshtein,
     max_ratio_for,
@@ -128,3 +129,52 @@ def test_cosines() -> None:
     assert mean_pairwise_cosine([np.array([1.0, 0.0])]) is None
     vals = [np.array([1.0, 0.0]), np.array([1.0, 0.0]), np.array([0.0, 1.0])]
     assert mean_pairwise_cosine(vals) == pytest.approx(1.0 / 3.0)
+
+
+@pytest.mark.parametrize(
+    ("ref", "hyp", "folded"),
+    [
+        ("Закрыто!", "Закрыта", 0.0),  # unstressed о heard as а
+        ("Посмотрим.", "Пасмотрим", 0.0),
+        ("Тебя здесь нет.", "Тибя здесь нет", 0.0),  # е/я -> и on both sides
+        ("Ёлка", "елка", 0.0),
+    ],
+)
+def test_vowel_folded_cer_forgives_reduction(ref: str, hyp: str, folded: float) -> None:
+    assert cer(ref, hyp) > 0 or ref == "Ёлка"
+    assert cer(ref, hyp, fold=True) == folded
+
+
+def test_vowel_folding_keeps_real_distortions() -> None:
+    # garbled takes like the measured "Кук фасут" / "Тиштас Казел" still fail the 0.15 gate when folded
+    assert cer("Кошмар какой!", "Кук фасут", fold=True) > 0.15
+    assert cer("Тише, козёл!", "Тиштас Казел", fold=True) > 0.15
+    assert folds_vowels("ru") and folds_vowels("ru-RU") and not folds_vowels("en") and not folds_vowels(None)
+
+
+def test_cer_report_takes_the_lowest_cer_and_flags_disagreement() -> None:
+    from babeldub.qa.qc import cer_report
+
+    rep = cer_report(None, "Посмотрим.", "пасмотрим", "ru", asr2_text="посмотрим")
+    assert rep["cer_raw"] > 0 and rep["cer_folded"] == 0.0 and rep["cer_asr2"] == 0.0 and rep["cer"] == 0.0
+    assert rep["asr_disagree"] is False
+    rep = cer_report(None, "Садись в машину.", "совсем другое", "ru", asr2_text="садись в машину")
+    assert rep["cer"] == 0.0 and rep["asr_disagree"] is True
+    rep = cer_report(None, "Get in.", "get in", "en")
+    assert rep["cer"] == 0.0 and rep["cer_folded"] is None and rep["cer_asr2"] is None and rep["asr_disagree"] is None
+    assert cer_report(None, "Да.", None, "ru")["cer"] is None
+
+
+def test_pitch_shift_voiced_seconds_and_loo_baseline() -> None:
+    from babeldub.qa.metrics import f0_shift_st, mean_loo_centroid_cosine, voiced_seconds
+
+    assert f0_shift_st(281.0, 178.0) == pytest.approx(12 * np.log2(281 / 178))
+    assert f0_shift_st(None, 100.0) is None and f0_shift_st(100.0, 0.0) is None
+    assert voiced_seconds({"voiced_s": 0.8}) == 0.8
+    assert voiced_seconds({"voiced_ratio": 0.5}, 2.0) == 1.0  # an analysis.jsonl row: ratio x duration
+    assert voiced_seconds({}) is None and voiced_seconds(None) is None
+    rng = np.random.default_rng(3)
+    c = rng.standard_normal(64)
+    embs = [c + 0.8 * rng.standard_normal(64) for _ in range(6)]
+    assert mean_loo_centroid_cosine(embs) > mean_pairwise_cosine(embs)  # centroids average line noise away
+    assert mean_loo_centroid_cosine(embs[:1]) is None

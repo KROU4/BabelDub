@@ -1,18 +1,20 @@
 """`babeldub qa`, `decide apply`, `report`: automatic quality control of the dub.
 
 For the latest post-processed file of every line: ASR in the target language -> CER against
-the dub text (digits spelled out on both sides); speaker similarity (ECAPA) of the dub to the hero's original line and to his
+the dub text (digits spelled out on both sides; for Russian also vowel-folded and by a second ASR,
+GigaAM, the lowest counts); speaker similarity (ECAPA) of the dub to the hero's original line and to his
 reference, judged against the character's own baseline (with a lower ratio for a dub in
-another language than the original audio, and an absolute floor); the identity margin (the
+another language than the original audio, and an absolute floor), or, for a short or atypical
+original, relative to the original's own similarity; the identity margin (the
 dub must sound like its own character more than like any other); duration ratio; peaks and
-silence; naturalness (UTMOS22 MOS) against the median MOS of the character's own originals
+silence; naturalness (Distill-MOS or UTMOS22) against the median MOS of the character's own originals
 (qa/mos_baseline.json); prosody similarity to the original (F0 range ratio and contour
-correlation) with a flatness check; onset/offset deviations of fixed_length lines. Lines flagged
-`nonverbal` skip the voice, CER, MOS and prosody checks. When post.match changed the take (`pre_match_wav`),
-the voice similarity, the identity margin, MOS and prosody are measured on the take before the channel
-match (a radio chain must not count as another voice), ASR/CER, levels and the channel distance `ltas_db`
-(informational) on the final file. Auto-decisions follow
-project.json `qa` thresholds; agents add theirs via `decide apply`.
+correlation) with a flatness check and a register check of the median F0; onset/offset deviations
+of fixed_length lines. Lines flagged `nonverbal` skip the voice, CER, MOS and prosody checks. When
+post.match changed the take (`pre_match_wav`), the voice similarity, the identity margin, MOS and prosody
+are measured on the take before the channel match (a radio chain must not count as another voice),
+ASR/CER, levels and the channel distance `ltas_db` (informational) on the final file. Auto-decisions
+follow project.json `qa` thresholds; agents add theirs via `decide apply`.
 """
 
 from __future__ import annotations
@@ -37,9 +39,7 @@ from babeldub.core.jsonl import (
     append_jsonl,
     latest_by,
     now_iso,
-    read_json,
     read_jsonl,
-    write_json,
     write_jsonl,
 )
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
@@ -47,8 +47,11 @@ from babeldub.core.project import Project
 from babeldub.core.takes import follower_map, project_followers
 from babeldub.qa.baseline import (
     BASELINE,
+    MIN_SIM_S,
+    MOS_BASELINE,
+    MosBaseline,
     char_centroids,
-    clean_items,
+    char_f0_hints,
     clean_original,
     compute_baselines,
     load_baseline,
@@ -68,17 +71,17 @@ from babeldub.qa.metrics import (
     audio_levels,
     cosine,
     duration_ratio,
+    f0_shift_st,
     identity_margin,
     ltas_distance_db,
     prosody_similarity,
+    voiced_seconds,
 )
-from babeldub.qa.qc import QcItemError, QcSession, number_cer
+from babeldub.qa.qc import QcItemError, QcSession, cer_report
 
 QA_SCHEMA = "babeldub.qa/1"
 DECISIONS_SCHEMA = "babeldub.decisions/1"
 FLUSH_EVERY = 25  # QA rows are appended in chunks, so an interrupted run keeps its progress
-MOS_BASELINE = "qa/mos_baseline.json"  # {char_id: {median, n}}: MOS of the character's clean originals
-MOS_BASELINE_LINES = 8
 
 
 def _r(value: float | None, digits: int = 4) -> float | None:
@@ -253,7 +256,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
     short_attempts = int(project.setting("tts", "short_word_attempts", 2) or 2)
 
     session = QcSession.open(
-        root, project.data, need_asr=True, need_sv=True, need_mos=True,
+        root, project.data, need_asr=True, need_sv=True, need_mos=True, need_asr2=True,
         device=args.device, wait_lock=float(args.wait_lock or 0.0), owner="qa",
     )
     project.mark_stage("qa", "running", to_check=len(to_check))  # only once the worker is up (EXIT_ENV leaves it)
@@ -283,34 +286,39 @@ def cmd_qa(args: argparse.Namespace) -> int:
         save_baseline(project.path(BASELINE), baseline)
         centroids = char_centroids(root, {cid: v for cid, v in char_lines.items() if cid in voices}, embedder)
 
-        mos_base: dict[str, Any] = {} if args.rebaseline else dict(read_json(project.path(MOS_BASELINE), default={}) or {})
+        mos_base = MosBaseline(root, project.path(MOS_BASELINE), session, char_lines, rebaseline=args.rebaseline)
+        f0_hints = char_f0_hints(analysis, assign)
+        own_sims: dict[str, Any] = baseline.setdefault("lines", {})
 
-        mos_tried: dict[str, float | None] = {}
-
-        def orig_mos_of(cid: str) -> float | None:
-            """Median MOS of the character's clean originals (measured once, cached in qa/mos_baseline.json;
-            a failed measurement is not cached: the next run tries again)."""
-            if (mos_base.get(cid) or {}).get("median") is not None:
-                return mos_base[cid]["median"]
-            if cid not in mos_tried:
-                values: list[float] = []
-                for line_id, path in clean_items(root, char_lines.get(cid, []), MOS_BASELINE_LINES):
-                    try:
-                        values.append(session.mos(f"orig:{line_id}", path))
-                    except QcItemError:
-                        continue
-                mos_tried[cid] = round(statistics.median(values), 3) if values else None
-                if values:
-                    mos_base[cid] = {"median": mos_tried[cid], "n": len(values)}
-                else:
-                    mos_base.pop(cid, None)  # an older run may have cached a failed (None) median
-                write_json(project.path(MOS_BASELINE), mos_base)
-            return mos_tried[cid]
-
-        def orig_emb(line_id: str) -> np.ndarray | None:
+        def orig_emb(line_id: str, min_s: float = MIN_SIM_S) -> np.ndarray | None:
             line = lines.get(line_id)
-            wav = clean_original(root, line) if line else None
+            wav = clean_original(root, line, min_s) if line else None
             return embedder.embed_one(line_id, wav) if wav is not None else None
+
+        def ref_vec_of(ref: dict[str, Any]) -> np.ndarray | None:
+            vec = orig_emb(ref["line_id"])
+            if vec is None and (ref_wav := _resolve(root, ref.get("wav"))) is not None:
+                vec = embedder.embed_one(f"ref:{ref['ref_id']}", ref_wav)
+            return vec
+
+        def voice_target(cid: str, lid: str) -> tuple[np.ndarray | None, str | None]:
+            """The voice the relative SIM rule measures the original and the dub against: the chosen reference
+            (another line), else the character's centroid."""
+            ref = chosen_ref.get(cid)
+            if ref is not None and ref.get("line_id") != lid and (vec := ref_vec_of(ref)) is not None:
+                return vec, f"ref:{ref['ref_id']}"
+            return (centroids[cid], "centroid") if cid in centroids else (None, None)
+
+        def orig_own_sim(lid: str, target: np.ndarray, against: str) -> float | None:
+            """The original line's own SIM to `target` (any length; cached in qa/baseline.json `lines`)."""
+            cached = own_sims.get(lid) or {}
+            if cached.get("against") == against and cached.get("orig_sim") is not None:
+                return float(cached["orig_sim"])
+            vec = orig_emb(lid, 0.0)
+            if vec is None:
+                return None
+            own_sims[lid] = {"orig_sim": round(cosine(vec, target), 4), "against": against}
+            return float(own_sims[lid]["orig_sim"])
 
         for lid in to_check:
             post = post_latest[lid]
@@ -329,6 +337,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 except RuntimeError as exc:
                     errors.append(f"{lid}: unreadable post file ({exc})")
             asr_text: str | None = None
+            asr_raw: str | None = None
             cer_v: float | None = None
             sims: dict[str, float] = {}
             synth: np.ndarray | None = None
@@ -337,7 +346,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
             if audible:
                 assert wav is not None
                 try:
-                    asr_text = session.asr(lid, wav, lang)["text"]
+                    heard = session.asr(lid, wav, lang, text=dub_text)
+                    asr_text, asr_raw = heard["text"], heard["text_raw"]
                     synth = session.embed(f"{lid}#a{attempt}", voice_wav)
                 except QcItemError as exc:
                     qc_error = True
@@ -348,17 +358,31 @@ def cmd_qa(args: argparse.Namespace) -> int:
                         sims["line"] = cosine(synth, own)
                     ref = chosen_ref.get(cid)
                     if ref is not None and ref.get("line_id") != lid:
-                        ref_vec = orig_emb(ref["line_id"])
-                        if ref_vec is None and (ref_wav := _resolve(root, ref.get("wav"))) is not None:
-                            ref_vec = embedder.embed_one(f"ref:{ref['ref_id']}", ref_wav)
+                        ref_vec = ref_vec_of(ref)
                         if ref_vec is not None:
                             sims["char"] = cosine(synth, ref_vec)
             sim = float(np.mean(list(sims.values()))) if sims else None
             sim_ref = sim_ref_for(baseline, cid)
+            # short or atypical originals: the dub is judged against the original's own SIM to the same voice
+            orig_sim = sim_rel = None
+            if synth is not None:
+                target, against = voice_target(cid, lid)
+                if target is not None and against is not None:
+                    orig_sim = orig_own_sim(lid, target, against)
+                    sim_rel = cosine(synth, target)
+            orig_speech = (analysis.get(lid) or {}).get("speech_s") or (line.get("audio") or {}).get("dur_s")
+            sim_rule = th.sim_rule(orig_speech, orig_sim, sim_ref)
             margin, closest = identity_margin(synth, cid, centroids, same_voice) if synth is not None else (None, None)
             nonverbal = "nonverbal" in (line.get("flags") or [])  # a scream: voice and words are not comparable
+            cers: dict[str, Any] = {}
+            asr2_text: str | None = None
             if asr_text is not None and dub_text:
-                cer_v = number_cer(session, dub_text, asr_text, lang)
+                if not nonverbal:
+                    assert wav is not None
+                    asr2_text = session.asr2(f"{lid}#a{attempt}", wav)
+                cers = cer_report(session, dub_text, asr_text, lang, asr2_text=asr2_text,
+                                  disagree=th.max_asr_disagreement)
+                cer_v = cers["cer"]
             mos_v: float | None = None
             pros_dub: dict[str, Any] | None = None
             pros_orig: dict[str, Any] | None = None
@@ -369,14 +393,16 @@ def cmd_qa(args: argparse.Namespace) -> int:
                         mos_v = session.mos(f"{lid}#a{attempt}", voice_wav)
                     except QcItemError:
                         mos_v = None
+                hint = f0_hints.get(cid)  # both F0 passes stay within an octave of the character's voice
                 try:
-                    pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav)
+                    pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav, f0_hint=hint)
                 except QcItemError:
                     pros_dub = None
-                orig_wav = clean_original(root, line) if line and pros_dub is not None else None
+                # any length: the register check needs short originals too
+                orig_wav = clean_original(root, line, 0.0) if line and pros_dub is not None else None
                 if orig_wav is not None:
                     try:
-                        pros_orig = session.prosody(lid, orig_wav)
+                        pros_orig = session.prosody(lid, orig_wav, f0_hint=hint)
                     except QcItemError:
                         pros_orig = None
                 if pros_dub is not None and pros_orig is None:
@@ -385,7 +411,14 @@ def cmd_qa(args: argparse.Namespace) -> int:
             ltas = _ltas(root, line, wav) if audible else None
             dub_range = (pros_dub or {}).get("f0_range_st")
             orig_range = (pros_orig or {}).get("f0_range_st")
-            orig_mos = orig_mos_of(cid) if mos_v is not None else None
+            dub_f0 = (pros_dub or {}).get("f0_median_hz")
+            orig_f0 = (pros_orig or {}).get("f0_median_hz")
+            voiced = (voiced_seconds(pros_dub, levels.dur_s if levels else None),
+                      voiced_seconds(pros_orig, (line.get("audio") or {}).get("dur_s")))
+            # the register check needs enough voiced speech on both sides: a median of a few frames is noise
+            shift = f0_shift_st(dub_f0, orig_f0) if all(v is not None and v >= th.pitch_min_voiced_s
+                                                        for v in voiced) else None
+            orig_mos = mos_base.median(cid) if mos_v is not None else None
             ratio = post.get("ratio")
             if ratio is None and levels is not None:
                 target = post.get("target_s") or (line.get("audio") or {}).get("dur_s")
@@ -409,6 +442,10 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 low_mos=th.low_mos(mos_v, orig_mos),
                 flat=th.flat(dub_range, orig_range),
                 off_time=th.off_time(post.get("onset_deltas"), post.get("offset_deltas")),
+                pitch=th.off_pitch(shift),
+                sim_rule=sim_rule,
+                sim_rel=sim_rel,
+                orig_sim=orig_sim,
             )
             new_qa.append(
                 {
@@ -419,7 +456,13 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "src_key": post.get("src_key"),
                     "post_ts": post.get("ts"),
                     "asr_text": asr_text,
+                    "asr_text_raw": asr_raw,
                     "cer": None if cer_v is None else round(cer_v, 4),
+                    "cer_raw": _r(cers.get("cer_raw")),
+                    "cer_folded": _r(cers.get("cer_folded")),
+                    "asr2_text": asr2_text,
+                    "cer_asr2": _r(cers.get("cer_asr2")),
+                    "asr_disagree": cers.get("asr_disagree"),
                     "cer_skipped": "nonverbal" if nonverbal else None,
                     "sim": None if sim is None else round(sim, 4),
                     "sim_line": None if "line" not in sims else round(sims["line"], 4),
@@ -427,6 +470,9 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "sim_ref": round(sim_ref, 4),
                     "sim_ratio": th.sim_ratio,
                     "sim_threshold": round(th.sim_threshold(sim_ref), 4),
+                    "sim_rule": sim_rule,
+                    "orig_sim": _r(orig_sim),
+                    "sim_rel": _r(sim_rel),
                     "sim_skipped": "nonverbal" if nonverbal else None,
                     "mos": _r(mos_v, 3),
                     "orig_mos": _r(orig_mos, 3),
@@ -434,6 +480,9 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "f0_range_st": _r(dub_range, 2),
                     "orig_f0_range_st": _r(orig_range, 2),
                     "contour_corr": _r(psim["contour_corr"]),
+                    "f0_median_hz": _r(dub_f0, 1),
+                    "orig_f0_median_hz": _r(orig_f0, 1),
+                    "pitch_shift_st": _r(shift, 2),
                     "margin": None if margin is None else round(margin, 4),
                     "closest_char": closest,
                     "ratio": None if ratio is None else round(float(ratio), 4),
@@ -460,6 +509,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 )
             if len(new_qa) - flushed[0] >= FLUSH_EVERY:
                 flush()
+        save_baseline(project.path(BASELINE), baseline)  # with the originals' own SIM measured on the way
         warnings = list(session.warnings)
     finally:
         flush()  # rows of finished lines survive a crash: a re-run continues where it stopped
@@ -484,6 +534,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
     sim_values = [r["sim"] for r in new_qa if r["sim"] is not None]
     mos_values = [r["mos"] for r in new_qa if r.get("mos") is not None]
     pros_values = [r["prosody_sim"] for r in new_qa if r.get("prosody_sim") is not None]
+    shifts = [r["pitch_shift_st"] for r in new_qa if r.get("pitch_shift_st") is not None]
     if len(post_all) > len(post_latest):
         summary["follows"] = len(post_all) - len(post_latest)
     return emit(
@@ -498,6 +549,11 @@ def cmd_qa(args: argparse.Namespace) -> int:
             "sim_median": round(statistics.median(sim_values), 4) if sim_values else None,
             "mos_median": round(statistics.median(mos_values), 3) if mos_values else None,
             "prosody_median": round(statistics.median(pros_values), 4) if pros_values else None,
+            "pitch": {"checked": len(shifts), "over": sum(1 for s in shifts if abs(s) > th.max_pitch_shift_st),
+                      "median_abs_st": round(statistics.median(abs(s) for s in shifts), 2) if shifts else None},
+            "sim_relative": sum(1 for r in new_qa if r.get("sim_rule") == "relative"),
+            "asr2": sum(1 for r in new_qa if r.get("cer_asr2") is not None),
+            "asr_disagree": sum(1 for r in new_qa if r.get("asr_disagree")),
             "device": session.device,
             "errors": clip(errors, 5),
             "warnings": clip(warnings, 3),
@@ -611,9 +667,13 @@ def cmd_report(args: argparse.Namespace) -> int:
         "",
         "Voice similarity (`sim`) is the ECAPA cosine between the dub and the hero's original voice; `sim_ref` is the",
         "character's baseline (how similar the character's own original lines are to each other). Checks:",
-        f"`sim ≥ max({th.sim_ratio} × sim_ref, {th.min_sim_abs})` ({lang_note}); identity margin ≥ {th.min_identity_margin}",
-        f"(the dub is closer to its own character's voice than to any other); CER ≤ {th.max_cer}.",
-        f"Naturalness: MOS (UTMOS22) ≥ the character's originals' median − {th.mos_drop}; monotony: the dub's F0 range",
+        f"`sim ≥ max({th.sim_ratio} × sim_ref, {th.min_sim_abs})` ({lang_note}); both are line-to-line cosines. An original",
+        f"with under {th.short_sim_s} s of speech, or below that bar itself, judges the dub relative to its own similarity",
+        f"(`sim_rule: relative`, dub ≥ {th.short_sim_ratio} × the original's). Identity margin ≥ {th.min_identity_margin}",
+        f"(the dub is closer to its own character's voice than to any other); CER ≤ {th.max_cer} (the lowest of Whisper,",
+        "Whisper with Russian vowels folded, and GigaAM for Russian). Register: the dub's median F0 within",
+        f"±{th.max_pitch_shift_st} semitones of the original line's (`pitch`, when both have ≥ {th.pitch_min_voiced_s} s voiced).",
+        f"Naturalness: MOS ({project.setting('qa', 'mos_model') or 'utmos22'}) ≥ the character's originals' median − {th.mos_drop}; monotony: the dub's F0 range",
         f"≥ {th.min_f0_range_ratio} × the original's (originals moving ≥ {th.flat_min_orig_st} st); fixed_length lines: every",
         f"segment starts within ±{int(th.max_onset_s * 1000)} ms of the original and ends at most {int(th.max_onset_s * 1000)} ms late.",
         "Lines flagged `nonverbal` (screams, laughs) skip the voice, CER, MOS and prosody checks.",

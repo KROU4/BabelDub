@@ -7,7 +7,10 @@ Reason codes written to qa.jsonl:
   silent        speech level under -50 dBFS    -> regen, then keep_original
   no_dub_text   no translation for the line    -> no auto decision (attention)
   cer           ASR differs from dub text      -> regen, then keep_original
-  sim           voice drifted from the hero    -> regen, then keep_original
+  sim           voice drifted from the hero    -> regen, then keep_original (a short original, or one whose own
+                sim is below the bar, judges the dub relative to the original's own sim: sim_rule "relative")
+  pitch         median F0 more than qa.max_pitch_shift_st (3) semitones from the original line's (wrong
+                register, e.g. a voice conversion shifting it) -> regen, then keep_original
   identity      dub sounds like another char   -> regen, then keep_original
   peak          peak above the ceiling/clipped -> regen, then keep_original
   duration      longer than allowed            -> shorten (translator agent shortens the text)
@@ -33,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any
 
 DECISIONS = ("accept", "regen", "reref", "shorten", "retranslate", "keep_original", "skip")
-QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak", "mos", "flat", "timing"})
+QUALITY_REASONS = frozenset({"empty", "silent", "cer", "sim", "identity", "peak", "mos", "flat", "timing", "pitch"})
 BLOCKING_REASONS = frozenset({"missing_file", "no_dub_text", "qc_error"})
 # judgements of delivery, not of the words or the voice: once the attempts are used up a take that only
 # fails these is still a better dub than the original audio in another language, so it is accepted
@@ -71,6 +74,11 @@ class Thresholds:
     min_f0_range_ratio: float = 0.5  # flag a dub whose F0 range is under this share of the original's
     flat_min_orig_st: float = 3.0  # ... when the original moves at least this many semitones
     max_onset_s: float = 0.08  # fixed_length: onset/offset deviation allowed per segment
+    max_asr_disagreement: float = 0.15  # the two ASRs' CERs differ more -> the row is flagged asr_disagree
+    max_pitch_shift_st: float = 3.0  # |median F0 of the dub vs the original line| above this -> pitch
+    pitch_min_voiced_s: float = 0.5  # ... when both have at least this much voiced speech
+    short_sim_s: float = 1.0  # an original with less speech judges the dub's sim relative to its own sim
+    short_sim_ratio: float = 0.8  # relative rule: dub sim >= ratio x the original's own sim
 
     @property
     def sim_ratio(self) -> float:
@@ -102,7 +110,24 @@ class Thresholds:
             min_f0_range_ratio=float(qa.get("min_f0_range_ratio", base.min_f0_range_ratio)),
             flat_min_orig_st=float(qa.get("flat_min_orig_st", base.flat_min_orig_st)),
             max_onset_s=float(qa.get("max_onset_s", base.max_onset_s)),
+            max_asr_disagreement=float(qa.get("max_asr_disagreement", base.max_asr_disagreement)),
+            max_pitch_shift_st=float(qa.get("max_pitch_shift_st", base.max_pitch_shift_st)),
+            pitch_min_voiced_s=float(qa.get("pitch_min_voiced_s", base.pitch_min_voiced_s)),
+            short_sim_s=float(qa.get("short_sim_s", base.short_sim_s)),
+            short_sim_ratio=float(qa.get("short_sim_ratio", base.short_sim_ratio)),
         )
+
+    def sim_rule(self, orig_speech_s: float | None, orig_sim: float | None, sim_ref: float | None) -> str:
+        """`relative` when the original line itself is no reliable voice sample — less than short_sim_s of
+        speech (ECAPA is noise on such lines) or its own sim below the bar a dub must reach — else `absolute`.
+        Without the original's own sim there is nothing to be relative to."""
+        if orig_sim is None:
+            return "absolute"
+        short = orig_speech_s is not None and orig_speech_s < self.short_sim_s
+        return "relative" if short or orig_sim < self.sim_threshold(sim_ref) else "absolute"
+
+    def off_pitch(self, shift_st: float | None) -> bool:
+        return shift_st is not None and abs(shift_st) > self.max_pitch_shift_st
 
     def low_mos(self, mos: float | None, orig_median: float | None) -> bool:
         return mos is not None and orig_median is not None and mos < orig_median - self.mos_drop
@@ -137,8 +162,13 @@ def evaluate(
     low_mos: bool = False,
     flat: bool = False,
     off_time: bool = False,
+    pitch: bool = False,
+    sim_rule: str = "absolute",
+    sim_rel: float | None = None,
+    orig_sim: float | None = None,
 ) -> tuple[str, list[str]]:
-    """Apply the thresholds; returns (verdict, reasons)."""
+    """Apply the thresholds; returns (verdict, reasons). With sim_rule `relative` the voice check is
+    `sim_rel >= short_sim_ratio x orig_sim` (the dub and the original measured against the same voice)."""
     reasons: list[str] = []
     if not exists:
         return "fail", ["missing_file"]
@@ -153,8 +183,13 @@ def evaluate(
     elif cer is not None and cer > th.max_cer and not nonverbal:
         reasons.append("cer")
     if not nonverbal:
-        if sim is not None and sim < th.sim_threshold(sim_ref):
+        if sim_rule == "relative":
+            if sim_rel is not None and orig_sim is not None and sim_rel < th.short_sim_ratio * orig_sim:
+                reasons.append("sim")
+        elif sim is not None and sim < th.sim_threshold(sim_ref):
             reasons.append("sim")
+        if pitch:
+            reasons.append("pitch")
         if margin is not None and margin < th.min_identity_margin:
             reasons.append("identity")
         if low_mos:

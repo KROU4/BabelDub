@@ -35,11 +35,12 @@ Go from top to bottom; the first matching rule decides:
    - both low again → `reref`;
    - widespread for a character (more than 20 % in a chunk) → do not decide line by line; return the character in `failing_chars`.
    - `sim_ratio` is 0.75 on a dub into another language → `source_lang` is wrong in `project.json`; fix it (`babeldub set source_lang=en`) and rerun `babeldub qa --force` instead of deciding.
+   - `sim_rule: relative` (a short or atypical original): judge `sim_rel` against `qa.short_sim_ratio`, not `sim` against `sim_threshold`; a bark that fails relatively too → `regen`, then `keep_original` (short barks rarely matter).
 5a. **Another character's voice** (`identity`: `margin` < `min_identity_margin`, `closest_char` names someone else):
    - first attempt → `regen`; on repeat with the same `closest_char` → `reref`;
    - many lines of one character closest to the same other character → a reference or attribution problem: return the character in `failing_chars` (caster role), do not decide line by line.
 6. **Intelligibility** (`cer` > `max_cer`), the voice is fine:
-   - compare `dub_text` and `asr_text`; if the difference is only in a name, a number or an interjection → `accept` with a `note`, or `retranslate` (numbers as words, `pronounce`);
+   - compare `dub_text` and `asr_text` (for Russian also `asr2_text`; `cer` is already the lowest of the recognizers and of the vowel-folded CER); if the difference is only in a name, a number or an interjection → `accept` with a `note`, or `retranslate` (numbers as words, `pronounce`);
    - skipped words, repetitions, foreign words → `regen` (with VoxCPM2's `tags` the regen is voiced without the delivery control text, which can garble words);
    - high `cer` a second time in a row on the same text → `retranslate`, with a `note` on what to simplify.
 7. **Length** (`ratio` above the limit, or `fixed_length` does not fit):
@@ -47,6 +48,7 @@ Go from top to bottom; the first matching rule decides:
    - otherwise → `shorten`; in `note`, give the `ratio` and how many syllables to cut;
    - two shortenings already done → `keep_original`, or `accept` with a `note` if audio in this game is not tied to timing (only for ordinary dialogue, not for `fixed_length`).
 8. **Peaks, clipping, silence** → `regen`.
+8c. **Wrong register** (`pitch`: |`pitch_shift_st`| above `qa.max_pitch_shift_st`) → `regen`; about ±12 semitones is an octave jump of the TTS and usually goes away with a new seed. The same shift on most lines of one character → its reference or RVC model is in the wrong register: return it in `failing_chars` (voice role).
 8a. **Unnatural or monotone** (`mos`, `flat`) → `regen` (a new seed; the delivery tags stay; the next nearest arousal bucket with `bootstrap` or `tts.tags_reference=bucket`); on repeat for many lines of one character → the character's prompts or delivery settings are the problem (`failing_chars`, voice role). **Off-time cutscene** (`timing`) → `regen`, then `shorten`.
 8b. **`mixed` line accepted with attention** (words with a laugh or groan) → you cannot hear it: `accept` when `cer` and `sim` are fine and the laugh is not part of the meaning; else `keep_original` with a `note`.
 9. **Everything within thresholds** → `accept`.
@@ -63,6 +65,8 @@ Go from top to bottom; the first matching rule decides:
 | `nonverbal` scream, `sim_skipped` and `cer_skipped`, `verdict` pass | `accept` (auto) | — |
 | `ratio` 1.22, `fixed_length` true | `shorten` | "ratio 1.22 on a cutscene: cut ~3 syllables of 14" |
 | `ratio` 3.4, `cer` 0.7 | `regen` | "runaway generation" |
+| `pitch_shift_st` +11.8, `sim` fine | `regen` (auto) | "octave jump, attempt 1" |
+| short bark, `sim_rule` relative, `orig_sim` 0.30, `sim` 0.27 (`sim_rel` 0.9) | `accept` (auto) | — |
 | `synth` keeps failing with `error: "runaway"` (every prompt looped), attempts exhausted, the line never reached `post` | `keep_original` (or `retranslate` with a simpler text) | "loops in every prompt mode" |
 | attempt 3, `sim` still low | `keep_original` | "3 attempts, voice drifts on whisper" |
 | `dub_text` «Ха-ха», the model produced noise | `keep_original` | "laughter, original kept" |

@@ -1,5 +1,5 @@
-"""BabelDub QC worker: ASR (faster-whisper), VAD (Silero), prosody (librosa pyin), speaker
-embeddings (SpeechBrain ECAPA), naturalness MOS (UTMOS22 via SpeechMOS) and, opt-in, emotion
+"""BabelDub QC worker: ASR (faster-whisper; GigaAM-v3 CTC for Russian), VAD (Silero), prosody (librosa pyin), speaker
+embeddings (SpeechBrain ECAPA), naturalness MOS (Distill-MOS or UTMOS22 via SpeechMOS) and, opt-in, emotion
 (emotion2vec+ via funasr) and Russian stress marks for homographs (RUAccent, opt-in via tts.stress).
 
 Runs inside the `qc` engine venv as `<env python> -u qc_worker.py`; it never imports babeldub.
@@ -10,18 +10,27 @@ answer per command on stdout; all logs go to stderr.
    "device": "auto|cuda|cpu", "compute_type": null, "sv_savedir": dir}
       asr/sv load at once; mos/emotion/vad load on their first request (a vad+asr run never
       loads the others)
-  {"op": "asr", "id": ..., "wav": ..., "lang": "ru"}       -> {"text", "lang", "lang_prob", "dur_s"}
+  {"op": "asr", "id": ..., "wav": ..., "lang": "ru", "text"?: reference}
+      -> {"text", "text_raw", "lang", "lang_prob", "dur_s"}: known hallucination tails ("продолжение следует...")
+         that the reference does not contain are stripped from `text`; `text_raw` is Whisper's own output
+  {"op": "asr2", "id", "wav"}                             -> {"text", "model"}: GigaAM-v3 CTC (Russian second ASR;
+                                                              load key asr2_model, loads on its first request)
   {"op": "asr_words", "id", "wav", "lang"?}               -> {"text", "lang", "words": [{w, start, end, prob}],
                                                               "avg_logprob", "no_speech_prob", "dur_s"}
   {"op": "vad", "id", "wav", "options"?}                  -> {"segments": [[start_s, end_s]], "speech_s", "dur_s"}
-  {"op": "prosody", "id", "wav"}                          -> {"f0_median_hz", "f0_range_st", "rms_db",
-                                                              "voiced_ratio", "dur_s"}
+  {"op": "prosody", "id", "wav", "f0_hint_hz"?}           -> {"f0_median_hz", "f0_range_st", "rms_db", "rms_std_db",
+                                                              "voiced_ratio", "voiced_s", "f0_bounds_hz", "dur_s",
+                                                              "contour"}: two-pass pyin
   {"op": "emotion", "id", "wav"}                          -> {"label", "score", "emb": [floats]}
-  {"op": "mos", "id", "wav"}                              -> {"mos"}
+  {"op": "mos", "id", "wav"}                              -> {"mos", "mos_model": "distillmos|utmos22"}
+      (load keys: mos_model = checkpoint folder, mos_backend = distillmos|utmos22, mos_fallback = UTMOS22 folder
+       used when the distillmos package is missing)
   {"op": "embed", "id": ..., "wav": ...}                   -> {"emb": [192 floats], "dur_s"}
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
-  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody]}
-      -> {"cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
+  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
+   "f0_hint_hz"?}
+      -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "asr2_text", "cer2" (ru with asr2), "sim",
+          "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
   {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
   {"op": "accent", "texts": [...], "homographs_only": true}
       -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
@@ -46,7 +55,9 @@ EMB_CACHE_MAX = 4096
 VAD_PARAMETERS = {"min_silence_duration_ms": 500, "speech_pad_ms": 200}
 # analysis VAD: a 250 ms pause already splits segments (the translator sees such pauses)
 SEGMENT_VAD = {"threshold": 0.5, "min_silence_duration_ms": 250, "speech_pad_ms": 30, "min_speech_duration_ms": 60}
-F0_MIN_HZ, F0_MAX_HZ = 60.0, 700.0
+F0_MIN_HZ, F0_MAX_HZ = 60.0, 700.0  # coarse pass: wide search range
+F0_CLIP_HZ = (50.0, 1000.0)  # fine pass: median / 2 .. median x 2, clipped to this range
+COARSE_HOP = 640  # 40 ms frames are enough for the median of the coarse pass
 SCORE_WANTS = ("cer", "sim", "emo", "mos", "prosody")
 CONTOUR_HZ = 20  # F0 contour points per second returned by prosody (for the contour correlation)
 
@@ -60,10 +71,15 @@ _STATE: dict[str, Any] = {
     "emb_cache": {},
     "mos": None,
     "mos_dir": None,
+    "mos_backend": None,  # distillmos | utmos22 (the load request's `mos_backend`, default utmos22)
+    "mos_fallback_dir": None,  # UTMOS22 folder used when the distillmos package is missing
+    "mos_used": None,  # the model that answers MOS requests
     "emotion": None,
     "emotion_dir": None,
     "accent": None,
     "accent_dir": None,
+    "asr2": None,  # GigaAM-v3 CTC (Russian second ASR), loaded on its first request
+    "asr2_dir": None,
     "audio_cache": None,  # (key, 16 kHz mono numpy array): the ops of one line decode it once
 }
 
@@ -224,7 +240,7 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     t0 = time.time()
     device = _resolve_device(req.get("device"))
     if _STATE["device"] and _STATE["device"] != device:
-        _STATE.update(asr=None, asr_dir=None, sv=None, sv_dir=None, emb_cache={}, mos=None, emotion=None)
+        _STATE.update(asr=None, asr_dir=None, sv=None, sv_dir=None, emb_cache={}, mos=None, emotion=None, asr2=None)
     _STATE["device"] = device
     info: dict[str, Any] = {}
     sv_dir = req.get("sv_model")
@@ -234,14 +250,19 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     if asr_dir and (_STATE["asr"] is None or _STATE["asr_dir"] != asr_dir):
         info.update(_load_asr(asr_dir, device, req.get("compute_type")))
     # heavier optional models load on their first request
-    for key in ("mos", "emotion", "accent"):
+    backend = req.get("mos_backend") or "utmos22"
+    if req.get("mos_model") and backend != (_STATE["mos_backend"] or "utmos22"):
+        _STATE.update(mos=None, mos_dir=None)
+    if req.get("mos_model"):
+        _STATE.update(mos_backend=backend, mos_fallback_dir=req.get("mos_fallback"))
+    for key in ("mos", "emotion", "accent", "asr2"):
         folder = req.get(f"{key}_model")
         if folder and folder != _STATE[f"{key}_dir"]:
             _STATE.update({key: None, f"{key}_dir": folder})
     info["load_s"] = round(time.time() - t0, 2)
     return {"device": device, "asr": _STATE["asr"] is not None, "sv": _STATE["sv"] is not None,
             "mos": _STATE["mos_dir"] is not None, "emotion": _STATE["emotion_dir"] is not None,
-            "accent": _STATE["accent_dir"] is not None, "info": info}
+            "accent": _STATE["accent_dir"] is not None, "asr2": _STATE["asr2_dir"] is not None, "info": info}
 
 
 def _torch_device() -> str:
@@ -249,22 +270,55 @@ def _torch_device() -> str:
     return "cuda:0" if device == "cuda" else device
 
 
+def _checkpoint(folder: str, what: str) -> Path:
+    ckpts = sorted(Path(folder).glob("*.pt")) + sorted(Path(folder).glob("*.pth"))
+    if not ckpts:
+        raise FileNotFoundError(f"no {what} checkpoint (*.pt) in {folder}")
+    return ckpts[0]
+
+
+def _load_utmos22(folder: str) -> Any:
+    import torch
+    from speechmos.utmos22.strong.model import UTMOS22Strong
+
+    model = UTMOS22Strong()
+    model.load_state_dict(torch.load(str(_checkpoint(folder, "UTMOS22")), map_location="cpu", weights_only=True))
+    return model
+
+
+def _load_distillmos(folder: str) -> Any:
+    import distillmos  # ImportError: an older qc env without the package
+    import torch
+
+    model = distillmos.ConvTransformerSQAModel(load_weights=False)
+    state = torch.load(str(_checkpoint(folder, "Distill-MOS")), map_location="cpu", weights_only=True)
+    model.load_state_dict(state["model"] if "model" in state else state)
+    return model
+
+
 def _get_mos() -> Any:
+    """The MOS model of `mos_backend` (distillmos | utmos22); Distill-MOS without its package falls back to
+    UTMOS22 when `mos_fallback` is set. `_STATE["mos_used"]` names the model that answers."""
     if _STATE["mos"] is None:
         folder = _STATE["mos_dir"]
         if not folder:
             raise RuntimeError("MOS model not configured: send {'op': 'load', 'mos_model': dir} first")
-        import torch
-        from speechmos.utmos22.strong.model import UTMOS22Strong
-
-        ckpts = sorted(Path(folder).glob("*.pt")) + sorted(Path(folder).glob("*.pth"))
-        if not ckpts:
-            raise FileNotFoundError(f"no UTMOS22 checkpoint (*.pt) in {folder}")
-        model = UTMOS22Strong()
-        model.load_state_dict(torch.load(str(ckpts[0]), map_location="cpu", weights_only=True))
+        used = _STATE["mos_backend"] or "utmos22"
+        if used == "distillmos":
+            try:
+                model = _load_distillmos(folder)
+            except ImportError as exc:
+                fallback = _STATE["mos_fallback_dir"]
+                if not fallback:
+                    raise RuntimeError("Distill-MOS needs the distillmos package in the qc env: "
+                                       "babeldub setup --engines qc") from exc
+                log(f"distillmos is not importable ({exc}): MOS falls back to UTMOS22 from {fallback}")
+                model, used = _load_utmos22(fallback), "utmos22"
+        else:
+            model = _load_utmos22(folder)
         model.eval().to(_torch_device())
-        _STATE["mos"] = model
-        log(f"MOS model loaded from {ckpts[0]}")
+        _STATE.update(mos=model, mos_used=used)
+        log(f"MOS model {used} loaded")
     return _STATE["mos"]
 
 
@@ -330,6 +384,63 @@ def op_sim(req: dict[str, Any]) -> dict[str, Any]:
     return {"id": req.get("id"), "sim": round(float(np.mean(sims)), 4), "sims": sims}
 
 
+# Credits and outros Whisper invents on silent or noisy tails (learnt from subtitled video). Each entry is
+# (phrase regex, credit tail): a credit tail lets up to 4 more words (a name) follow the phrase.
+HALLUCINATION_TAILS: tuple[tuple[str, bool], ...] = (
+    ("продолжение следует", False),
+    ("субтитры (?:сделал|сделала|создавал|создавала|подготовил|подготовила|делал|делала|by)", True),
+    ("редактор субтитров", True),
+    ("корректор субтитров", True),
+    ("спасибо за просмотр", False),
+    ("подписывайтесь на (?:наш )?канал", False),
+    ("дякую за перегляд", False),
+    ("субтитри (?:зробив|створив|by)", True),
+    ("thanks for watching", False),
+    ("thank you for watching", False),
+    ("subtitles by", True),
+    ("to be continued", False),
+    ("please subscribe", False),
+    ("ciąg dalszy nastąpi", False),
+    ("dzięki za oglądanie", False),
+    ("napisy (?:wykonane przez|stworzone przez|by)", True),
+    ("untertitel (?:von|im auftrag des|der amara org community)", True),
+    ("vielen dank fürs zuschauen", False),
+    ("fortsetzung folgt", False),
+    ("sous titres réalisés par", True),
+    ("merci d avoir regardé", False),
+    ("subtítulos (?:realizados )?por", True),
+    ("gracias por ver", False),
+    ("continuará", False),
+)
+_GAP = r"[\s\W_]+"  # what may stand between the words of a phrase in raw ASR text
+
+
+def _tail_regex(phrase: str, credit: bool) -> re.Pattern[str]:
+    body = phrase.replace(" ", _GAP)
+    names = r"(?:[\s\W_]+[\w.]+){0,4}" if credit else ""
+    return re.compile(rf"(?<!\w)(?:{body}){names}[\s\W_]*$", re.IGNORECASE)
+
+
+# (the phrase in the normalised reference, where apostrophes are gone: "d'avoir" -> "davoir"; the tail regex)
+_TAIL_RES = [(re.compile(phrase.replace(" ", r"\s*"), re.IGNORECASE), _tail_regex(phrase, credit))
+             for phrase, credit in HALLUCINATION_TAILS]
+
+
+def strip_hallucinations(text: str, reference: str | None) -> str:
+    """Drop known Whisper hallucination phrases at the end of `text` unless the reference (the dub text)
+    contains them; repeated until no such tail is left."""
+    ref = _norm_text(reference)
+    changed = True
+    while changed and text:
+        changed = False
+        for in_ref, tail in _TAIL_RES:
+            match = tail.search(text)
+            if match and not in_ref.search(ref):
+                text = text[: match.start()].rstrip(" \t,;:-—–")
+                changed = True
+    return text
+
+
 def op_asr(req: dict[str, Any]) -> dict[str, Any]:
     model = _STATE["asr"]
     if model is None:
@@ -360,7 +471,8 @@ def op_asr(req: dict[str, Any]) -> dict[str, Any]:
         text, info = transcribe(False)
     return {
         "id": req.get("id"),
-        "text": text,
+        "text": strip_hallucinations(text, req.get("text")),
+        "text_raw": text,
         "lang": info.language,
         "lang_prob": round(float(info.language_probability or 0.0), 4),
         "dur_s": round(float(info.duration or 0.0), 3),
@@ -416,6 +528,69 @@ def op_asr_words(req: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+ASR2_MODEL = "gigaam-v3-ctc"
+ASR2_CHUNK_S = 20.0  # GigaAM transcribes at most 25 s per call: longer clips go in chunks
+ASR2_OPTIONAL_IMPORTS = frozenset({"pyannote"})  # imported by GigaAM's modeling file only for long-form audio
+
+
+def _get_asr2() -> Any:
+    """GigaAM-v3 CTC through transformers (trust_remote_code: the modeling file of the pinned revision that
+    `babeldub setup` downloaded). A failed load is remembered, so every later request fails fast."""
+    if _STATE["asr2"] is None:
+        folder = _STATE["asr2_dir"]
+        if not folder:
+            raise RuntimeError("second ASR not configured: send {'op': 'load', 'asr2_model': dir} first")
+        if _STATE.get("asr2_error"):
+            raise RuntimeError(_STATE["asr2_error"])
+        try:
+            from transformers import AutoModel, dynamic_module_utils
+
+            # transformers refuses a remote modeling file whose imports are missing, but GigaAM imports pyannote
+            # only for long-form transcription (VAD segmentation), which BabelDub does not use: clips are chunked
+            scan = dynamic_module_utils.get_imports
+            dynamic_module_utils.get_imports = lambda f: [m for m in scan(f) if m not in ASR2_OPTIONAL_IMPORTS]
+            try:
+                model = AutoModel.from_pretrained(folder, trust_remote_code=True, local_files_only=True)
+            finally:
+                dynamic_module_utils.get_imports = scan
+        except ImportError as exc:
+            _STATE["asr2_error"] = (f"GigaAM needs transformers, hydra-core, omegaconf and sentencepiece in the qc "
+                                    f"env ({exc}): babeldub setup --engines qc")
+            raise RuntimeError(_STATE["asr2_error"]) from exc
+        model.eval().to(_torch_device())
+        _STATE["asr2"] = model
+        log(f"GigaAM loaded from {folder}")
+    return _STATE["asr2"]
+
+
+def _asr2_text(path: str) -> str:
+    import numpy as np
+    import torch
+
+    inner = _get_asr2().model  # GigaAMASR: preprocessor + encoder + CTC head + greedy decoding
+    device = next(inner.parameters()).device
+    audio = _audio_16k(path)
+    step = int(ASR2_CHUNK_S * SV_SR)
+    parts: list[str] = []
+    for start in range(0, audio.size, step):
+        chunk = audio[start : start + step]
+        if start and chunk.size < SV_SR // 10:
+            break  # a few ms of tail
+        if chunk.size < MIN_SV_SAMPLES:
+            chunk = np.pad(chunk, (0, MIN_SV_SAMPLES - chunk.size))
+        wav = torch.from_numpy(np.ascontiguousarray(chunk, dtype=np.float32)).to(device).unsqueeze(0)
+        length = torch.full([1], wav.shape[-1], device=device)
+        with torch.inference_mode():
+            encoded, enc_len = inner.forward(wav, length)
+            parts.append(str(inner.decoding.decode(inner.head, encoded, enc_len)[0]).strip())
+    return " ".join(p for p in parts if p)
+
+
+def op_asr2(req: dict[str, Any]) -> dict[str, Any]:
+    """Second ASR (GigaAM-v3 CTC, Russian): lower-case text without punctuation."""
+    return {"id": req.get("id"), "text": _asr2_text(req["wav"]), "model": ASR2_MODEL}
+
+
 def op_vad(req: dict[str, Any]) -> dict[str, Any]:
     """Silero VAD (bundled with faster-whisper): speech segments in seconds."""
     from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -428,8 +603,37 @@ def op_vad(req: dict[str, Any]) -> dict[str, Any]:
             "dur_s": round(audio.size / SV_SR, 3)}
 
 
+def _voiced_f0(f0: Any, voiced: Any) -> Any:
+    import numpy as np
+
+    return f0[voiced & np.isfinite(f0)] if f0 is not None and voiced is not None else np.zeros(0)
+
+
+def f0_bounds(audio: Any, hint_hz: float | None, frame: int) -> tuple[float, float, str]:
+    """(fmin, fmax, source) of the fine pyin pass: one octave either side of the speaker's median F0,
+    clipped to F0_CLIP_HZ. The median is `hint_hz` (e.g. the character's) or a coarse pyin pass over the
+    wide F0_MIN_HZ..F0_MAX_HZ range; the wide range itself when the coarse pass hears no voice."""
+    import librosa
+    import numpy as np
+
+    median: float | None = float(hint_hz) if hint_hz and float(hint_hz) > 0 else None
+    source = "hint" if median else "coarse"
+    if median is None:
+        f0, voiced, _prob = librosa.pyin(audio, fmin=F0_MIN_HZ, fmax=F0_MAX_HZ, sr=SV_SR, frame_length=frame,
+                                         hop_length=COARSE_HOP)
+        f0v = _voiced_f0(f0, voiced)
+        if f0v.size < 3:
+            return F0_MIN_HZ, F0_MAX_HZ, "wide"
+        median = float(np.median(f0v))
+    lo = min(max(median / 2.0, F0_CLIP_HZ[0]), F0_CLIP_HZ[1] / 2.0)
+    hi = max(min(median * 2.0, F0_CLIP_HZ[1]), lo * 2.0)
+    return lo, hi, source
+
+
 def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
-    """Arousal features: F0 median and 10-90 % range in semitones (pyin), active RMS, voiced ratio."""
+    """Arousal features: F0 median and 10-90 % range in semitones (two-pass pyin: a coarse median, then
+    pyin within one octave of it, so octave jumps do not inflate the range), active RMS and its spread,
+    voiced ratio and voiced seconds. `f0_hint_hz` (the character's median F0) sets the bounds directly."""
     import librosa
     import numpy as np
 
@@ -438,9 +642,9 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
     frame, hop = 1024, 160
     if audio.size < frame:
         audio = np.pad(audio, (0, frame - audio.size))
-    f0, voiced, _prob = librosa.pyin(audio, fmin=F0_MIN_HZ, fmax=F0_MAX_HZ, sr=SV_SR, frame_length=frame,
-                                     hop_length=hop)
-    f0v = f0[voiced & np.isfinite(f0)] if f0 is not None else np.zeros(0)
+    fmin, fmax, source = f0_bounds(audio, req.get("f0_hint_hz"), frame)
+    f0, voiced, _prob = librosa.pyin(audio, fmin=fmin, fmax=fmax, sr=SV_SR, frame_length=frame, hop_length=hop)
+    f0v = _voiced_f0(f0, voiced)
     rms = librosa.feature.rms(y=audio, frame_length=frame // 2, hop_length=hop)[0]
     rms_db = 20.0 * np.log10(np.maximum(rms, 1e-6))
     active = rms_db[rms_db > rms_db.max() - 30.0] if rms_db.size else rms_db  # speech frames, not silence
@@ -449,7 +653,11 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
         "f0_median_hz": None,
         "f0_range_st": None,
         "rms_db": round(float(np.mean(active)), 2) if active.size else None,
+        "rms_std_db": round(float(np.std(active)), 2) if active.size >= 2 else None,
         "voiced_ratio": round(float(np.mean(voiced)), 3) if voiced is not None and voiced.size else 0.0,
+        "voiced_s": round(f0v.size * hop / SV_SR, 3),
+        "f0_bounds_hz": [round(fmin, 1), round(fmax, 1)],
+        "f0_bounds_source": source,
         "dur_s": round(dur, 3),
         "contour": [],
     }
@@ -493,11 +701,14 @@ def _mos_of(path: str) -> float:
     model = _get_mos()
     wave = torch.from_numpy(_audio_16k(path)).unsqueeze(0).to(_torch_device())
     with torch.inference_mode():
+        if _STATE["mos_used"] == "distillmos":  # [batch, samples] at 16 kHz -> [batch] MOS 1..5
+            return float(model(wave).reshape(-1)[0])
         return float(model(wave, SV_SR).reshape(-1)[0])
 
 
 def op_mos(req: dict[str, Any]) -> dict[str, Any]:
-    return {"id": req.get("id"), "mos": round(_mos_of(req["wav"]), 3)}
+    mos = round(_mos_of(req["wav"]), 3)
+    return {"id": req.get("id"), "mos": mos, "mos_model": _STATE["mos_used"]}
 
 
 def _norm_text(text: str | None) -> str:
@@ -515,8 +726,14 @@ def _norm_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _cer(reference: str | None, hypothesis: str | None) -> float:
+# same as babeldub.qa.metrics.RU_VOWEL_FOLD: Russian vowel reduction (о -> а, е/э/я -> и)
+RU_VOWEL_FOLD = str.maketrans({"о": "а", "е": "и", "э": "и", "я": "и"})
+
+
+def _cer(reference: str | None, hypothesis: str | None, fold: bool = False) -> float:
     ref, hyp = _norm_text(reference), _norm_text(hypothesis)
+    if fold:
+        ref, hyp = ref.translate(RU_VOWEL_FOLD), hyp.translate(RU_VOWEL_FOLD)
     if not ref:
         return 0.0 if not hyp else 1.0
     prev = list(range(len(hyp) + 1))
@@ -574,9 +791,22 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
         if _STATE["asr"] is None:
             unavailable.append("cer")
         else:
-            asr = op_asr({"wav": req["wav"], "lang": req.get("lang")})
-            out["asr_text"] = asr["text"]
-            out["cer"] = round(_cer(_spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))), 4)
+            asr = op_asr({"wav": req["wav"], "lang": req.get("lang"), "text": req.get("text")})
+            out["asr_text"], out["asr_text_raw"] = asr["text"], asr["text_raw"]
+            ref, hyp = _spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))
+            out["cer"] = round(_cer(ref, hyp), 4)
+            if _lang(req) == "ru":
+                out["cer_folded"] = round(_cer(ref, hyp, fold=True), 4)
+        if _STATE["asr2_dir"] and _lang(req) == "ru":
+            try:
+                out["asr2_text"] = _asr2_text(req["wav"])
+            except Exception as exc:  # the second ASR is optional: report it, keep the other metrics
+                log(f"asr2 failed: {exc}")
+                unavailable.append("asr2")
+                out["asr2_error"] = f"{type(exc).__name__}: {exc}"
+            else:
+                ref2, hyp2 = _spell(req.get("text"), req.get("lang")), _spell(out["asr2_text"], req.get("lang"))
+                out["cer2"] = round(min(_cer(ref2, hyp2), _cer(ref2, hyp2, fold=True)), 4)
     if "sim" in want:
         refs = req.get("refs") or []
         if _STATE["sv"] is None or not refs:
@@ -595,10 +825,12 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             unavailable.append("mos")
         else:
             out["mos"] = round(_mos_of(req["wav"]), 3)
+            out["mos_model"] = _STATE["mos_used"]
     if "prosody" in want:
-        out["prosody"] = op_prosody({"wav": req["wav"]})
+        hint = req.get("f0_hint_hz")
+        out["prosody"] = op_prosody({"wav": req["wav"], "f0_hint_hz": hint})
         if req.get("orig_wav"):
-            out["orig_prosody"] = op_prosody({"wav": req["orig_wav"]})
+            out["orig_prosody"] = op_prosody({"wav": req["orig_wav"], "f0_hint_hz": hint})
     if unavailable:
         out["unavailable"] = unavailable
     return out
@@ -665,6 +897,7 @@ OPS = {
     "prosody": op_prosody,
     "emotion": op_emotion,
     "mos": op_mos,
+    "asr2": op_asr2,
     "embed": op_embed,
     "sim": op_sim,
     "score": op_score,

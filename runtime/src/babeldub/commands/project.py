@@ -23,6 +23,8 @@ from babeldub.core.paths import projects_dir
 from babeldub.core.project import DEFAULT_SETTINGS, Project
 from babeldub.core.takes import follower_map
 from babeldub.envsetup.catalog import AUTO_ENGINE, PREMIUM_TTS, engine_for_language, load_catalog
+from babeldub.qa.qc import MOS_MODELS, default_mos_model
+from babeldub.qa.rank import check_weights
 
 Common = Callable[[argparse.ArgumentParser], None]
 
@@ -41,6 +43,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
     "tts.best_of_mode": ("auto", "length", "score"),
     "tts.stress": ("off", "on"),
+    "qa.mos_model": MOS_MODELS,
     "post.match": ("off", "eq", "full"),
     "vc.pitch": ("keep", "char", "line"),
 }
@@ -249,6 +252,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "source_lang": None,
             "cast": {"policy": policy, "list": chars},
             "translation": {"mode": args.mode},
+            "qa": {"mos_model": default_mos_model()},
         }
         if len(lang_parts) > 1:
             data["target_locale"] = f"{target_lang}-{lang_parts[1].upper()}"
@@ -402,6 +406,11 @@ def apply_setting(data: dict[str, Any], dotted: str, text: str) -> tuple[Any, An
     elif len(parts) == 1 and parts[0] not in data and parts[0] not in ("game_name", "source_lang"):
         warning = f"'{dotted}' is not a known setting"
     node[leaf] = new
+    if parts[:2] == ["qa", "rank_weights"]:
+        problem = check_weights(data["qa"].get("rank_weights"))
+        if problem:
+            raise BabelDubError(problem, code=EXIT_USAGE,
+                                hint="babeldub set qa.rank_weights.sim=0.3 (null restores the defaults)")
     return old, new, warning
 
 
