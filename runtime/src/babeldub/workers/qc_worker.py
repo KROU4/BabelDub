@@ -23,8 +23,10 @@ answer per command on stdout; all logs go to stderr.
   {"op": "mos", "id", "wav"}                              -> {"mos"}
   {"op": "embed", "id": ..., "wav": ...}                   -> {"emb": [192 floats], "dur_s"}
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
-  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody]}
-      -> {"cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
+  {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
+   "f0_hint_hz"?}
+      -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "sim", "emo_cos", "mos", "prosody",
+          "orig_prosody", "unavailable": [...]}
   {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
   {"op": "accent", "texts": [...], "homographs_only": true}
       -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
@@ -611,8 +613,14 @@ def _norm_text(text: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _cer(reference: str | None, hypothesis: str | None) -> float:
+# same as babeldub.qa.metrics.RU_VOWEL_FOLD: Russian vowel reduction (о -> а, е/э/я -> и)
+RU_VOWEL_FOLD = str.maketrans({"о": "а", "е": "и", "э": "и", "я": "и"})
+
+
+def _cer(reference: str | None, hypothesis: str | None, fold: bool = False) -> float:
     ref, hyp = _norm_text(reference), _norm_text(hypothesis)
+    if fold:
+        ref, hyp = ref.translate(RU_VOWEL_FOLD), hyp.translate(RU_VOWEL_FOLD)
     if not ref:
         return 0.0 if not hyp else 1.0
     prev = list(range(len(hyp) + 1))
@@ -672,7 +680,10 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
         else:
             asr = op_asr({"wav": req["wav"], "lang": req.get("lang"), "text": req.get("text")})
             out["asr_text"], out["asr_text_raw"] = asr["text"], asr["text_raw"]
-            out["cer"] = round(_cer(_spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))), 4)
+            ref, hyp = _spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))
+            out["cer"] = round(_cer(ref, hyp), 4)
+            if _lang(req) == "ru":
+                out["cer_folded"] = round(_cer(ref, hyp, fold=True), 4)
     if "sim" in want:
         refs = req.get("refs") or []
         if _STATE["sv"] is None or not refs:

@@ -271,17 +271,53 @@ class QcSession:
 _DIGIT = re.compile(r"\d")
 
 
-def number_cer(session: QcSession | None, reference: str | None, hypothesis: str | None, lang: str | None) -> float:
+def number_cer(session: QcSession | None, reference: str | None, hypothesis: str | None, lang: str | None,
+               fold: bool = False) -> float:
     """CER with digits spelled out on both sides: by the CLI's num2words when installed, else by the
-    qc worker's (one `spell` request, only when a side has digits)."""
+    qc worker's (one `spell` request, only when a side has digits). `fold`: vowel-folded (Russian)."""
     from babeldub.qa.metrics import cer
     from babeldub.text.normalize import has_num2words
 
     ref, hyp = reference or "", hypothesis or ""
     if not lang or has_num2words() or session is None or not (_DIGIT.search(ref) or _DIGIT.search(hyp)):
-        return cer(ref, hyp, lang)
+        return cer(ref, hyp, lang, fold=fold)
     try:
         ref, hyp = session.spell([ref, hyp], lang)
     except QcItemError:
         pass
-    return cer(ref, hyp)
+    return cer(ref, hyp, fold=fold)
+
+
+ASR_DISAGREE = 0.15  # qa.max_asr_disagreement: the two ASRs' CERs differ more -> asr_disagree
+
+
+def cer_report(session: QcSession | None, reference: str | None, asr_text: str | None, lang: str | None, *,
+               asr2_text: str | None = None, disagree: float = ASR_DISAGREE) -> dict[str, Any]:
+    """Every CER of one take and the one the gates use.
+
+    cer_raw     Whisper against the reference (digits spelled out)
+    cer_folded  the same with Russian vowels folded (ru only, else None)
+    cer_asr2    the second ASR (GigaAM-v3 CTC, ru), the lower of its plain and folded CER (None without it)
+    cer         the gate value: the lowest of the above, so a correct reduced vowel or one ASR's slip
+                does not fail a take
+    asr_disagree  both ASRs heard the take and their best CERs differ by more than `disagree`
+    """
+    from babeldub.qa.metrics import folds_vowels
+
+    fold = folds_vowels(lang)
+    out: dict[str, Any] = {"cer": None, "cer_raw": None, "cer_folded": None, "cer_asr2": None,
+                           "asr_disagree": None}
+    best1: float | None = None
+    if asr_text is not None:
+        out["cer_raw"] = best1 = number_cer(session, reference, asr_text, lang)
+        if fold:
+            out["cer_folded"] = number_cer(session, reference, asr_text, lang, fold=True)
+            best1 = min(best1, out["cer_folded"])
+    if asr2_text is not None:
+        plain = number_cer(session, reference, asr2_text, lang)
+        out["cer_asr2"] = min(plain, number_cer(session, reference, asr2_text, lang, fold=True)) if fold else plain
+        if best1 is not None:
+            out["asr_disagree"] = abs(best1 - out["cer_asr2"]) > disagree
+    known = [v for v in (best1, out["cer_asr2"]) if v is not None]
+    out["cer"] = min(known) if known else None
+    return out

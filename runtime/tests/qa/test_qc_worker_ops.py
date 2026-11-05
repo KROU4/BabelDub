@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from babeldub.qa.metrics import RU_VOWEL_FOLD
 from babeldub.qa.metrics import cer as cli_cer
 from babeldub.workers import qc_worker
 
@@ -185,10 +186,13 @@ def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.
 @pytest.mark.parametrize(
     ("ref", "hyp"),
     [("Привет, как дела?", "привет как дела"), ("Ёлка <i>тут</i>", "елка тут"), ("Hello", "Hallo there"),
-     ("", ""), ("", "x"), ("It's [laughs] fine", "its fine")],
+     ("", ""), ("", "x"), ("It's [laughs] fine", "its fine"), ("Посмотрим, закрыто!", "пасмотрим закрыта"),
+     ("Тебя здесь нет", "тибя здесь нет"), ("Эй, ёж", "ий иж")],
 )
-def test_worker_cer_matches_the_cli(ref: str, hyp: str) -> None:
-    assert qc_worker._cer(ref, hyp) == pytest.approx(cli_cer(ref, hyp))
+@pytest.mark.parametrize("fold", [False, True])
+def test_worker_cer_matches_the_cli(ref: str, hyp: str, fold: bool) -> None:
+    assert qc_worker._cer(ref, hyp, fold=fold) == pytest.approx(cli_cer(ref, hyp, fold=fold))
+    assert qc_worker.RU_VOWEL_FOLD == RU_VOWEL_FOLD
 
 
 def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -61,7 +61,7 @@ from babeldub.qa.decisions import (
     validate_agent_row,
 )
 from babeldub.qa.metrics import audio_levels, cosine, duration_ratio, identity_margin, prosody_similarity
-from babeldub.qa.qc import QcItemError, QcSession, number_cer
+from babeldub.qa.qc import QcItemError, QcSession, cer_report
 
 QA_SCHEMA = "babeldub.qa/1"
 DECISIONS_SCHEMA = "babeldub.decisions/1"
@@ -333,8 +333,10 @@ def cmd_qa(args: argparse.Namespace) -> int:
             sim_ref = sim_ref_for(baseline, cid)
             margin, closest = identity_margin(synth, cid, centroids, same_voice) if synth is not None else (None, None)
             nonverbal = "nonverbal" in (line.get("flags") or [])  # a scream: voice and words are not comparable
+            cers: dict[str, Any] = {}
             if asr_text is not None and dub_text:
-                cer_v = number_cer(session, dub_text, asr_text, lang)
+                cers = cer_report(session, dub_text, asr_text, lang, disagree=th.max_asr_disagreement)
+                cer_v = cers["cer"]
             mos_v: float | None = None
             pros_dub: dict[str, Any] | None = None
             pros_orig: dict[str, Any] | None = None
@@ -396,6 +398,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "asr_text": asr_text,
                     "asr_text_raw": asr_raw,
                     "cer": None if cer_v is None else round(cer_v, 4),
+                    "cer_raw": _r(cers.get("cer_raw")),
+                    "cer_folded": _r(cers.get("cer_folded")),
                     "cer_skipped": "nonverbal" if nonverbal else None,
                     "sim": None if sim is None else round(sim, 4),
                     "sim_line": None if "line" not in sims else round(sims["line"], 4),

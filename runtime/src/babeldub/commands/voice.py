@@ -1643,7 +1643,7 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
     take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest."""
     from babeldub.commands.vc import load_models
     from babeldub.qa.metrics import prosody_similarity
-    from babeldub.qa.qc import QcItemError, number_cer
+    from babeldub.qa.qc import QcItemError, cer_report
 
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
     chosen = {str(r["char_id"]): r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")}
@@ -1676,8 +1676,8 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
                 errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
                 continue
             cer_v = sc.get("cer")
-            if sc.get("asr_text") is not None:
-                cer_v = number_cer(session, row.get("text"), sc["asr_text"], lang)
+            if sc.get("asr_text") is not None:  # the lowest of the plain and the vowel-folded (ru) CER
+                cer_v = cer_report(session, row.get("text"), sc["asr_text"], lang)["cer"]
             ranked.append(best_rank.Candidate(
                 seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
                 sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),

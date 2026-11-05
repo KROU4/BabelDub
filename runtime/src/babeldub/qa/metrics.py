@@ -2,8 +2,9 @@
 and the speaker identity margin.
 
 CER is computed on normalized text (lower case, no punctuation or markup, ё -> е; digits are
-spelled out on both sides when the language is given), with spaces counted as characters. The Levenshtein distance is a row-vectorized
-numpy implementation, so no extra dependency is needed in the CLI.
+spelled out on both sides when the language is given), with spaces counted as characters; for Russian
+a vowel-folded variant (о -> а, е/э/я -> и) forgives the vowel reduction ASR writes down. The Levenshtein
+distance is a row-vectorized numpy implementation, so no extra dependency is needed in the CLI.
 """
 
 from __future__ import annotations
@@ -64,11 +65,23 @@ def levenshtein(a: Sequence[str] | str, b: Sequence[str] | str) -> int:
     return int(prev[m])
 
 
-def cer(reference: str | None, hypothesis: str | None, lang: str | None = None) -> float:
+# Russian vowel reduction: unstressed о sounds like а ("пасмотрим", "закрита"), е/э/я like и. ASR writes
+# what it hears, so the folded CER maps both sides onto the reduced vowels (ё is already е).
+RU_VOWEL_FOLD = str.maketrans({"о": "а", "е": "и", "э": "и", "я": "и"})
+FOLD_LANGS = frozenset({"ru"})
+
+
+def folds_vowels(lang: str | None) -> bool:
+    """The language has a vowel-folded CER (Russian)."""
+    return bool(lang) and str(lang).replace("_", "-").split("-")[0].lower() in FOLD_LANGS
+
+
+def cer(reference: str | None, hypothesis: str | None, lang: str | None = None, fold: bool = False) -> float:
     """Character error rate of the hypothesis (ASR) against the reference (dub text).
 
     With `lang`, digits on both sides are spelled out first (num2words), so "25" heard for
-    "двадцать пять" (or the other way round) is not an error."""
+    "двадцать пять" (or the other way round) is not an error. `fold` compares the texts with the
+    RU_VOWEL_FOLD vowels folded after normalisation (qc_worker._cer applies the same rules)."""
     if lang:
         from babeldub.text.normalize import numbers_to_words
 
@@ -76,6 +89,8 @@ def cer(reference: str | None, hypothesis: str | None, lang: str | None = None) 
         hypothesis = numbers_to_words(hypothesis or "", lang)
     ref = normalize_text(reference)
     hyp = normalize_text(hypothesis)
+    if fold:
+        ref, hyp = ref.translate(RU_VOWEL_FOLD), hyp.translate(RU_VOWEL_FOLD)
     if not ref:
         return 0.0 if not hyp else 1.0
     return levenshtein(ref, hyp) / len(ref)

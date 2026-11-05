@@ -11,6 +11,7 @@ from babeldub.qa.metrics import (
     cer,
     cosine,
     duration_ratio,
+    folds_vowels,
     identity_margin,
     levenshtein,
     max_ratio_for,
@@ -128,3 +129,24 @@ def test_cosines() -> None:
     assert mean_pairwise_cosine([np.array([1.0, 0.0])]) is None
     vals = [np.array([1.0, 0.0]), np.array([1.0, 0.0]), np.array([0.0, 1.0])]
     assert mean_pairwise_cosine(vals) == pytest.approx(1.0 / 3.0)
+
+
+@pytest.mark.parametrize(
+    ("ref", "hyp", "folded"),
+    [
+        ("Закрыто!", "Закрыта", 0.0),  # unstressed о heard as а
+        ("Посмотрим.", "Пасмотрим", 0.0),
+        ("Тебя здесь нет.", "Тибя здесь нет", 0.0),  # е/я -> и on both sides
+        ("Ёлка", "елка", 0.0),
+    ],
+)
+def test_vowel_folded_cer_forgives_reduction(ref: str, hyp: str, folded: float) -> None:
+    assert cer(ref, hyp) > 0 or ref == "Ёлка"
+    assert cer(ref, hyp, fold=True) == folded
+
+
+def test_vowel_folding_keeps_real_distortions() -> None:
+    # garbled takes like the measured "Кук фасут" / "Тиштас Казел" still fail the 0.15 gate when folded
+    assert cer("Кошмар какой!", "Кук фасут", fold=True) > 0.15
+    assert cer("Тише, козёл!", "Тиштас Казел", fold=True) > 0.15
+    assert folds_vowels("ru") and folds_vowels("ru-RU") and not folds_vowels("en") and not folds_vowels(None)

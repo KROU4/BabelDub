@@ -297,3 +297,22 @@ def test_qa_mos_prosody_timing_and_line_classes(dub, fake_qc, run, home) -> None
     assert out["mos_median"] == 3.4
     mos_base = json.loads(dub.project.path("qa/mos_baseline.json").read_text(encoding="utf-8"))
     assert mos_base["hero"] == {"median": 3.5, "n": 8}
+
+
+def test_qa_russian_vowel_reduction_is_not_a_cer_failure(dub, fake_qc, run) -> None:
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    reduced, garbled = dub.line("hero", 3.0), dub.line("hero", 3.0)
+    dub.translate(reduced, "Закрыто. Посмотрим!")
+    dub.dub(reduced, voice="hero", asr="закрыта пасмотрим")
+    dub.translate(garbled, "Кошмар какой!")
+    dub.dub(garbled, voice="hero", asr="кук фасут")
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    row = qa[reduced]
+    assert row["verdict"] == "pass" and row["cer"] == 0.0 and row["cer_folded"] == 0.0 and row["cer_raw"] > 0.1
+    assert row["asr_text_raw"] == "закрыта пасмотрим"
+    assert qa[garbled]["reasons"] == ["cer"] and qa[garbled]["cer"] > 0.15
+    asr = [r for r in fake_qc.requests if r["op"] == "asr"]
+    assert {r["text"] for r in asr} == {"Закрыто. Посмотрим!", "Кошмар какой!"}  # the reference for tail stripping

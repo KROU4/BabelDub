@@ -71,6 +71,7 @@ class Thresholds:
     min_f0_range_ratio: float = 0.5  # flag a dub whose F0 range is under this share of the original's
     flat_min_orig_st: float = 3.0  # ... when the original moves at least this many semitones
     max_onset_s: float = 0.08  # fixed_length: onset/offset deviation allowed per segment
+    max_asr_disagreement: float = 0.15  # the two ASRs' CERs differ more -> the row is flagged asr_disagree
 
     @property
     def sim_ratio(self) -> float:
@@ -102,6 +103,7 @@ class Thresholds:
             min_f0_range_ratio=float(qa.get("min_f0_range_ratio", base.min_f0_range_ratio)),
             flat_min_orig_st=float(qa.get("flat_min_orig_st", base.flat_min_orig_st)),
             max_onset_s=float(qa.get("max_onset_s", base.max_onset_s)),
+            max_asr_disagreement=float(qa.get("max_asr_disagreement", base.max_asr_disagreement)),
         )
 
     def low_mos(self, mos: float | None, orig_median: float | None) -> bool:
