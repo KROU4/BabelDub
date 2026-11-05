@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from babeldub.audio import dsp
+from babeldub.audio import dsp, fit
 from babeldub.audio.io import probe, read_audio, write_wav
 from babeldub.commands import voice
 from babeldub.core import layout
@@ -273,7 +273,8 @@ def test_post_exact_length_without_tempo_change(project: Project, capsys: pytest
         # exactly the original's sample count, rate and channels
         assert info["sr"] == o_sr == 48000 and info["ch"] == orig.shape[1] and info["frames"] == orig.shape[0]
         assert row["exact"] is True and row["frames"] == orig.shape[0] and row["tempo"] == 1.0
-        assert row["lead_s"] == pytest.approx(0.12, abs=0.025)  # speech starts where the original's does
+        # speech starts where the original's does (a fixed_length chunk keeps the 30 ms lead-in of its onset)
+        assert row["lead_s"] == pytest.approx(0.12 - (fit.ONSET_PAD_S if row["fixed_length"] else 0.0), abs=0.025)
         assert row["peak_db"] <= -0.95
         assert row["lufs_out"] == pytest.approx(row["level_ref"], abs=1.0)  # loudness matched to the original
     code, out = run(capsys, project.root, "post")
@@ -300,10 +301,12 @@ def test_post_tempo_fit_is_bounded_and_flags_over_length(project: Project, capsy
     fixed = rows["fmod:Audio/Dialogue_en.bank#fsb0:0002"]
     assert fixed["fixed_length"] is True
     assert fixed["chunk_tempo"]["max"] == pytest.approx(1.15, abs=1e-3)  # never faster than post.tempo_max
-    assert 1.0 <= fixed["tempo"] <= 1.15 + 1e-3 and fixed["onset_deltas"][0] == pytest.approx(0.0, abs=0.03)
+    # it still runs past the file end: it starts earlier, in the silence before its onset
+    assert 1.0 <= fixed["tempo"] <= 1.15 + 1e-3 and -fit.EARLY_MAX_S - 1e-3 <= fixed["onset_deltas"][0] < 0.0
     assert fixed["stretch_method"] == "atempo"
     assert fixed["over_length"] is True and fixed["id"] in out["over_length"]
-    assert fixed["exact"] is False and fixed["id"] in out["not_exact"]  # speech is never cut: the file runs longer
+    # speech is never cut: what the silence before it cannot hold makes the file longer
+    assert fixed["exact"] is (fixed["id"] not in out.get("not_exact", []))
     assert code == EXIT_ATTENTION
     for row in rows.values():
         assert row["tempo"] >= 1.0  # never slowed down

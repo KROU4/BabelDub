@@ -7,6 +7,8 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ### Fixed
 
+- **Cutscene chunks no longer push the next one late.** In a `fixed_length` line a dub chunk that ran past the next segment's onset started the next chunk that much later (+360 ms and +240 ms on two Low-Budget Repairs cutscenes). Such a chunk now takes the time from itself first (its pauses and a speed-up up to `post.tempo_max`, also for an overrun within `post.tolerance`), then from the silence before it (it starts up to 0.3 s early); only what is still left pushes the next chunk. Onsets are measured the same way on both sides: the first sample above the energy-VAD threshold minus the 30 ms pad of the Silero `vad_segments` (`audio.fit.refine_onsets`), and a placed chunk fades in over 3 ms instead of 10 ms, so the attack is not smeared.
+
 - **RVC no longer moves every line to 155 Hz.** `vc` passed Applio's `--proposed-pitch`, which shifts each line's median F0 to a fixed 155 Hz target (up to ±12 semitones): on the Low-Budget Repairs test set the median F0 after `vc` was 4.6 semitones off the original on average (20 of 37 lines by more than 3), female characters went down to −12 semitones and male cutscene characters up by about +4. `vc` now keeps the dub's own F0; the conversion key changed, so `vc` converts existing takes again.
 
 ## [0.3.0] - 2026-10-26

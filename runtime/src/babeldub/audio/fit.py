@@ -6,7 +6,11 @@ keeps its tempo and the rest is silence. A dub whose speech does not fit the roo
 speech onset first loses part of its internal pauses (down to max(80 ms, half of each)), then speeds
 up to at most `tempo_max`. A `fixed_length` line (cutscene) is split into chunks that are matched to
 the original's speech segments (monotone DP over |log(dub/orig)| with a merge penalty) and each chunk starts where its
-segment starts, sped up only to fit that segment; a chunk group that would end early instead gets
+segment starts, sped up only to fit that segment; a chunk that would still run into the next segment's onset
+first takes the time from itself (pauses, tempo up to `tempo_max`), then from the silence before it (it starts
+up to EARLY_MAX_S earlier), and only then pushes the next one later. Onsets are measured the same way on both
+sides: the first sample whose 1 ms envelope passes the VAD threshold, minus ONSET_PAD_S (the Silero pad of the
+analysis segments). A chunk group that would end early instead gets
 longer pauses (each up to twice its length, +0.4 s at most), never slower speech. The result has exactly the original's number of
 samples at its rate and channel count, loudness matched to the original speech. A dub that still does
 not fit is never cut: the file then runs longer. `fit_to_original` is the older bounded-tempo fit
@@ -28,8 +32,12 @@ from babeldub.audio.io import read_audio, write_wav
 
 VAD_THRESHOLD_DB = -42.0
 VAD_FRAME_S = 0.02
-EDGE_FADE_MS = 10.0
+EDGE_FADE_MS = 10.0  # fade-out of a placed chunk (and both edges in fit_to_original)
+ONSET_FADE_MS = 3.0  # fade-in of a placed chunk: short, so the attack is not smeared
 JOIN_FADE_MS = 5.0
+ONSET_PAD_S = 0.03  # a measured onset keeps this much lead-in (the speech_pad_ms of the analysis Silero VAD)
+ONSET_ENV_S = 0.001  # envelope window of the onset search
+EARLY_MAX_S = 0.3  # fixed_length: an overrunning chunk may start at most this much before its segment
 PAUSE_GAP_S = 0.12  # a silence at least this long splits speech into chunks
 PAUSE_MIN_S = 0.08  # a shortened pause keeps at least this much ...
 PAUSE_KEEP = 0.5  # ... and at least this share of its length
@@ -81,6 +89,38 @@ def speech_chunks(
         else:
             chunks[-1][1] = idx + 1
     return [(s * frame, min(total, e * frame)) for s, e in chunks]
+
+
+def refine_onsets(
+    data: np.ndarray, sr: int, chunks: Sequence[tuple[int, int]], pad_s: float = ONSET_PAD_S,
+    threshold_db: float = VAD_THRESHOLD_DB,
+) -> list[tuple[int, int]]:
+    """`speech_chunks` with sample-accurate starts: the first sample (searched from one frame before the
+    chunk to its first frame) whose 1 ms RMS envelope reaches the VAD threshold, minus `pad_s`, never
+    before the previous chunk's end. Ends are kept."""
+    active = _active_frames(data, sr, threshold_db)
+    if active is None or not chunks:
+        return list(chunks)
+    mono = to_mono(data) if data.ndim > 1 else np.asarray(data, dtype=np.float32)
+    on, frame, _ = active
+    seg = mono[: (len(mono) // frame) * frame].astype(np.float64).reshape(-1, frame)
+    level = float(np.sqrt(np.mean(seg[on] ** 2, axis=1) + 1e-12).max()) * 10.0 ** (threshold_db / 20.0)
+    win = max(1, int(round(ONSET_ENV_S * sr)))
+    pad = int(round(pad_s * sr))
+    out: list[tuple[int, int]] = []
+    floor = 0
+    for s, e in chunks:
+        lo, hi = max(floor, s - frame), min(e, s + frame)
+        start = s
+        if hi - lo > win:
+            env = np.sqrt(np.convolve(mono[lo:hi].astype(np.float64) ** 2, np.ones(win) / win, mode="valid"))
+            hits = np.flatnonzero(env >= level)
+            if hits.size:
+                start = lo + int(hits[0])
+        start = max(floor, start - pad)
+        out.append((start, e))
+        floor = e
+    return out
 
 
 def speech_segments_s(data: np.ndarray, sr: int, min_gap_s: float = PAUSE_GAP_S) -> list[tuple[float, float]]:
@@ -306,8 +346,8 @@ def _compress(
 
 
 def _segments(given: Sequence[Sequence[float]] | None, mono: np.ndarray, sr: int, frames: int) -> list[tuple[int, int]]:
-    """Original speech segments in samples: `given` (seconds, e.g. analysis vad_segments) when usable,
-    else the energy-VAD chunks, else the whole file."""
+    """Original speech segments in samples: `given` (seconds, e.g. analysis vad_segments, Silero with a
+    30 ms pad) when usable, else the energy-VAD chunks with refined onsets (the same pad), else the whole file."""
     segs: list[tuple[int, int]] = []
     for item in given or ():
         s, e = max(0, int(round(float(item[0]) * sr))), min(frames, int(round(float(item[1]) * sr)))
@@ -320,7 +360,7 @@ def _segments(given: Sequence[Sequence[float]] | None, mono: np.ndarray, sr: int
             merged[-1] = (merged[-1][0], max(merged[-1][1], e))
         else:
             merged.append((s, e))
-    return merged or speech_chunks(mono, sr) or [(0, frames)]
+    return merged or refine_onsets(mono, sr, speech_chunks(mono, sr)) or [(0, frames)]
 
 
 def fit_segments(
@@ -364,20 +404,33 @@ def fit_segments(
     cut_total = added_total = 0
     if fixed_length:
         segs = _segments(orig_segments, mono_orig, orig_sr, frames)
+        onsets = refine_onsets(mono, orig_sr, chunks)  # a group starts at its onset measured like the original's
         target = max(1, segs[-1][1] - segs[0][0])
         cursor = 0
-        for (i0, i1), (j0, j1) in align_chunks(chunks, segs):
-            a, b = chunks[i0][0], chunks[i1 - 1][1]
+        early = int(EARLY_MAX_S * orig_sr)
+        groups = align_chunks(onsets, segs)
+        for n, ((i0, i1), (j0, j1)) in enumerate(groups):
+            a, b = onsets[i0][0], chunks[i1 - 1][1]
             seg_start, seg_end = segs[j0][0], segs[j1 - 1][1]
+            limit = segs[groups[n + 1][1][0]][0] if n + 1 < len(groups) else frames  # next onset / file end
+            rel = [(s - a, e - a) for s, e in chunks[i0:i1]]
             audio, cut, tempo, used = _compress(
-                mono[a:b], [(s - a, e - a) for s, e in chunks[i0:i1]], orig_sr, seg_end - seg_start,
-                tempo_max=tempo_max, tolerance=tolerance, stretcher=stretcher,
+                mono[a:b], rel, orig_sr, seg_end - seg_start, tempo_max=tempo_max, tolerance=tolerance,
+                stretcher=stretcher,
             )
-            start = max(seg_start, cursor)  # a chunk that still overruns pushes the next one later
+            start = max(seg_start, cursor)
+            if start + len(audio) > limit and tempo < tempo_max - 1e-6:
+                # it would run into the next onset: the time comes from the chunk itself first ...
+                audio, cut, tempo, used = _compress(
+                    mono[a:b], rel, orig_sr, max(1, limit - start), tempo_max=tempo_max, tolerance=0.0,
+                    stretcher=stretcher,
+                )
+            if start + len(audio) > limit:  # ... then from the silence before it; what is left pushes the next
+                start = max(cursor, seg_start - early, limit - len(audio))
             short = (seg_end - start) - len(audio)
             if cut == 0 and used == "none" and short > tolerance * (seg_end - seg_start):
                 # a short dub ends early: lengthen its own pauses toward the segment end (speech kept as is)
-                audio, grown = _widen_pauses(audio, [(s - a, e - a) for s, e in chunks[i0:i1]], orig_sr, short)
+                audio, grown = _widen_pauses(audio, rel, orig_sr, short)
                 added_total += grown
             placements.append((start, audio))
             cursor = start + len(audio)
@@ -414,7 +467,8 @@ def fit_segments(
     total = max(frames, last)
     out = np.zeros(total, dtype=np.float32)
     for start, audio in placements:
-        out[start : start + len(audio)] += fade(audio, orig_sr, EDGE_FADE_MS)
+        shaped = fade(fade(audio, orig_sr, ONSET_FADE_MS, fade_out=False), orig_sr, EDGE_FADE_MS, fade_in=False)
+        out[start : start + len(audio)] += shaped
     level_in = level_db(out[first:last], orig_sr, measure)
     if math.isfinite(level_in):
         out *= np.float32(10.0 ** ((level_ref - level_in) / 20.0))
