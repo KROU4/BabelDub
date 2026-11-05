@@ -42,6 +42,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "tts.best_of_mode": ("auto", "length", "score"),
     "tts.stress": ("off", "on"),
     "post.match": ("off", "eq", "full"),
+    "vc.pitch": ("keep", "char", "line"),
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}
 STAGE_COMMANDS: dict[str, str] = {

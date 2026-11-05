@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from babeldub.audio.io import probe, write_wav
+from babeldub.audio.pitch import semitones
 from babeldub.commands import vc as vc_cmd
 from babeldub.commands import voice
 from babeldub.core import layout
@@ -254,3 +255,43 @@ def test_train_command_keeps_only_the_latest_checkpoint(tmp_path: Path) -> None:
     train = rvc.train_commands(tmp_path / "python.exe", "bd_x", tmp_path, 127, "0")[2]
     assert "--save-only-latest" in train
     assert train[train.index("--save-every-epoch") + 1] == "100"
+
+
+def test_pitch_modes_shift_to_the_originals(project: Project, applio: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = project.root
+    assert run(capsys, root, "vc", "train", "--chars", "Zbyszek", "--epochs", "2", "--minutes", "1")[0] == EXIT_OK
+    assert run(capsys, root, "synth")[0] == EXIT_OK
+    assert run(capsys, root, "post")[0] == EXIT_OK
+    lines = latest_by(read_jsonl(root / layout.LINES))
+    post = latest_by(read_jsonl(root / layout.POST))
+    zb = [lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek"]
+    expected = {}
+    for lid in zb:
+        orig = vc_cmd._median_hz(root / lines[lid]["audio"]["wav"])
+        dub = vc_cmd._median_hz(root / post[lid]["wav"])
+        expected[lid] = vc_cmd._clip_shift(semitones(orig, dub))
+    code, out = run(capsys, root, "vc", "--pitch", "line")
+    assert code == EXIT_OK and out["converted"] == 4, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert {lid: rows[lid]["vc"]["pitch_shift_st"] for lid in zb} == expected
+    assert all(rows[lid]["vc"]["pitch"] == "line" for lid in zb)
+    calls = [c for c in (applio / "calls.log").read_text(encoding="utf-8").splitlines() if c.startswith("batch-infer")]
+    assert {int(c.split("--pitch ")[1].split()[0]) for c in calls} == set(expected.values())
+    assert len(calls) == len(set(expected.values()))  # one Applio run per distinct shift
+
+    code, out = run(capsys, root, "vc", "--pitch", "char")
+    assert code == EXIT_OK and out["converted"] == 4, out  # another mode: another conversion key
+    shifts = {latest_by(read_jsonl(root / layout.POST))[lid]["vc"]["pitch_shift_st"] for lid in zb}
+    assert len(shifts) == 1
+    assert run(capsys, root, "vc", "--pitch", "char")[1]["up_to_date"] == 4
+
+
+def test_pitch_keep_is_zero_and_unknown_mode_is_usage(project: Project, applio: Path,
+                                                      capsys: pytest.CaptureFixture[str]) -> None:
+    assert vc_cmd.pitch_shifts(project, "Zbyszek", [], "line", {}) == []
+    assert vc_cmd._clip_shift(None) == 0 and vc_cmd._clip_shift(30.0) == 12 and vc_cmd._clip_shift(-13.4) == -12
+    project.data["vc"]["pitch"] = "octave"  # a hand-edited project.json
+    project.save()
+    project.mark_stage("post", "done")
+    code, out = run(capsys, project.root, "vc", "--dry-run")
+    assert code == EXIT_USAGE and "vc.pitch" in out["error"], out
