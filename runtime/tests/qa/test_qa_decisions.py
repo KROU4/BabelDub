@@ -165,3 +165,27 @@ def test_mos_flat_and_timing_reasons() -> None:
     for reasons in (["timing"], ["flat", "cer"], ["mos", "sim"]):
         assert auto_decide("fail", reasons, 3, TH).decision == "keep_original"
     assert auto_decide("fail", ["mos"], 2, TH, line_class="short_word", max_attempts=2).decision == "accept"
+
+
+def test_relative_sim_rule_for_short_or_atypical_originals() -> None:
+    # "Тихо!": the dub's 0.0996 against the original's own 0.0959 to the character reference
+    assert XLANG.sim_rule(0.7, 0.0959, 0.7) == "relative"
+    assert XLANG.sim_rule(3.0, 0.20, 0.7) == "relative"  # the original itself is below the 0.315 bar
+    assert XLANG.sim_rule(3.0, 0.60, 0.7) == "absolute"
+    assert XLANG.sim_rule(0.7, None, 0.7) == "absolute"  # nothing to be relative to
+    assert _eval(th=XLANG, sim=0.0996, sim_rule="relative", sim_rel=0.0996, orig_sim=0.0959) == ("pass", [])
+    assert _eval(th=XLANG, sim=0.0996, sim_rule="relative", sim_rel=0.05, orig_sim=0.0959) == ("fail", ["sim"])
+    assert _eval(th=XLANG, sim=0.0996)[1] == ["sim"]  # the absolute rule would have failed it
+    th = Thresholds.from_project({"qa": {"short_sim_s": 0.5, "short_sim_ratio": 0.9}})
+    assert th.sim_rule(0.7, 0.6, 0.7) == "absolute" and th.short_sim_ratio == 0.9
+
+
+def test_pitch_reason_and_its_decision() -> None:
+    assert XLANG.off_pitch(3.5) and XLANG.off_pitch(-4.0) and not XLANG.off_pitch(2.9) and not XLANG.off_pitch(None)
+    assert _eval(pitch=True) == ("fail", ["pitch"])
+    assert _eval(pitch=True, nonverbal=True)[1] == []  # a scream's pitch says nothing about the register
+    assert auto_decide("fail", ["pitch"], 1, TH).decision == "regen"
+    last = auto_decide("fail", ["pitch"], 3, TH)
+    assert last.decision == "keep_original" and last.attention  # not a soft reason
+    th = Thresholds.from_project({"qa": {"max_pitch_shift_st": 2.5, "pitch_min_voiced_s": 0.3}})
+    assert th.off_pitch(2.6) and th.pitch_min_voiced_s == 0.3

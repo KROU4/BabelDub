@@ -163,3 +163,18 @@ def test_cer_report_takes_the_lowest_cer_and_flags_disagreement() -> None:
     rep = cer_report(None, "Get in.", "get in", "en")
     assert rep["cer"] == 0.0 and rep["cer_folded"] is None and rep["cer_asr2"] is None and rep["asr_disagree"] is None
     assert cer_report(None, "Да.", None, "ru")["cer"] is None
+
+
+def test_pitch_shift_voiced_seconds_and_loo_baseline() -> None:
+    from babeldub.qa.metrics import f0_shift_st, mean_loo_centroid_cosine, voiced_seconds
+
+    assert f0_shift_st(281.0, 178.0) == pytest.approx(12 * np.log2(281 / 178))
+    assert f0_shift_st(None, 100.0) is None and f0_shift_st(100.0, 0.0) is None
+    assert voiced_seconds({"voiced_s": 0.8}) == 0.8
+    assert voiced_seconds({"voiced_ratio": 0.5}, 2.0) == 1.0  # an analysis.jsonl row: ratio x duration
+    assert voiced_seconds({}) is None and voiced_seconds(None) is None
+    rng = np.random.default_rng(3)
+    c = rng.standard_normal(64)
+    embs = [c + 0.8 * rng.standard_normal(64) for _ in range(6)]
+    assert mean_loo_centroid_cosine(embs) > mean_pairwise_cosine(embs)  # centroids average line noise away
+    assert mean_loo_centroid_cosine(embs[:1]) is None

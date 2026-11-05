@@ -395,3 +395,65 @@ def test_qa_without_a_russian_target_never_loads_the_second_asr(dub, fake_qc, ru
     dub.save()
     run(["qa", "--project", str(dub.project.root)])
     assert "asr2_model" not in fake_qc.loads[0] and not any(r["op"] == "asr2" for r in fake_qc.requests)
+
+
+def test_qa_short_lines_judge_sim_relative_to_the_original(dub, fake_qc, run) -> None:
+    v = dub.voices
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])  # a typical reference; only the short originals are atypical
+    weak = v.mix({"hero": 0.35, "noise1": 1.0})  # ECAPA on < 1 s: far from the hero even for the original
+    short_ok, short_bad = dub.line("hero", 0.7, vec=weak), dub.line("hero", 0.7, vec=weak)
+    dub.translate(short_ok, "Тихо!")
+    dub.dub(short_ok, voice=None, vec=v.mix({"hero": 0.33, "noise2": 1.0}), asr="тихо", dur_s=0.7)
+    dub.translate(short_bad, "Тихо!")
+    dub.dub(short_bad, voice="stranger", asr="тихо", dur_s=0.7)
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    ok, bad = qa[short_ok], qa[short_bad]
+    assert ok["sim_rule"] == "relative" and ok["sim"] < ok["sim_threshold"]  # the absolute bar would fail it
+    assert ok["sim_rel"] >= 0.8 * ok["orig_sim"] and ok["verdict"] == "pass"
+    assert bad["sim_rule"] == "relative" and bad["reasons"] == ["sim"]
+    assert out["sim_relative"] == 2
+    baseline = json.loads(dub.project.path("qa/baseline.json").read_text(encoding="utf-8"))
+    assert baseline["lines"][short_ok]["orig_sim"] == ok["orig_sim"] and baseline["lines"][short_ok]["against"].startswith("ref:")
+    assert baseline["definition"].startswith("line-to-line") and baseline["chars"]["hero"]["sim_ref_loo"] is not None
+
+
+def test_qa_pitch_register_check(dub, fake_qc, run) -> None:
+    import math
+    from pathlib import Path
+
+    from babeldub.core.jsonl import write_jsonl
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    cases = {"shifted": (200.0, 1.0, 140.0, 1.0), "close": (148.0, 1.0, 140.0, 1.0),
+             "too_short": (200.0, 1.0, 140.0, 0.2)}
+    ids = {}
+    for name, (dub_hz, dub_voiced, orig_hz, orig_voiced) in cases.items():
+        lid = ids[name] = dub.line("hero", 3.0)
+        dub.translate(lid, "Садись в машину.")
+        wav = dub.dub(lid, voice="hero", asr="садись в машину")
+        fake_qc.prosody[key_of(wav)] = {"f0_median_hz": dub_hz, "voiced_s": dub_voiced, "f0_range_st": 5.0}
+        orig = dub.project.path(next(x for x in dub.lines if x["id"] == lid)["audio"]["wav"])
+        fake_qc.prosody[key_of(orig)] = {"f0_median_hz": orig_hz, "voiced_s": orig_voiced, "f0_range_st": 5.0}
+    dub.save()
+    write_jsonl(dub.project.path(layout.ANALYSIS),
+                [{"id": lid, "prosody": {"f0_median_hz": hz}} for lid, hz in zip(base, (140.0, 150.0, 160.0), strict=True)],
+                schema="babeldub.analysis/1")
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[ids["shifted"]]["reasons"] == ["pitch"] and qa[ids["shifted"]]["pitch_shift_st"] == round(12 * math.log2(200 / 140), 2)
+    assert qa[ids["close"]]["verdict"] == "pass" and abs(qa[ids["close"]]["pitch_shift_st"]) < 1.0
+    assert qa[ids["too_short"]]["pitch_shift_st"] is None and qa[ids["too_short"]]["verdict"] == "pass"
+    assert qa[ids["shifted"]]["f0_median_hz"] == 200.0 and qa[ids["shifted"]]["orig_f0_median_hz"] == 140.0
+    dec = latest_by(read_jsonl(dub.project.path(layout.DECISIONS)))
+    assert dec[ids["shifted"]]["decision"] == "regen"
+    shifts = [abs(qa[ids[n]]["pitch_shift_st"]) for n in ("shifted", "close")]
+    assert out["pitch"] == {"checked": 2, "over": 1, "median_abs_st": round(sum(shifts) / 2, 2)}
+    hints = {r.get("f0_hint_hz") for r in fake_qc.requests if r["op"] == "prosody"}
+    assert hints == {150.0}  # the character's median F0 from analysis.jsonl bounds every pyin pass

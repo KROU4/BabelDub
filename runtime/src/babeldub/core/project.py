@@ -53,7 +53,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
     "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"},
-    # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language
+    # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language;
+    # short_sim_*: an original under short_sim_s of speech (or below the sim bar itself) judges the dub's sim
+    # relative to its own (>= short_sim_ratio x); max_pitch_shift_st: register check of the median F0 when both
+    # sides have pitch_min_voiced_s of voiced speech; max_asr_disagreement: Whisper vs GigaAM CER gap flagged
     "qa": {
         "max_cer": 0.15,
         "min_sim_ratio": 0.75,
@@ -63,6 +66,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_duration_ratio": 1.35,
         "mos_drop": 1.0,
         "min_f0_range_ratio": 0.5,
+        "max_pitch_shift_st": 3.0,
+        "pitch_min_voiced_s": 0.5,
+        "short_sim_s": 1.0,
+        "short_sim_ratio": 0.8,
+        "max_asr_disagreement": 0.15,
     },
     "build": {"codec": "auto"},
     "install": {"backup": True},

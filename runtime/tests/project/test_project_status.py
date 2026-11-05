@@ -108,6 +108,10 @@ def test_set_calibration_settings(bd, game):
     code, out = bd("set", "qa.min_sim_abs=0.3")
     assert code == 0 and "warnings" not in out and out["changed"]["qa.min_sim_abs"] == {"old": None, "new": 0.3}
     assert bd("set", "qa.min_sim_abs=low")[0] == 2
+    code, out = bd("set", "qa.max_pitch_shift_st=2.5", "qa.short_sim_s=1.2", "qa.short_sim_ratio=0.75",
+                   "qa.pitch_min_voiced_s=0.4", "qa.max_asr_disagreement=0.2")
+    assert code == 0 and "warnings" not in out, out
+    assert out["changed"]["qa.max_pitch_shift_st"] == {"old": 3.0, "new": 2.5}
 
 
 def test_set_validation(bd, game):

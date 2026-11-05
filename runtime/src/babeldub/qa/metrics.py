@@ -110,6 +110,24 @@ def f0_range_ratio(dub_range: float | None, orig_range: float | None) -> float |
     return float(min(dub_range, orig_range) / max(dub_range, orig_range))
 
 
+def f0_shift_st(dub_hz: float | None, orig_hz: float | None) -> float | None:
+    """Register shift in semitones: 12 x log2(dub median F0 / original median F0)."""
+    if not isinstance(dub_hz, (int, float)) or not isinstance(orig_hz, (int, float)) or dub_hz <= 0 or orig_hz <= 0:
+        return None
+    return float(12.0 * np.log2(dub_hz / orig_hz))
+
+
+def voiced_seconds(prosody: dict[str, Any] | None, dur_s: float | None = None) -> float | None:
+    """Voiced speech of a `prosody` reply: `voiced_s`, else (older rows, e.g. analysis.jsonl) voiced_ratio x dur."""
+    prosody = prosody or {}
+    if isinstance(prosody.get("voiced_s"), (int, float)):
+        return float(prosody["voiced_s"])
+    ratio, dur = prosody.get("voiced_ratio"), prosody.get("dur_s") or dur_s
+    if isinstance(ratio, (int, float)) and isinstance(dur, (int, float)):
+        return float(ratio) * float(dur)
+    return None
+
+
 def contour_correlation(dub: Sequence[float | None] | None, orig: Sequence[float | None] | None) -> float | None:
     """Pearson correlation of the voiced F0 contours (semitones), both resampled to CONTOUR_POINTS;
     None when either is too short or their lengths differ more than MAX_CONTOUR_STRETCH times."""
@@ -232,3 +250,14 @@ def mean_pairwise_cosine(embs: Sequence[np.ndarray]) -> float | None:
     sims = mat @ mat.T
     iu = np.triu_indices(len(embs), k=1)
     return float(np.mean(sims[iu]))
+
+
+def mean_loo_centroid_cosine(embs: Sequence[np.ndarray]) -> float | None:
+    """Average cosine of each embedding to the centroid of the others (leave-one-out). A centroid averages
+    the noise of single lines away, so for lines that are similar at all this is at least the pairwise mean
+    of the same lines: the two definitions must never be compared with each other."""
+    if len(embs) < 2:
+        return None
+    mat = np.stack([unit(e) for e in embs])
+    total = mat.sum(axis=0)
+    return float(np.mean([cosine(mat[i], total - mat[i]) for i in range(len(mat))]))
