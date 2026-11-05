@@ -229,7 +229,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
     short_attempts = int(project.setting("tts", "short_word_attempts", 2) or 2)
 
     session = QcSession.open(
-        root, project.data, need_asr=True, need_sv=True, need_mos=True,
+        root, project.data, need_asr=True, need_sv=True, need_mos=True, need_asr2=True,
         device=args.device, wait_lock=float(args.wait_lock or 0.0), owner="qa",
     )
     project.mark_stage("qa", "running", to_check=len(to_check))  # only once the worker is up (EXIT_ENV leaves it)
@@ -334,8 +334,13 @@ def cmd_qa(args: argparse.Namespace) -> int:
             margin, closest = identity_margin(synth, cid, centroids, same_voice) if synth is not None else (None, None)
             nonverbal = "nonverbal" in (line.get("flags") or [])  # a scream: voice and words are not comparable
             cers: dict[str, Any] = {}
+            asr2_text: str | None = None
             if asr_text is not None and dub_text:
-                cers = cer_report(session, dub_text, asr_text, lang, disagree=th.max_asr_disagreement)
+                if not nonverbal:
+                    assert wav is not None
+                    asr2_text = session.asr2(f"{lid}#a{attempt}", wav)
+                cers = cer_report(session, dub_text, asr_text, lang, asr2_text=asr2_text,
+                                  disagree=th.max_asr_disagreement)
                 cer_v = cers["cer"]
             mos_v: float | None = None
             pros_dub: dict[str, Any] | None = None
@@ -400,6 +405,9 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "cer": None if cer_v is None else round(cer_v, 4),
                     "cer_raw": _r(cers.get("cer_raw")),
                     "cer_folded": _r(cers.get("cer_folded")),
+                    "asr2_text": asr2_text,
+                    "cer_asr2": _r(cers.get("cer_asr2")),
+                    "asr_disagree": cers.get("asr_disagree"),
                     "cer_skipped": "nonverbal" if nonverbal else None,
                     "sim": None if sim is None else round(sim, 4),
                     "sim_line": None if "line" not in sims else round(sims["line"], 4),
@@ -476,6 +484,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
             "sim_median": round(statistics.median(sim_values), 4) if sim_values else None,
             "mos_median": round(statistics.median(mos_values), 3) if mos_values else None,
             "prosody_median": round(statistics.median(pros_values), 4) if pros_values else None,
+            "asr2": sum(1 for r in new_qa if r.get("cer_asr2") is not None),
+            "asr_disagree": sum(1 for r in new_qa if r.get("asr_disagree")),
             "device": session.device,
             "errors": clip(errors, 5),
             "warnings": clip(warnings, 3),

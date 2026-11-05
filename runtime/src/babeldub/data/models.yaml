@@ -104,16 +104,18 @@ engines:
     env: qc
     python: "3.12"
     torch: {version: "2.8.0", index: "https://download.pytorch.org/whl/cu128", cpu_index: "https://download.pytorch.org/whl/cpu"}
+    # transformers/hydra-core/omegaconf/sentencepiece: GigaAM-v3 (versions from its model card)
     packages: ["faster-whisper==1.2.1", "speechbrain==1.1.2", "soundfile==0.14.0", "numpy==2.5.4", "jiwer==4.0.0",
                "num2words==0.5.14", "librosa==1.0.0",
-               "speechmos @ git+https://github.com/tarepan/SpeechMOS@ed25eacbfa42b99156c36ebec67a733b5dbb9b79"]
+               "speechmos @ git+https://github.com/tarepan/SpeechMOS@ed25eacbfa42b99156c36ebec67a733b5dbb9b79",
+               "transformers==4.57.1", "hydra-core==1.3.2", "omegaconf==2.3.0", "sentencepiece==0.2.1"]
     gpu_packages: ["nvidia-cublas-cu12==12.9.2.10", "nvidia-cudnn-cu12==9.27.0.42"]
     import: [faster_whisper, speechbrain, soundfile, librosa, speechmos]
     worker: qc_worker.py
-    size_gb: 5.2
+    size_gb: 5.3
     languages: ["*"]
     license: MIT
-    notes: "Quality control and analysis: ASR with word times, Silero VAD, prosody (librosa pyin), speaker similarity, UTMOS22 naturalness."
+    notes: "Quality control and analysis: ASR with word times (Whisper; GigaAM-v3 CTC as the second Russian ASR), Silero VAD, prosody (librosa pyin), speaker similarity, UTMOS22 naturalness."
   dummy:
     env: null
     worker: tts_dummy.py
@@ -195,6 +197,19 @@ models:
     auto_tiers: [cpu, 8gb, 12gb, 24gb]
     languages: ["*"]
     notes: "ASR for QA: CER of the dub against its text."
+  - name: GigaAM-v3-ctc
+    repo: ai-sage/GigaAM-v3
+    revision: 15ef3b5a88da78f93134b3cb7f015c70aefa8946  # branch `ctc`: no punctuation or text normalisation
+    engine: qc
+    role: asr
+    license: MIT
+    commercial: true
+    size_gb: 0.44
+    vram_gb: 1.5
+    tiers: [cpu, 8gb, 12gb, 24gb]
+    auto_tiers: [cpu, 8gb, 12gb, 24gb]
+    languages: [ru]
+    notes: "Second Russian ASR for QA and best-of (GigaAM-v3 CTC, 220-240M Conformer; model card WER 9.2 vs 25.1 for Whisper-large-v3 over 5 domains, not measured on game dubs). CTC does not invent text, so no hallucinated tails; the gate uses the lower CER of the two ASRs and flags asr_disagree. Loaded with transformers trust_remote_code from the pinned revision."
   - name: spkrec-ecapa-voxceleb
     repo: speechbrain/spkrec-ecapa-voxceleb
     revision: 0f99f2d0ebe89ac095bcc5903c4dd8f72b367286

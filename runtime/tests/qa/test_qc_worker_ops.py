@@ -52,7 +52,8 @@ def audio(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     data = np.zeros(2 * SR, dtype=np.float32)
     monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(data)])
     monkeypatch.setitem(qc_worker._STATE, "audio_cache", None)
-    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir"):
+    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir", "asr2", "asr2_dir",
+                "asr2_error"):
         monkeypatch.setitem(qc_worker._STATE, key, None)
     return data
 
@@ -193,6 +194,94 @@ def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.
 def test_worker_cer_matches_the_cli(ref: str, hyp: str, fold: bool) -> None:
     assert qc_worker._cer(ref, hyp, fold=fold) == pytest.approx(cli_cer(ref, hyp, fold=fold))
     assert qc_worker.RU_VOWEL_FOLD == RU_VOWEL_FOLD
+
+
+class FakeGiga:
+    """transformers' GigaAMModel: `.model` is the GigaAMASR with forward, head and greedy decoding."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self.texts = list(texts)
+        self.lengths: list[int] = []
+        outer = self
+
+        class Inner:
+            head = object()
+
+            def parameters(self) -> Any:
+                return iter([SimpleNamespace(device="cpu")])
+
+            def forward(self, wav: Any, length: Any) -> tuple[Any, Any]:
+                outer.lengths.append(int(wav.shape[-1]))
+                return wav, length
+
+            class decoding:  # noqa: N801 - mirrors the attribute name
+                @staticmethod
+                def decode(head: Any, encoded: Any, lengths: Any) -> list[str]:
+                    return [outer.texts.pop(0)]
+
+        self.model = Inner()
+
+
+class FakeTorchTensor:
+    def __init__(self, data: np.ndarray) -> None:
+        self.data = data
+        self.shape = data.shape
+
+    def to(self, device: Any) -> FakeTorchTensor:
+        return self
+
+    def unsqueeze(self, dim: int) -> FakeTorchTensor:
+        return FakeTorchTensor(self.data[None, :])
+
+
+def _fake_torch() -> ModuleType:
+    import contextlib
+
+    torch = ModuleType("torch")
+    torch.from_numpy = FakeTorchTensor  # type: ignore[attr-defined]
+    torch.full = lambda shape, value, device=None: value  # type: ignore[attr-defined]
+    torch.inference_mode = contextlib.nullcontext  # type: ignore[attr-defined]
+    return torch
+
+
+def test_asr2_transcribes_long_clips_in_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "torch", _fake_torch())
+    long = np.zeros(int(45 * SR), dtype=np.float32)
+    monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(long)])
+    giga = FakeGiga([" садись ", "в машину", ""])
+    monkeypatch.setitem(qc_worker._STATE, "asr2", giga)
+    out = qc_worker.op_asr2({"id": "a", "wav": "a.wav"})
+    assert out == {"id": "a", "text": "садись в машину", "model": "gigaam-v3-ctc"}
+    assert giga.lengths == [20 * SR, 20 * SR, 5 * SR]
+
+
+def test_score_uses_the_second_asr_for_russian_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "asr", FakeWhisper())
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setattr(qc_worker, "_asr2_text", lambda path: "пасмотрим")
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"]})
+    assert out["asr2_text"] == "пасмотрим" and out["cer2"] == 0.0 and out["cer_folded"] is not None
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Hello", "lang": "en", "want": ["cer"]})
+    assert "asr2_text" not in out and "cer_folded" not in out
+
+    def broken(path: str) -> str:
+        raise RuntimeError("GigaAM needs transformers")
+
+    monkeypatch.setattr(qc_worker, "_asr2_text", broken)
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"]})
+    assert out["unavailable"] == ["asr2"] and "transformers" in out["asr2_error"] and out["cer"] is not None
+
+
+def test_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)  # import fails
+    with pytest.raises(RuntimeError, match="hydra-core"):
+        qc_worker._get_asr2()
+    assert "setup --engines qc" in qc_worker._STATE["asr2_error"]
+    monkeypatch.delitem(sys.modules, "transformers")
+    with pytest.raises(RuntimeError, match="hydra-core"):  # not retried
+        qc_worker._get_asr2()
 
 
 def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> None:

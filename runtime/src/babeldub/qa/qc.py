@@ -23,6 +23,7 @@ from babeldub.core.paths import env_python, hf_home, models_dir
 QC_ENV = "qc"
 QC_SCRIPT = "qc_worker.py"
 DEFAULT_ASR_MODEL = "faster-whisper-large-v3-turbo"
+DEFAULT_ASR2_MODEL = "GigaAM-v3-ctc"  # second ASR for Russian targets
 DEFAULT_SV_MODEL = "spkrec-ecapa-voxceleb"
 DEFAULT_MOS_MODEL = "utmos22-strong"
 DEFAULT_EMOTION_MODEL = "emotion2vec_plus_base"
@@ -61,6 +62,16 @@ def mos_model_dir(settings: dict[str, Any]) -> Path | None:
 def emotion_model_dir(settings: dict[str, Any]) -> Path | None:
     """emotion2vec+ folder (`qa.emotion_model`, opt-in license), None when it is not downloaded."""
     return _optional_dir(settings, "emotion_model", DEFAULT_EMOTION_MODEL)
+
+
+def asr2_model_dir(settings: dict[str, Any]) -> Path | None:
+    """GigaAM-v3 CTC folder (`qa.asr2_model`) for a Russian target, None for other languages or when it is
+    not downloaded (QA and best-of then use Whisper alone)."""
+    from babeldub.qa.metrics import folds_vowels
+
+    if not folds_vowels(settings.get("target_lang")):
+        return None
+    return _optional_dir(settings, "asr2_model", DEFAULT_ASR2_MODEL)
 
 
 def accent_model_dir(settings: dict[str, Any]) -> Path:
@@ -103,6 +114,7 @@ class QcSession:
         self.warnings: list[str] = []
         self.has_mos = False
         self.has_emotion = False
+        self.has_asr2 = False
 
     @classmethod
     def open(
@@ -115,6 +127,7 @@ class QcSession:
         need_mos: bool = False,
         need_emotion: bool = False,
         need_accent: bool = False,
+        need_asr2: bool = False,
         device: str | None = None,
         wait_lock: float = 0.0,
         owner: str = "qa",
@@ -147,6 +160,9 @@ class QcSession:
             req["emotion_model"] = str(emo_dir)
         if need_accent:
             req["accent_model"] = str(accent_model_dir(settings))
+        asr2_dir = asr2_model_dir(settings) if need_asr2 else None
+        if asr2_dir is not None:
+            req["asr2_model"] = str(asr2_dir)
         try:
             reply = client.load(req)
         except BabelDubError as err:
@@ -163,6 +179,7 @@ class QcSession:
         session = cls(client, actual, lock, reply.get("info") or {})
         session.has_mos = mos_dir is not None
         session.has_emotion = emo_dir is not None
+        session.has_asr2 = asr2_dir is not None
         warning = device_warning(wanted, actual)
         if warning:
             session.warnings.append(warning)
@@ -205,6 +222,18 @@ class QcSession:
         return {"text": out, "text_raw": reply.get("text_raw", out) or "", "lang": reply.get("lang"),
                 "lang_prob": reply.get("lang_prob")}
 
+    def asr2(self, key: str, wav: Path) -> str | None:
+        """The second ASR's transcript (GigaAM-v3 CTC), None when the session has none. The first failure
+        (e.g. its packages are missing from an older qc env) turns it off for the session with a warning."""
+        if not self.has_asr2:
+            return None
+        try:
+            return str(self._call({"op": "asr2", "id": key, "wav": str(wav)}).get("text") or "")
+        except QcItemError as exc:
+            self.has_asr2 = False
+            self.warnings.append(f"second ASR (GigaAM) unavailable: {exc}")
+            return None
+
     def asr_words(self, key: str, wav: Path, lang: str | None) -> dict[str, Any]:
         """Transcript with word times: {text, lang, lang_prob, words[{w, start, end, prob}], avg_logprob, no_speech_prob}."""
         return self._call({"op": "asr_words", "id": key, "wav": str(wav), "lang": lang})
@@ -242,7 +271,8 @@ class QcSession:
         if f0_hint:
             req["f0_hint_hz"] = round(float(f0_hint), 1)
         reply = self._call(req)
-        return {k: reply.get(k) for k in ("cer", "asr_text", "sim", "emo_cos", "mos", "prosody", "orig_prosody",
+        return {k: reply.get(k) for k in ("cer", "cer_folded", "asr_text", "asr_text_raw", "asr2_text", "cer2",
+                                          "sim", "emo_cos", "mos", "mos_model", "prosody", "orig_prosody",
                                           "unavailable")}
 
     def spell(self, texts: list[str], lang: str | None) -> list[str]:

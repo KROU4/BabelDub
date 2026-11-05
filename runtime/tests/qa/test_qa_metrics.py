@@ -150,3 +150,16 @@ def test_vowel_folding_keeps_real_distortions() -> None:
     assert cer("Кошмар какой!", "Кук фасут", fold=True) > 0.15
     assert cer("Тише, козёл!", "Тиштас Казел", fold=True) > 0.15
     assert folds_vowels("ru") and folds_vowels("ru-RU") and not folds_vowels("en") and not folds_vowels(None)
+
+
+def test_cer_report_takes_the_lowest_cer_and_flags_disagreement() -> None:
+    from babeldub.qa.qc import cer_report
+
+    rep = cer_report(None, "Посмотрим.", "пасмотрим", "ru", asr2_text="посмотрим")
+    assert rep["cer_raw"] > 0 and rep["cer_folded"] == 0.0 and rep["cer_asr2"] == 0.0 and rep["cer"] == 0.0
+    assert rep["asr_disagree"] is False
+    rep = cer_report(None, "Садись в машину.", "совсем другое", "ru", asr2_text="садись в машину")
+    assert rep["cer"] == 0.0 and rep["asr_disagree"] is True
+    rep = cer_report(None, "Get in.", "get in", "en")
+    assert rep["cer"] == 0.0 and rep["cer_folded"] is None and rep["cer_asr2"] is None and rep["asr_disagree"] is None
+    assert cer_report(None, "Да.", None, "ru")["cer"] is None

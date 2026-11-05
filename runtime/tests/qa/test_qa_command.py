@@ -316,3 +316,46 @@ def test_qa_russian_vowel_reduction_is_not_a_cer_failure(dub, fake_qc, run) -> N
     assert qa[garbled]["reasons"] == ["cer"] and qa[garbled]["cer"] > 0.15
     asr = [r for r in fake_qc.requests if r["op"] == "asr"]
     assert {r["text"] for r in asr} == {"Закрыто. Посмотрим!", "Кошмар какой!"}  # the reference for tail stripping
+
+
+def test_qa_second_asr_lowers_the_cer_and_flags_disagreement(dub, fake_qc, run, home) -> None:
+    from pathlib import Path
+
+    giga = home / "models" / "GigaAM-v3-ctc"
+    giga.mkdir(parents=True)
+    (giga / "pytorch_model.bin").write_bytes(b"x")
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    misheard, both_bad, broken = dub.line("hero", 3.0), dub.line("hero", 3.0), dub.line("hero", 3.0)
+    for lid, whisper, giga_hears in ((misheard, "совсем другое", "садись в машину"),
+                                     (both_bad, "совсем другое", "тоже другое"),
+                                     (broken, "садись в машину", None)):
+        dub.translate(lid, "Садись в машину.")
+        wav = dub.dub(lid, voice="hero", asr=whisper)
+        if giga_hears is not None:
+            fake_qc.texts2[str(Path(wav).resolve()).lower()] = giga_hears
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    assert fake_qc.loads[0]["asr2_model"] == str(giga)
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    row = qa[misheard]
+    assert row["verdict"] == "pass" and row["cer"] == 0.0 and row["cer_asr2"] == 0.0 and row["cer_raw"] > 0.5
+    assert row["asr_disagree"] is True and row["asr2_text"] == "садись в машину"
+    assert qa[both_bad]["reasons"] == ["cer"] and qa[both_bad]["asr_disagree"] is False
+    # GigaAM fails on this line: it is turned off for the rest of the run with a warning, Whisper alone decides
+    assert qa[broken]["cer_asr2"] is None and qa[broken]["verdict"] == "pass"
+    assert out["asr_disagree"] == 1 and out["asr2"] == 2 and any("GigaAM" in w for w in out["warnings"])
+
+
+def test_qa_without_a_russian_target_never_loads_the_second_asr(dub, fake_qc, run, home) -> None:
+    giga = home / "models" / "GigaAM-v3-ctc"
+    giga.mkdir(parents=True)
+    (giga / "pytorch_model.bin").write_bytes(b"x")
+    dub.project.data["target_lang"] = "pl"
+    dub.project.save()
+    lid = dub.line("hero", 3.0)
+    dub.translate(lid, "Wsiadaj.")
+    dub.dub(lid, voice="hero", asr="wsiadaj")
+    dub.save()
+    run(["qa", "--project", str(dub.project.root)])
+    assert "asr2_model" not in fake_qc.loads[0] and not any(r["op"] == "asr2" for r in fake_qc.requests)

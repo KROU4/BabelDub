@@ -1634,8 +1634,8 @@ def _open_scorer(project: Project, wait_lock: float) -> Any:
     from babeldub.qa.qc import QcSession, emotion_model_dir
 
     return QcSession.open(project.root, project.data, need_asr=True, need_sv=True, need_mos=True,
-                          need_emotion=emotion_model_dir(project.data) is not None, wait_lock=wait_lock,
-                          owner="synth:score")
+                          need_emotion=emotion_model_dir(project.data) is not None, need_asr2=True,
+                          wait_lock=wait_lock, owner="synth:score")
 
 
 def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any) -> dict[str, Any]:
@@ -1676,8 +1676,8 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
                 errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
                 continue
             cer_v = sc.get("cer")
-            if sc.get("asr_text") is not None:  # the lowest of the plain and the vowel-folded (ru) CER
-                cer_v = cer_report(session, row.get("text"), sc["asr_text"], lang)["cer"]
+            if sc.get("asr_text") is not None:  # the lowest CER: plain, vowel-folded and the second ASR (ru)
+                cer_v = cer_report(session, row.get("text"), sc["asr_text"], lang, asr2_text=sc.get("asr2_text"))["cer"]
             ranked.append(best_rank.Candidate(
                 seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
                 sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),

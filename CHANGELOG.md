@@ -5,6 +5,10 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+### Added
+
+- **Second Russian ASR: GigaAM-v3 CTC** (`ai-sage/GigaAM-v3`, revision `ctc` pinned to commit `15ef3b5`, MIT, 0.44 GB; catalog `GigaAM-v3-ctc`, installed by default for Russian targets on every tier). The qc env gains `transformers==4.57.1`, `hydra-core==1.3.2`, `omegaconf==2.3.0`, `sentencepiece==0.2.1` (the versions of the model card); the worker op `asr2` (load key `asr2_model`) loads it lazily. For a Russian target QA and `synth score` take the lowest CER of Whisper (plain and vowel-folded) and GigaAM (`cer_asr2`), and QA flags `asr_disagree` when the two ASRs' CERs differ by more than `qa.max_asr_disagreement` (0.15); `qa` reports `asr2` and `asr_disagree` counts. Without the model, or in an older qc env that lacks the packages, QA runs with Whisper alone and a warning.
+
 ### Fixed
 
 - **Robust F0 (two-pass pyin).** The qc worker's `prosody` op searched 60–700 Hz in one pass, so octave jumps gave originals F0 ranges of 26–35.7 semitones, false `flat` flags and inflated dub ranges. It now takes a coarse median first (a pyin pass on 40 ms frames, or the `f0_hint_hz` it is given, such as the character's median F0) and runs pyin within one octave of it (median / 2 … median × 2, clipped to 50–1000 Hz). The reply adds `voiced_s`, `rms_std_db` and the bounds used (`f0_bounds_hz`, `f0_bounds_source`).

@@ -326,15 +326,21 @@ A `synth` reply may carry `hit_token_limit: true` (the output reached `0.97 · m
 QC worker (`workers/qc_worker.py`, env `qc`):
 ```text
 → {"op": "load", "asr_model": "<dir>", "sv_model": "<dir>", "sv_savedir": "<dir>", "mos_model": "<dir>", "emotion_model": "<dir>",
-   "accent_model": "<dir>", "device": "cuda", "compute_type": null}   (every model is optional; asr/sv load at once,
-   mos/emotion/accent/VAD on first use)
-← {"ok": true, "device": "cuda", "asr": true, "sv": false, "mos": true, "emotion": false, "accent": false, "info": {...}}
+   "accent_model": "<dir>", "asr2_model": "<dir>", "device": "cuda", "compute_type": null}   (every model is optional;
+   asr/sv load at once, mos/emotion/accent/asr2/VAD on first use)
+← {"ok": true, "device": "cuda", "asr": true, "sv": false, "mos": true, "emotion": false, "accent": false, "asr2": true, "info": {...}}
 → {"op": "asr", "id": "...", "wav": "...", "lang": "ru", "text"?: "<reference>", "options": {"vad_filter": true}}
                                              ← {"ok": true, "id": "...", "text": "...", "text_raw": "...", "lang": "ru", "dur_s": 2.1}
      (`text` has known Whisper hallucination tails removed — credits and outros such as "Продолжение следует...",
       "Субтитры сделал …", "Спасибо за просмотр", "Thanks for watching", "Subtitles by …", "To be continued",
       "Napisy stworzone przez …", "Untertitel von …": `qc_worker.HALLUCINATION_TAILS` — at the end of the
       transcript, repeatedly, and only when the reference does not contain the phrase; `text_raw` is Whisper's output)
+→ {"op": "asr2", "id", "wav"}                ← {"text": "садись в машину", "model": "gigaam-v3-ctc"}
+     (second ASR for Russian targets: GigaAM-v3 CTC, load key `asr2_model` = the catalog folder `GigaAM-v3-ctc`,
+      `transformers.AutoModel.from_pretrained(dir, trust_remote_code=True, local_files_only=True)` on the first request;
+      the 16 kHz audio goes straight to the model's encoder and greedy CTC decoding (no ffmpeg), in 20 s chunks;
+      lower case, no punctuation. A failed load — e.g. an older qc env without transformers/hydra-core — is
+      remembered and every later request fails fast with the setup hint)
 → {"op": "embed", "id": "...", "wav": "..."}                        ← {"ok": true, "id": "...", "emb": [192 floats], "dur_s": 2.1}
 → {"op": "sim", "id": "...", "wav": "...", "refs": ["..."]}         ← {"ok": true, "id": "...", "sim": 0.71, "sims": [...]}
 → {"op": "vad", "id", "wav", "options"?}     ← {"segments": [[0.08, 0.91], ...], "speech_s": 1.81, "dur_s": 2.35}
@@ -355,7 +361,7 @@ QC worker (`workers/qc_worker.py`, env `qc`):
 → {"op": "spell", "texts": [...], "lang": "ru"}                     ← {"texts": [...]}   (digits spelled out, num2words)
 → {"op": "accent", "texts": [...], "homographs_only": true}         ← {"texts": [...]}   ("+" before the stressed vowel)
 ```
-The worker decodes a file once for consecutive ops on it (soundfile + torchaudio in memory, never PyAV). `score`'s CER uses the normalisation of `qa.metrics.cer` with digits spelled out on both sides; `emo_cos` is the cosine of the emotion embeddings of `wav` and `orig_wav`. `QcSession.open(..., need_mos=, need_emotion=)` passes the optional models only when their folders exist (`qa.qc.mos_model_dir`, `emotion_model_dir`) and exposes `vad`, `asr_words`, `prosody`, `emotion`, `mos`, `score`, `spell` and `accent`. `accent` (`need_accent=True`, workdir `qa.accent_model`, default `BABELDUB_HOME/models/ruaccent`, where RUAccent downloads its dictionaries and models, ~0.5 GB, on first use, with HF offline mode lifted for that load) runs RUAccent (ONNX, CPU) (`turbo3.1` homograph model, dictionary on) and, with `homographs_only`, keeps a mark only on a word RUAccent lists as a stress homograph or that was already marked in the input.
+The worker decodes a file once for consecutive ops on it (soundfile + torchaudio in memory, never PyAV). `score`'s CER uses the normalisation of `qa.metrics.cer` with digits spelled out on both sides; `emo_cos` is the cosine of the emotion embeddings of `wav` and `orig_wav`. `QcSession.open(..., need_mos=, need_emotion=, need_asr2=)` passes the optional models only when their folders exist (`qa.qc.mos_model_dir`, `emotion_model_dir`, `asr2_model_dir`: only for a Russian `target_lang`, folder `qa.asr2_model`, default `GigaAM-v3-ctc`; `QcSession.asr2` turns the second ASR off for the session at its first failure and adds a warning) and exposes `vad`, `asr_words`, `prosody`, `emotion`, `mos`, `score`, `spell` and `accent`. `accent` (`need_accent=True`, workdir `qa.accent_model`, default `BABELDUB_HOME/models/ruaccent`, where RUAccent downloads its dictionaries and models, ~0.5 GB, on first use, with HF offline mode lifted for that load) runs RUAccent (ONNX, CPU) (`turbo3.1` homograph model, dictionary on) and, with `homographs_only`, keeps a mark only on a word RUAccent lists as a stress homograph or that was already marked in the input.
 
 The CLI-side client is `babeldub/workers/client.py`: `WorkerClient(env|python_path, script, timeout, load_timeout, log_path).load()/request()/close()` (timeouts kill the process; after a crash it restarts, repeats `load` and retries the request once; errors `WorkerError`, `WorkerTimeout`, `WorkerCrashed`; a missing env is `EXIT_ENV`). `GpuLock(project/state/locks/gpu.lock, owner, wait_s)` is an exclusive PID lock on the GPU; the lock of a dead process is released, a busy lock is `EXIT_USAGE` with a `--wait-lock` hint. The qc session for `cast`/`qa` is `qa/qc.py:QcSession`.
 

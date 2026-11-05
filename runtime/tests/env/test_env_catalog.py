@@ -75,9 +75,12 @@ def test_auto_models_by_tier_and_language():
     assert ru == [
         "Qwen3-TTS-12Hz-1.7B-Base",
         "faster-whisper-large-v3-turbo",
+        "GigaAM-v3-ctc",  # second Russian ASR
         "spkrec-ecapa-voxceleb",
         "utmos22-strong",
     ]
+    giga = cat.model("GigaAM-v3-ctc")
+    assert giga.repo == "ai-sage/GigaAM-v3" and giga.revision and giga.license == "MIT" and giga.languages == ["ru"]
     assert "emotion2vec_plus_base" not in ru  # FunASR model license: opt-in only
     assert cat.model("emotion2vec_plus_base").opt_in and cat.model("utmos22-strong").url
     en = [m.name for m in auto_models(cat, ["qwen3tts", "qc"], "8gb", "en")]
@@ -85,7 +88,7 @@ def test_auto_models_by_tier_and_language():
     nolang = [m.name for m in auto_models(cat, ["qwen3tts"], "8gb", None)]
     assert nolang == ["Qwen3-TTS-12Hz-1.7B-Base"]
     cpu = [m.name for m in auto_models(cat, ["qwen3tts", "qc"], "cpu", "ru")]
-    assert cpu == ["Qwen3-TTS-12Hz-0.6B-Base", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb"]
+    assert cpu == ["Qwen3-TTS-12Hz-0.6B-Base", "faster-whisper-large-v3-turbo", "GigaAM-v3-ctc", "spkrec-ecapa-voxceleb"]
     pl = [m.name for m in auto_models(cat, ["chatterbox", "qc"], "12gb", "pl")]
     assert set(pl) == {"chatterbox-multilingual", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb",
                        "utmos22-strong"}

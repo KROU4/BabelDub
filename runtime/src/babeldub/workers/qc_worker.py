@@ -1,4 +1,4 @@
-"""BabelDub QC worker: ASR (faster-whisper), VAD (Silero), prosody (librosa pyin), speaker
+"""BabelDub QC worker: ASR (faster-whisper; GigaAM-v3 CTC for Russian), VAD (Silero), prosody (librosa pyin), speaker
 embeddings (SpeechBrain ECAPA), naturalness MOS (UTMOS22 via SpeechMOS) and, opt-in, emotion
 (emotion2vec+ via funasr) and Russian stress marks for homographs (RUAccent, opt-in via tts.stress).
 
@@ -13,6 +13,8 @@ answer per command on stdout; all logs go to stderr.
   {"op": "asr", "id": ..., "wav": ..., "lang": "ru", "text"?: reference}
       -> {"text", "text_raw", "lang", "lang_prob", "dur_s"}: known hallucination tails ("продолжение следует...")
          that the reference does not contain are stripped from `text`; `text_raw` is Whisper's own output
+  {"op": "asr2", "id", "wav"}                             -> {"text", "model"}: GigaAM-v3 CTC (Russian second ASR;
+                                                              load key asr2_model, loads on its first request)
   {"op": "asr_words", "id", "wav", "lang"?}               -> {"text", "lang", "words": [{w, start, end, prob}],
                                                               "avg_logprob", "no_speech_prob", "dur_s"}
   {"op": "vad", "id", "wav", "options"?}                  -> {"segments": [[start_s, end_s]], "speech_s", "dur_s"}
@@ -25,8 +27,8 @@ answer per command on stdout; all logs go to stderr.
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
   {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
    "f0_hint_hz"?}
-      -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "sim", "emo_cos", "mos", "prosody",
-          "orig_prosody", "unavailable": [...]}
+      -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "asr2_text", "cer2" (ru with asr2), "sim",
+          "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
   {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
   {"op": "accent", "texts": [...], "homographs_only": true}
       -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
@@ -71,6 +73,8 @@ _STATE: dict[str, Any] = {
     "emotion_dir": None,
     "accent": None,
     "accent_dir": None,
+    "asr2": None,  # GigaAM-v3 CTC (Russian second ASR), loaded on its first request
+    "asr2_dir": None,
     "audio_cache": None,  # (key, 16 kHz mono numpy array): the ops of one line decode it once
 }
 
@@ -231,7 +235,7 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     t0 = time.time()
     device = _resolve_device(req.get("device"))
     if _STATE["device"] and _STATE["device"] != device:
-        _STATE.update(asr=None, asr_dir=None, sv=None, sv_dir=None, emb_cache={}, mos=None, emotion=None)
+        _STATE.update(asr=None, asr_dir=None, sv=None, sv_dir=None, emb_cache={}, mos=None, emotion=None, asr2=None)
     _STATE["device"] = device
     info: dict[str, Any] = {}
     sv_dir = req.get("sv_model")
@@ -241,14 +245,14 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     if asr_dir and (_STATE["asr"] is None or _STATE["asr_dir"] != asr_dir):
         info.update(_load_asr(asr_dir, device, req.get("compute_type")))
     # heavier optional models load on their first request
-    for key in ("mos", "emotion", "accent"):
+    for key in ("mos", "emotion", "accent", "asr2"):
         folder = req.get(f"{key}_model")
         if folder and folder != _STATE[f"{key}_dir"]:
             _STATE.update({key: None, f"{key}_dir": folder})
     info["load_s"] = round(time.time() - t0, 2)
     return {"device": device, "asr": _STATE["asr"] is not None, "sv": _STATE["sv"] is not None,
             "mos": _STATE["mos_dir"] is not None, "emotion": _STATE["emotion_dir"] is not None,
-            "accent": _STATE["accent_dir"] is not None, "info": info}
+            "accent": _STATE["accent_dir"] is not None, "asr2": _STATE["asr2_dir"] is not None, "info": info}
 
 
 def _torch_device() -> str:
@@ -481,6 +485,61 @@ def op_asr_words(req: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+ASR2_MODEL = "gigaam-v3-ctc"
+ASR2_CHUNK_S = 20.0  # GigaAM transcribes at most 25 s per call: longer clips go in chunks
+
+
+def _get_asr2() -> Any:
+    """GigaAM-v3 CTC through transformers (trust_remote_code: the modeling file of the pinned revision that
+    `babeldub setup` downloaded). A failed load is remembered, so every later request fails fast."""
+    if _STATE["asr2"] is None:
+        folder = _STATE["asr2_dir"]
+        if not folder:
+            raise RuntimeError("second ASR not configured: send {'op': 'load', 'asr2_model': dir} first")
+        if _STATE.get("asr2_error"):
+            raise RuntimeError(_STATE["asr2_error"])
+        try:
+            from transformers import AutoModel
+
+            model = AutoModel.from_pretrained(folder, trust_remote_code=True, local_files_only=True)
+        except ImportError as exc:
+            _STATE["asr2_error"] = (f"GigaAM needs transformers, hydra-core, omegaconf and sentencepiece in the qc "
+                                    f"env ({exc}): babeldub setup --engines qc")
+            raise RuntimeError(_STATE["asr2_error"]) from exc
+        model.eval().to(_torch_device())
+        _STATE["asr2"] = model
+        log(f"GigaAM loaded from {folder}")
+    return _STATE["asr2"]
+
+
+def _asr2_text(path: str) -> str:
+    import numpy as np
+    import torch
+
+    inner = _get_asr2().model  # GigaAMASR: preprocessor + encoder + CTC head + greedy decoding
+    device = next(inner.parameters()).device
+    audio = _audio_16k(path)
+    step = int(ASR2_CHUNK_S * SV_SR)
+    parts: list[str] = []
+    for start in range(0, audio.size, step):
+        chunk = audio[start : start + step]
+        if start and chunk.size < SV_SR // 10:
+            break  # a few ms of tail
+        if chunk.size < MIN_SV_SAMPLES:
+            chunk = np.pad(chunk, (0, MIN_SV_SAMPLES - chunk.size))
+        wav = torch.from_numpy(np.ascontiguousarray(chunk, dtype=np.float32)).to(device).unsqueeze(0)
+        length = torch.full([1], wav.shape[-1], device=device)
+        with torch.inference_mode():
+            encoded, enc_len = inner.forward(wav, length)
+            parts.append(str(inner.decoding.decode(inner.head, encoded, enc_len)[0]).strip())
+    return " ".join(p for p in parts if p)
+
+
+def op_asr2(req: dict[str, Any]) -> dict[str, Any]:
+    """Second ASR (GigaAM-v3 CTC, Russian): lower-case text without punctuation."""
+    return {"id": req.get("id"), "text": _asr2_text(req["wav"]), "model": ASR2_MODEL}
+
+
 def op_vad(req: dict[str, Any]) -> dict[str, Any]:
     """Silero VAD (bundled with faster-whisper): speech segments in seconds."""
     from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -684,6 +743,16 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             out["cer"] = round(_cer(ref, hyp), 4)
             if _lang(req) == "ru":
                 out["cer_folded"] = round(_cer(ref, hyp, fold=True), 4)
+        if _STATE["asr2_dir"] and _lang(req) == "ru":
+            try:
+                out["asr2_text"] = _asr2_text(req["wav"])
+            except Exception as exc:  # the second ASR is optional: report it, keep the other metrics
+                log(f"asr2 failed: {exc}")
+                unavailable.append("asr2")
+                out["asr2_error"] = f"{type(exc).__name__}: {exc}"
+            else:
+                ref2, hyp2 = _spell(req.get("text"), req.get("lang")), _spell(out["asr2_text"], req.get("lang"))
+                out["cer2"] = round(min(_cer(ref2, hyp2), _cer(ref2, hyp2, fold=True)), 4)
     if "sim" in want:
         refs = req.get("refs") or []
         if _STATE["sv"] is None or not refs:
@@ -773,6 +842,7 @@ OPS = {
     "prosody": op_prosody,
     "emotion": op_emotion,
     "mos": op_mos,
+    "asr2": op_asr2,
     "embed": op_embed,
     "sim": op_sim,
     "score": op_score,
