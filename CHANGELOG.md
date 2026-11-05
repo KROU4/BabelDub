@@ -5,6 +5,10 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+### Fixed
+
+- **RVC no longer moves every line to 155 Hz.** `vc` passed Applio's `--proposed-pitch`, which shifts each line's median F0 to a fixed 155 Hz target (up to ±12 semitones): on the Low-Budget Repairs test set the median F0 after `vc` was 4.6 semitones off the original on average (20 of 37 lines by more than 3), female characters went down to −12 semitones and male cutscene characters up by about +4. `vc` now keeps the dub's own F0; the conversion key changed, so `vc` converts existing takes again.
+
 ## [0.3.0] - 2026-10-26
 
 Delivery tags: VoxCPM2 voices every line from the character's long original reference plus a short instruction of how this particular line is delivered, measured on the original and corrected by the translator agent. Chosen in blind listening on the 38-line test set of Low-Budget Repairs over v0.2's target-language prompt bank, although its metrics were slightly lower than the same chain without tags (CER with numbers spelled out 0.030 vs 0.020, UTMOS 2.73 vs 2.81, single raw takes).

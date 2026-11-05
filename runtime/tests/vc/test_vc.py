@@ -16,7 +16,7 @@ from babeldub.commands import vc as vc_cmd
 from babeldub.commands import voice
 from babeldub.core import layout
 from babeldub.core.ids import uid as make_uid
-from babeldub.core.jsonl import latest_by, read_json, read_jsonl, write_jsonl
+from babeldub.core.jsonl import append_jsonl, latest_by, read_json, read_jsonl, write_jsonl
 from babeldub.core.output import EXIT_OK, EXIT_USAGE, BabelDubError, emit_error
 from babeldub.core.project import Project
 from babeldub.pack import planner
@@ -153,7 +153,7 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     code, out = run(capsys, root, "vc")
     assert code == EXIT_OK and out["converted"] == 4 and out["passthrough"] == {"Maciek": 2}, out
     assert "vc train" in out["notes"][0] and out["next"] == "babeldub qa"
-    assert "--proposed-pitch" in (applio / "calls.log").read_text(encoding="utf-8")
+    assert "--proposed-pitch" not in (applio / "calls.log").read_text(encoding="utf-8")  # keeps the dub's F0
     lines = latest_by(read_jsonl(root / layout.LINES))
     post = latest_by(read_jsonl(root / layout.POST))
     for lid, row in post.items():
@@ -177,6 +177,12 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     assert out["converted"] == 4  # other settings: converted again from the pre-conversion take
     rows = latest_by(read_jsonl(root / layout.POST))
     assert all(r["pre_vc_wav"].startswith(layout.POST_DIR) for r in rows.values() if r.get("vc"))
+
+    # a take converted with an older key (e.g. with --proposed-pitch) is converted again from its pre-vc take
+    stale = [{**r, "vc": {**r["vc"], "model_key": "0123456789ab"}} for r in rows.values() if r.get("vc")]
+    append_jsonl(root / layout.POST, stale)
+    code, out = run(capsys, root, "vc", "--index-rate", "0.7")
+    assert out["converted"] == 4 and out["up_to_date"] == 0, out
 
 
 def test_train_needs_a_gpu(project: Project, applio: Path, monkeypatch: pytest.MonkeyPatch,
