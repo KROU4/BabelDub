@@ -329,7 +329,12 @@ QC worker (`workers/qc_worker.py`, env `qc`):
    "accent_model": "<dir>", "device": "cuda", "compute_type": null}   (every model is optional; asr/sv load at once,
    mos/emotion/accent/VAD on first use)
 ← {"ok": true, "device": "cuda", "asr": true, "sv": false, "mos": true, "emotion": false, "accent": false, "info": {...}}
-→ {"op": "asr", "id": "...", "wav": "...", "lang": "ru", "options": {"vad_filter": true}}   ← {"ok": true, "id": "...", "text": "...", "lang": "ru", "dur_s": 2.1}
+→ {"op": "asr", "id": "...", "wav": "...", "lang": "ru", "text"?: "<reference>", "options": {"vad_filter": true}}
+                                             ← {"ok": true, "id": "...", "text": "...", "text_raw": "...", "lang": "ru", "dur_s": 2.1}
+     (`text` has known Whisper hallucination tails removed — credits and outros such as "Продолжение следует...",
+      "Субтитры сделал …", "Спасибо за просмотр", "Thanks for watching", "Subtitles by …", "To be continued",
+      "Napisy stworzone przez …", "Untertitel von …": `qc_worker.HALLUCINATION_TAILS` — at the end of the
+      transcript, repeatedly, and only when the reference does not contain the phrase; `text_raw` is Whisper's output)
 → {"op": "embed", "id": "...", "wav": "..."}                        ← {"ok": true, "id": "...", "emb": [192 floats], "dur_s": 2.1}
 → {"op": "sim", "id": "...", "wav": "...", "refs": ["..."]}         ← {"ok": true, "id": "...", "sim": 0.71, "sims": [...]}
 → {"op": "vad", "id", "wav", "options"?}     ← {"segments": [[0.08, 0.91], ...], "speech_s": 1.81, "dur_s": 2.35}

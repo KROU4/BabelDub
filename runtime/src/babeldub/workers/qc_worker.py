@@ -10,7 +10,9 @@ answer per command on stdout; all logs go to stderr.
    "device": "auto|cuda|cpu", "compute_type": null, "sv_savedir": dir}
       asr/sv load at once; mos/emotion/vad load on their first request (a vad+asr run never
       loads the others)
-  {"op": "asr", "id": ..., "wav": ..., "lang": "ru"}       -> {"text", "lang", "lang_prob", "dur_s"}
+  {"op": "asr", "id": ..., "wav": ..., "lang": "ru", "text"?: reference}
+      -> {"text", "text_raw", "lang", "lang_prob", "dur_s"}: known hallucination tails ("продолжение следует...")
+         that the reference does not contain are stripped from `text`; `text_raw` is Whisper's own output
   {"op": "asr_words", "id", "wav", "lang"?}               -> {"text", "lang", "words": [{w, start, end, prob}],
                                                               "avg_logprob", "no_speech_prob", "dur_s"}
   {"op": "vad", "id", "wav", "options"?}                  -> {"segments": [[start_s, end_s]], "speech_s", "dur_s"}
@@ -333,6 +335,63 @@ def op_sim(req: dict[str, Any]) -> dict[str, Any]:
     return {"id": req.get("id"), "sim": round(float(np.mean(sims)), 4), "sims": sims}
 
 
+# Credits and outros Whisper invents on silent or noisy tails (learnt from subtitled video). Each entry is
+# (phrase regex, credit tail): a credit tail lets up to 4 more words (a name) follow the phrase.
+HALLUCINATION_TAILS: tuple[tuple[str, bool], ...] = (
+    ("продолжение следует", False),
+    ("субтитры (?:сделал|сделала|создавал|создавала|подготовил|подготовила|делал|делала|by)", True),
+    ("редактор субтитров", True),
+    ("корректор субтитров", True),
+    ("спасибо за просмотр", False),
+    ("подписывайтесь на (?:наш )?канал", False),
+    ("дякую за перегляд", False),
+    ("субтитри (?:зробив|створив|by)", True),
+    ("thanks for watching", False),
+    ("thank you for watching", False),
+    ("subtitles by", True),
+    ("to be continued", False),
+    ("please subscribe", False),
+    ("ciąg dalszy nastąpi", False),
+    ("dzięki za oglądanie", False),
+    ("napisy (?:wykonane przez|stworzone przez|by)", True),
+    ("untertitel (?:von|im auftrag des|der amara org community)", True),
+    ("vielen dank fürs zuschauen", False),
+    ("fortsetzung folgt", False),
+    ("sous titres réalisés par", True),
+    ("merci d avoir regardé", False),
+    ("subtítulos (?:realizados )?por", True),
+    ("gracias por ver", False),
+    ("continuará", False),
+)
+_GAP = r"[\s\W_]+"  # what may stand between the words of a phrase in raw ASR text
+
+
+def _tail_regex(phrase: str, credit: bool) -> re.Pattern[str]:
+    body = phrase.replace(" ", _GAP)
+    names = r"(?:[\s\W_]+[\w.]+){0,4}" if credit else ""
+    return re.compile(rf"(?<!\w)(?:{body}){names}[\s\W_]*$", re.IGNORECASE)
+
+
+# (the phrase in the normalised reference, where apostrophes are gone: "d'avoir" -> "davoir"; the tail regex)
+_TAIL_RES = [(re.compile(phrase.replace(" ", r"\s*"), re.IGNORECASE), _tail_regex(phrase, credit))
+             for phrase, credit in HALLUCINATION_TAILS]
+
+
+def strip_hallucinations(text: str, reference: str | None) -> str:
+    """Drop known Whisper hallucination phrases at the end of `text` unless the reference (the dub text)
+    contains them; repeated until no such tail is left."""
+    ref = _norm_text(reference)
+    changed = True
+    while changed and text:
+        changed = False
+        for in_ref, tail in _TAIL_RES:
+            match = tail.search(text)
+            if match and not in_ref.search(ref):
+                text = text[: match.start()].rstrip(" \t,;:-—–")
+                changed = True
+    return text
+
+
 def op_asr(req: dict[str, Any]) -> dict[str, Any]:
     model = _STATE["asr"]
     if model is None:
@@ -363,7 +422,8 @@ def op_asr(req: dict[str, Any]) -> dict[str, Any]:
         text, info = transcribe(False)
     return {
         "id": req.get("id"),
-        "text": text,
+        "text": strip_hallucinations(text, req.get("text")),
+        "text_raw": text,
         "lang": info.language,
         "lang_prob": round(float(info.language_probability or 0.0), 4),
         "dur_s": round(float(info.duration or 0.0), 3),
@@ -610,8 +670,8 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
         if _STATE["asr"] is None:
             unavailable.append("cer")
         else:
-            asr = op_asr({"wav": req["wav"], "lang": req.get("lang")})
-            out["asr_text"] = asr["text"]
+            asr = op_asr({"wav": req["wav"], "lang": req.get("lang"), "text": req.get("text")})
+            out["asr_text"], out["asr_text_raw"] = asr["text"], asr["text_raw"]
             out["cer"] = round(_cer(_spell(req.get("text"), req.get("lang")), _spell(asr["text"], req.get("lang"))), 4)
     if "sim" in want:
         refs = req.get("refs") or []

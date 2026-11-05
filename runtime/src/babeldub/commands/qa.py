@@ -303,6 +303,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 except RuntimeError as exc:
                     errors.append(f"{lid}: unreadable post file ({exc})")
             asr_text: str | None = None
+            asr_raw: str | None = None
             cer_v: float | None = None
             sims: dict[str, float] = {}
             synth: np.ndarray | None = None
@@ -311,7 +312,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
             if audible:
                 assert wav is not None
                 try:
-                    asr_text = session.asr(lid, wav, lang)["text"]
+                    heard = session.asr(lid, wav, lang, text=dub_text)
+                    asr_text, asr_raw = heard["text"], heard["text_raw"]
                     synth = session.embed(f"{lid}#a{attempt}", wav)
                 except QcItemError as exc:
                     qc_error = True
@@ -392,6 +394,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "src_key": post.get("src_key"),
                     "post_ts": post.get("ts"),
                     "asr_text": asr_text,
+                    "asr_text_raw": asr_raw,
                     "cer": None if cer_v is None else round(cer_v, 4),
                     "cer_skipped": "nonverbal" if nonverbal else None,
                     "sim": None if sim is None else round(sim, 4),

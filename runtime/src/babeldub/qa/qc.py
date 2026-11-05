@@ -194,9 +194,16 @@ class QcSession:
         reply = self._call({"op": "embed", "id": key, "wav": str(wav)})
         return np.asarray(reply["emb"], dtype=np.float32)
 
-    def asr(self, key: str, wav: Path, lang: str | None) -> dict[str, Any]:
-        reply = self._call({"op": "asr", "id": key, "wav": str(wav), "lang": lang})
-        return {"text": reply.get("text") or "", "lang": reply.get("lang"), "lang_prob": reply.get("lang_prob")}
+    def asr(self, key: str, wav: Path, lang: str | None, text: str | None = None) -> dict[str, Any]:
+        """{text, text_raw, lang, lang_prob}: with the reference `text`, known Whisper hallucination tails it
+        does not contain are stripped from `text` (`text_raw` keeps them)."""
+        req: dict[str, Any] = {"op": "asr", "id": key, "wav": str(wav), "lang": lang}
+        if text:
+            req["text"] = text
+        reply = self._call(req)
+        out = reply.get("text") or ""
+        return {"text": out, "text_raw": reply.get("text_raw", out) or "", "lang": reply.get("lang"),
+                "lang_prob": reply.get("lang_prob")}
 
     def asr_words(self, key: str, wav: Path, lang: str | None) -> dict[str, Any]:
         """Transcript with word times: {text, lang, lang_prob, words[{w, start, end, prob}], avg_logprob, no_speech_prob}."""
