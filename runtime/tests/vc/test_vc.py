@@ -147,7 +147,8 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     code, out = run(capsys, root, "synth")
     assert code == EXIT_OK, out
     code, out = run(capsys, root, "post")
-    assert code == EXIT_OK, out
+    assert code == EXIT_OK and out["match"]["mode"] == "eq" and out["match"]["eq"] == 6, out  # new projects: eq
+    fitted = latest_by(read_jsonl(root / layout.POST))
     code, out = run(capsys, root, "vc", "--dry-run")
     assert out["would_convert"] == {"Zbyszek": 4} and out["passthrough"] == {"Maciek": 2}, out
     code, out = run(capsys, root, "vc")
@@ -162,7 +163,11 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
             assert "vc" not in row and row["wav"].startswith(layout.POST_DIR)
             continue
         assert row["stage"] == "vc" and row["wav"].startswith(layout.VC_AUDIO_DIR) and row["vc"]["char_id"] == "Zbyszek"
-        assert row["pre_vc_wav"].startswith(layout.POST_DIR) and row["vc"]["index_rate"] == 0.5
+        # RVC converts the fitted take before post's channel match, then the channel is matched again
+        assert row["pre_vc_wav"] == fitted[lid]["pre_match_wav"] and row["pre_vc_wav"].startswith(layout.POST_PRE_MATCH_DIR)
+        assert row["match"]["applied"] and row["pre_match_wav"].startswith(layout.VC_PRE_MATCH_DIR)
+        assert row["vc"]["index_rate"] == 0.5
+        assert probe(root / row["pre_match_wav"])["frames"] == orig["frames"]
         info = probe(root / row["wav"])
         assert (info["sr"], info["frames"]) == (44100, orig["frames"])  # exact length after the 40 kHz conversion
         uid = lines[lid]["uid"]
@@ -176,13 +181,24 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     code, out = run(capsys, root, "vc", "--index-rate", "0.7")
     assert out["converted"] == 4  # other settings: converted again from the pre-conversion take
     rows = latest_by(read_jsonl(root / layout.POST))
-    assert all(r["pre_vc_wav"].startswith(layout.POST_DIR) for r in rows.values() if r.get("vc"))
+    assert all(r["pre_vc_wav"].startswith(layout.POST_PRE_MATCH_DIR) for r in rows.values() if r.get("vc"))
 
     # a take converted with an older key (e.g. with --proposed-pitch) is converted again from its pre-vc take
     stale = [{**r, "vc": {**r["vc"], "model_key": "0123456789ab"}} for r in rows.values() if r.get("vc")]
     append_jsonl(root / layout.POST, stale)
     code, out = run(capsys, root, "vc", "--index-rate", "0.7")
     assert out["converted"] == 4 and out["up_to_date"] == 0, out
+
+    # another post.match: post fits again, vc converts again, without a channel match now
+    project.data["post"]["match"] = "off"
+    project.save()
+    code, out = run(capsys, root, "post")
+    assert out["done"] == 6 and "match" not in out, out
+    code, out = run(capsys, root, "vc", "--index-rate", "0.7")
+    assert out["converted"] == 4, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert all("match" not in r and "pre_match_wav" not in r for r in rows.values())
+    assert all(r["pre_vc_wav"].startswith(layout.POST_DIR) for r in rows.values() if r.get("vc"))
 
 
 def test_train_needs_a_gpu(project: Project, applio: Path, monkeypatch: pytest.MonkeyPatch,

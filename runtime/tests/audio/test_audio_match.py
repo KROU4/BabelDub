@@ -109,6 +109,10 @@ def test_short_line_pools_the_characters_originals_and_off_or_silence_do_nothing
     res = match.match_channel(dub, SR, short, SR, "eq", extra=others)
     assert res.applied and res.info["ref"] == "character"
     assert match.match_channel(dub, SR, short, SR, "eq").info["ref"] == "line"
+    # a blip of an original: no bandwidth/radio check of its own, the EQ target is the character's originals
+    blip = match.match_channel(dub, SR, channel(voice(0.1, seed=5), TILT), SR, "eq", extra=lambda: others)
+    assert blip.applied and blip.info["ref"] == "character" and blip.info["cutoff_hz"] is None
+    assert not match.match_channel(dub, SR, channel(voice(0.1, seed=5), TILT), SR, "eq").applied
     off = match.match_channel(dub, SR, short, SR, "off")
     assert not off.applied and off.audio is dub
     silent = match.match_channel(dub, SR, np.zeros(SR, np.float32), SR, "eq")

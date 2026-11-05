@@ -22,7 +22,7 @@ The caller re-matches the loudness afterwards.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -164,8 +164,9 @@ def detect_cutoff(dub: Profile, orig: Profile) -> float | None:
     centers, d_dub = _fine_bands(dub, top)
     _, d_orig = _fine_bands(orig, top)
     diff = d_orig - d_dub
-    for i in np.flatnonzero(centers >= CUTOFF_MIN_HZ):
-        rest = diff[i:]
+    has = d_dub > EMPTY_DB  # only where the dub has something to cut (a 24 kHz TTS has nothing above 12 kHz)
+    for i in np.flatnonzero((centers >= CUTOFF_MIN_HZ) & has):
+        rest = diff[i:][has[i:]]
         if rest.size >= 2 and diff[i] <= -CUTOFF_DROP_DB and np.percentile(rest, 80) <= -CUTOFF_DROP_DB:
             return float(_band_edges(centers[i], 12.0)[0])
     return None
@@ -260,32 +261,36 @@ def saturate(audio: np.ndarray, drive: float = RADIO_DRIVE) -> np.ndarray:
 
 
 def match_channel(
-    dub: np.ndarray, sr: int, orig: np.ndarray, orig_sr: int, mode: str, extra: Sequence[Profile] = (),
+    dub: np.ndarray, sr: int, orig: np.ndarray, orig_sr: int, mode: str,
+    extra: Sequence[Profile] | Callable[[], Sequence[Profile]] = (),
 ) -> MatchResult:
     """Match `dub` (at `sr`, any channels) to the channel of `orig` (see the module docstring). `extra`: profiles
-    of the character's other originals for a short line's EQ target. `info`: {mode, applied, ref, eq_db, cutoff_hz,
-    radio, ltas_db: {before, after}} (or `reason` when nothing was applied)."""
+    of the character's other originals for a short line's EQ target (or a function returning them, called only
+    for a short line). `info`: {mode, applied, ref, eq_db, cutoff_hz, radio, radio_chain, low_hz,
+    ltas_db: {before, after}} (or `reason` when nothing was applied)."""
     if mode not in MODES:
         raise ValueError(f"match mode must be one of {MODES}")
     info: dict[str, Any] = {"mode": mode, "applied": False}
     if mode == "off":
         return MatchResult(dub, False, info)
     line, dub_p = profile(orig, orig_sr), profile(dub, sr)
-    if line.speech_s < MIN_SPEECH_S or dub_p.speech_s < MIN_SPEECH_S:
-        info["reason"] = "too little speech to measure"
-        return MatchResult(dub, False, info)
+    measured = line.speech_s >= MIN_SPEECH_S  # the line itself is long enough for its bandwidth and radio check
     target, ref = line, "line"
-    if line.speech_s < MIN_LINE_SPEECH_S and extra:
-        pool, total = [line], line.speech_s
-        for p in extra:
+    others = (extra() if callable(extra) else extra) if line.speech_s < MIN_LINE_SPEECH_S else ()
+    if others:
+        pool, total = ([line], line.speech_s) if measured else ([], 0.0)
+        for p in others:
             if total >= POOL_SPEECH_S:
                 break
             if p.speech_s >= MIN_SPEECH_S:
                 pool.append(p)
                 total += p.speech_s
-        if len(pool) > 1:
+        if len(pool) > int(measured):
             target, ref = pooled(pool), "character"
-    cutoff = detect_cutoff(dub_p, line)
+    if dub_p.speech_s < MIN_SPEECH_S or (not measured and ref == "line"):
+        info["reason"] = "too little speech to measure"
+        return MatchResult(dub, False, info)
+    cutoff = detect_cutoff(dub_p, line) if measured else None
     low_edge = detect_radio(dub_p, line, cutoff)
     radio = low_edge is not None
     chain = radio and mode == "full"

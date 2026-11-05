@@ -34,10 +34,12 @@ SYNTH_RESULTS = "synth/results.jsonl"
 SYNTH_DIR = "synth/raw"
 POST = "post/post.jsonl"
 POST_DIR = "post/audio"
+POST_PRE_MATCH_DIR = "post/pre_match"  # post.match: the fitted take before the channel match (QA's voice checks)
 SYNTH_PROMPTS_DIR = "synth/prompts"  # bootstrap: long timbre references and target-language prompts per character
 
 VC_DIR = "vc"  # vc/<char_id>/model.pth|model.index|model.json, vc/<char_id>/dataset/
 VC_AUDIO_DIR = "vc/audio"  # converted lines; vc appends their rows to post/post.jsonl
+VC_PRE_MATCH_DIR = "vc/pre_match"  # post.match: the converted take before the channel match
 VC_MODEL_JSON = "model.json"
 
 QA = "qa/qa.jsonl"
