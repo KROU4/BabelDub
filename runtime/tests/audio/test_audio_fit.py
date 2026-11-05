@@ -212,14 +212,87 @@ def test_fit_segments_fixed_length_uses_analysis_segments_and_merges() -> None:
     # given segments win over the energy VAD: a single segment over the whole speech
     res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 3.5]])
     assert len(res.onset_deltas) == 1 and res.lead_s == pytest.approx(0.2, abs=0.021)
-    # an overrunning chunk is capped and pushes the next one later; speech is never cut
+    # an overrunning chunk is capped, then starts earlier in the silence before it: the next one stays on time
+    # (the second segment carries the 30 ms lead-in of a Silero segment, like the dub chunk's measured onset)
     dub = words(sr, [("w", 1.2), ("p", 0.3), ("w", 0.8)])
-    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 1.0], [1.1, 1.9]])
-    assert res.chunk_tempos == [pytest.approx(1.15), 1.0] and res.onset_deltas[0] == pytest.approx(0.0, abs=0.021)
-    assert res.onset_deltas[1] == pytest.approx(1.2 / 1.15 - 0.9, abs=0.03) and res.ratio > 1.0 and res.exact
-    # the overrun shows in the offsets: the first chunk ends at its segment, the pushed one late
-    assert res.offset_deltas[0] == pytest.approx(1.2 / 1.15 - 0.8, abs=0.03)
-    assert res.offset_deltas[1] == pytest.approx(0.2 + 1.2 / 1.15 + 0.8 - 1.9, abs=0.03) and res.offset_deltas[1] > 0.08
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 1.0], [1.07, 1.9]])
+    assert res.chunk_tempos == [pytest.approx(1.15), 1.0] and res.exact
+    assert res.onset_deltas[0] == pytest.approx(1.07 - 1.2 / 1.15 - 0.2, abs=0.005)  # 0.17 s early
+    assert res.onset_deltas[1] == pytest.approx(0.0, abs=0.005)
+    assert res.offset_deltas[0] == pytest.approx(0.07, abs=0.005)  # it ends in the gap, at the next onset
+    # more than the silence before it can give: the rest pushes the next one later (last resort); never cut
+    dub = words(sr, [("w", 1.35), ("p", 0.3), ("w", 0.8)])
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=[[0.2, 1.0], [1.07, 1.9]])
+    assert res.onset_deltas[0] == pytest.approx(-0.2, abs=0.005)  # the file starts there
+    assert res.onset_deltas[1] == pytest.approx(1.35 / 1.15 - 1.07, abs=0.01) and res.ratio > 1.0
+
+
+def test_refine_onsets_finds_the_first_sample_and_keeps_the_silero_pad() -> None:
+    sr = 16000
+    data = words(sr, [("p", 0.31), ("w", 0.5), ("p", 0.15), ("w", 0.4)])
+    chunks = fit.speech_chunks(data, sr)
+    assert chunks[0][0] / sr == pytest.approx(0.30, abs=0.001)  # frame-quantised
+    refined = fit.refine_onsets(data, sr, chunks)
+    assert refined[0][0] / sr == pytest.approx(0.31 - fit.ONSET_PAD_S, abs=0.002)
+    assert refined[1][0] / sr == pytest.approx(0.96 - fit.ONSET_PAD_S, abs=0.002)
+    assert [e for _, e in refined] == [e for _, e in chunks]  # ends are kept
+    # the pad never reaches back into the previous chunk
+    tight = fit.refine_onsets(data, sr, chunks, pad_s=0.5)
+    assert tight[1][0] == chunks[0][1] and tight[0][0] == 0
+
+
+def silero_cutscene(sr: int, speech: list[tuple[float, float]], total_s: float) -> tuple[np.ndarray, list[list[float]]]:
+    """An original with speech at `speech` and the analysis segments Silero would give (30 ms pad on both sides)."""
+    out = np.zeros(int(total_s * sr), np.float32)
+    for s, e in speech:
+        part = tone(e - s, sr)
+        out[int(s * sr) : int(s * sr) + len(part)] = part
+    pad = fit.ONSET_PAD_S
+    return out[:, None], [[round(s - pad, 3), round(e + pad, 3)] for s, e in speech]
+
+
+def placed_onsets(res: fit.FitResult) -> list[float]:
+    mono = res.audio[:, 0]
+    return [s / res.sr for s, _ in fit.refine_onsets(mono, res.sr, fit.speech_chunks(mono, res.sr, 0.02), pad_s=0.0)]
+
+
+def test_fit_segments_overrun_no_longer_pushes_the_next_onset() -> None:
+    sr = 24000
+    orig, segs = silero_cutscene(sr, [(0.33, 1.27), (1.43, 2.17)], 2.6)  # segments 0.30-1.30, 1.40-2.20
+    # the first dub phrase is far too long: even at post.tempo_max it runs 0.12 s past the next onset; the
+    # older fit started the second phrase that much late, now the first one starts earlier in its silence
+    dub = words(sr, [("p", 0.2), ("w", 1.4), ("p", 0.5), ("w", 0.7), ("p", 0.1)])
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=segs)
+    assert res.chunk_tempos[0] == pytest.approx(1.15) and res.exact and res.fits
+    assert res.onset_deltas[1] == pytest.approx(0.0, abs=0.01)
+    assert placed_onsets(res)[1] == pytest.approx(1.43, abs=0.01)  # the speech itself starts on time
+    assert -fit.EARLY_MAX_S <= res.onset_deltas[0] < -0.1
+    # an overrun within post.tolerance: the chunk takes the time from itself (a small speed-up), not the next
+    orig, segs = silero_cutscene(sr, [(0.33, 2.30), (2.39, 3.17)], 3.6)  # segments 0.30-2.33, 2.36-3.20
+    dub = words(sr, [("p", 0.1), ("w", 2.05), ("p", 0.3), ("w", 0.7), ("p", 0.1)])
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True, orig_segments=segs)
+    assert res.onset_deltas == [pytest.approx(0.0, abs=0.005), pytest.approx(0.0, abs=0.005)]
+    assert 1.0 < res.chunk_tempos[0] < 1.03 and res.offset_deltas[0] == pytest.approx(0.03, abs=0.005)
+    assert [round(t, 2) for t in placed_onsets(res)] == [pytest.approx(0.33, abs=0.01), pytest.approx(2.39, abs=0.01)]
+
+
+def test_fit_segments_energy_vad_onsets_match_on_both_sides() -> None:
+    sr = 24000
+    orig = words(sr, [("p", 0.31), ("w", 0.8), ("p", 0.43), ("w", 0.6), ("p", 0.4)])[:, None]  # onsets 0.31, 1.54
+    dub = words(sr, [("p", 0.07), ("w", 0.75), ("p", 0.25), ("w", 0.55)])
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True)
+    assert placed_onsets(res) == [pytest.approx(0.31, abs=0.003), pytest.approx(1.54, abs=0.003)]
+
+
+def test_fit_segments_onset_fade_is_short() -> None:
+    sr = 24000
+    orig = padded(tone(1.0, sr), sr, 0.3, 0.3)
+    dub = tone(0.8, sr)  # loud from its very first sample: no lead-in to hide a fade in
+    res = fit_seg(dub, sr, orig, sr, [], fixed_length=True)
+    start = int(round(res.lead_s * sr))
+    gain = res.audio[start + int(0.05 * sr), 0] / dub[int(0.05 * sr)]
+    k = int(0.004 * sr)  # 4 ms in: past a 3 ms fade (a 10 ms one would still be at a third)
+    assert res.audio[start + k, 0] / dub[k] == pytest.approx(gain, rel=0.02)
 
 
 def test_fit_segments_fixed_length_short_dub_gets_longer_pauses_not_slower_speech() -> None:

@@ -222,13 +222,14 @@ def test_rvc_characters_are_converted_before_scoring(project: Project, monkeypat
                                              *({"id": f"x{i}", "char_id": cid, "conf": 1.0} for i in range(3))])
     calls: list[dict[str, Any]] = []
 
-    def fake_convert(proj: Project, jobs: dict[str, list[tuple[str, Path]]], wait_lock: float = 0.0):
+    def fake_convert(proj: Project, jobs: dict[str, list[tuple[str, Path, dict[str, Any]]]], wait_lock: float = 0.0):
         calls.append(jobs)
         out = {}
         for c, items in jobs.items():
             work = proj.path(layout.VC_DIR, c, vc_cmd.SCORE_WORK, "out")
             work.mkdir(parents=True, exist_ok=True)
-            for name, wav in items:
+            for name, wav, line in items:
+                assert line["id"] == LID
                 out[name] = work / f"{wav.stem}_output.wav"
                 out[name].write_bytes(wav.read_bytes())
         return out, []

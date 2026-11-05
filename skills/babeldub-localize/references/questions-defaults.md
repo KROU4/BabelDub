@@ -76,6 +76,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
 | `vc.epochs` / `vc.minutes` | 20 / 30 | RVC training per character (`babeldub vc train`) |
 | `vc.index_rate` / `vc.protect` | 0.5 / 0.33 | RVC conversion settings (`babeldub vc`) |
+| `vc.pitch` | keep | RVC F0 shift: `keep` the TTS's F0, `char` to the character's originals, `line` to each original line |
 | `post.true_peak_db` | −1.0 | peak ceiling |
 | `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |
 | `qa.min_sim_ratio_xlang` | 0.45 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline, when the dub is in another language than the original audio (the normal case) |

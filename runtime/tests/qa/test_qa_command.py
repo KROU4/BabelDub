@@ -457,3 +457,38 @@ def test_qa_pitch_register_check(dub, fake_qc, run) -> None:
     assert out["pitch"] == {"checked": 2, "over": 1, "median_abs_st": round(sum(shifts) / 2, 2)}
     hints = {r.get("f0_hint_hz") for r in fake_qc.requests if r["op"] == "prosody"}
     assert hints == {150.0}  # the character's median F0 from analysis.jsonl bounds every pyin pass
+
+
+def test_voice_checks_use_the_take_before_the_channel_match(dub, fake_qc, run) -> None:
+    from pathlib import Path
+
+    import numpy as np
+    import soundfile as sf
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    for _ in range(3):
+        dub.line("hero", 4.0)
+    radio = dub.line("hero", 3.0)
+    plain = dub.line("hero", 3.0)
+    for lid in (radio, plain):
+        dub.translate(lid, "Привет, как дела?")
+    final = dub.dub(radio, asr="привет как дела", vec=dub.voices.emb("villain"))  # the radio chain: another "voice"
+    pre = dub.project.path("post/pre_match/radio.wav")
+    pre.parent.mkdir(parents=True)
+    sf.write(str(pre), (0.2 * np.sin(np.arange(3 * 16000) * 0.07)).astype(np.float32), 16000)
+    fake_qc.vectors[key_of(pre)] = dub.voices.emb("hero")
+    dub.post[-1]["pre_match_wav"] = "post/pre_match/radio.wav"
+    dub.dub(plain, voice="hero", asr="привет как дела")
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[radio]["verdict"] == "pass" and qa[radio]["voice_wav"] == "post/pre_match/radio.wav", qa[radio]
+    assert qa[plain]["voice_wav"] is None
+    embedded = [key_of(r["wav"]) for r in fake_qc.requests if r["op"] == "embed" and "#a" in str(r.get("id"))]
+    heard = [key_of(r["wav"]) for r in fake_qc.requests if r["op"] == "asr"]
+    assert key_of(pre) in embedded and key_of(final) not in embedded  # SIM on the take before the match ...
+    assert key_of(final) in heard and key_of(pre) not in heard  # ... the words on what the player hears
+    assert isinstance(qa[radio]["ltas_db"], float) and qa[radio]["ltas_db"] >= 0.0  # informational, never a reason
+    assert "ltas" not in " ".join(qa[radio]["reasons"])

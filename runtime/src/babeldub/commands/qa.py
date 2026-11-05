@@ -10,8 +10,11 @@ dub must sound like its own character more than like any other); duration ratio;
 silence; naturalness (Distill-MOS or UTMOS22) against the median MOS of the character's own originals
 (qa/mos_baseline.json); prosody similarity to the original (F0 range ratio and contour
 correlation) with a flatness check and a register check of the median F0; onset/offset deviations
-of fixed_length lines. Lines flagged `nonverbal` skip the voice, CER, MOS and prosody checks.
-Auto-decisions follow project.json `qa` thresholds; agents add theirs via `decide apply`.
+of fixed_length lines. Lines flagged `nonverbal` skip the voice, CER, MOS and prosody checks. When
+post.match changed the take (`pre_match_wav`), the voice similarity, the identity margin, MOS and prosody
+are measured on the take before the channel match (a radio chain must not count as another voice),
+ASR/CER, levels and the channel distance `ltas_db` (informational) on the final file. Auto-decisions
+follow project.json `qa` thresholds; agents add theirs via `decide apply`.
 """
 
 from __future__ import annotations
@@ -26,7 +29,8 @@ from typing import Any
 import numpy as np
 
 from babeldub.analysis.store import line_classes, load_analysis
-from babeldub.cast.characters import UNKNOWN_ID
+from babeldub.audio.io import read_audio
+from babeldub.cast.characters import UNKNOWN_ID, wav_path
 from babeldub.cast.cluster import EMBEDDINGS, MERGE_THRESHOLD, Embedder, EmbeddingStore
 from babeldub.commands.cast import sub_common
 from babeldub.core import layout
@@ -69,6 +73,7 @@ from babeldub.qa.metrics import (
     duration_ratio,
     f0_shift_st,
     identity_margin,
+    ltas_distance_db,
     prosody_similarity,
     voiced_seconds,
 )
@@ -182,6 +187,19 @@ def _next(state: dict[str, Any], waiting: int = 0) -> str:
     if state["pending"]:
         return "`babeldub qa` (some lines are not checked yet)"
     return "`babeldub report`, then `babeldub build`"
+
+
+def _ltas(root: Path, line: dict[str, Any], wav: Path | None) -> float | None:
+    """Channel distance (dB) of the final take to its original line; None when either is missing or silent."""
+    orig = wav_path(root, line) if line else None
+    if wav is None or orig is None or not orig.exists():
+        return None
+    try:
+        dub, dub_sr = read_audio(wav)
+        ref, ref_sr = read_audio(orig)
+    except (RuntimeError, OSError):
+        return None
+    return ltas_distance_db(dub, dub_sr, ref, ref_sr)
 
 
 # ---- qa ----------------------------------------------------------------------------------------
@@ -310,6 +328,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
             dub_text = (translations.get(lid) or {}).get("dub_text")
             wav = _resolve(root, post.get("wav"))
             exists = wav is not None and wav.exists()
+            pre_match = _resolve(root, post.get("pre_match_wav"))
+            voice_wav = pre_match if pre_match is not None and pre_match.exists() else wav  # before post.match
             levels = None
             if exists:
                 try:
@@ -328,7 +348,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 try:
                     heard = session.asr(lid, wav, lang, text=dub_text)
                     asr_text, asr_raw = heard["text"], heard["text_raw"]
-                    synth = session.embed(f"{lid}#a{attempt}", wav)
+                    synth = session.embed(f"{lid}#a{attempt}", voice_wav)
                 except QcItemError as exc:
                     qc_error = True
                     errors.append(f"{lid}: {exc}")
@@ -367,15 +387,15 @@ def cmd_qa(args: argparse.Namespace) -> int:
             pros_dub: dict[str, Any] | None = None
             pros_orig: dict[str, Any] | None = None
             if audible and not qc_error and not nonverbal:
-                assert wav is not None
+                assert voice_wav is not None
                 if session.has_mos:
                     try:
-                        mos_v = session.mos(f"{lid}#a{attempt}", wav)
+                        mos_v = session.mos(f"{lid}#a{attempt}", voice_wav)
                     except QcItemError:
                         mos_v = None
                 hint = f0_hints.get(cid)  # both F0 passes stay within an octave of the character's voice
                 try:
-                    pros_dub = session.prosody(f"{lid}#a{attempt}", wav, f0_hint=hint)
+                    pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav, f0_hint=hint)
                 except QcItemError:
                     pros_dub = None
                 # any length: the register check needs short originals too
@@ -388,6 +408,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 if pros_dub is not None and pros_orig is None:
                     pros_orig = (analysis.get(lid) or {}).get("prosody")
             psim = prosody_similarity(pros_dub, pros_orig)
+            ltas = _ltas(root, line, wav) if audible else None
             dub_range = (pros_dub or {}).get("f0_range_st")
             orig_range = (pros_orig or {}).get("f0_range_st")
             dub_f0 = (pros_dub or {}).get("f0_median_hz")
@@ -467,6 +488,8 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     "ratio": None if ratio is None else round(float(ratio), 4),
                     "dur_s": None if levels is None else round(levels.dur_s, 3),
                     "peak_db": None if levels is None else round(levels.peak_db, 2),
+                    "ltas_db": _r(ltas, 2),
+                    "voice_wav": post.get("pre_match_wav") if voice_wav is not wav else None,
                     "class": classes.get(lid),
                     "verdict": verdict,
                     "reasons": reasons,

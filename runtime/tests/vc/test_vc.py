@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from babeldub.audio.io import probe, write_wav
+from babeldub.audio.pitch import semitones
 from babeldub.commands import vc as vc_cmd
 from babeldub.commands import voice
 from babeldub.core import layout
@@ -147,7 +148,8 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     code, out = run(capsys, root, "synth")
     assert code == EXIT_OK, out
     code, out = run(capsys, root, "post")
-    assert code == EXIT_OK, out
+    assert code == EXIT_OK and out["match"]["mode"] == "eq" and out["match"]["eq"] == 6, out  # new projects: eq
+    fitted = latest_by(read_jsonl(root / layout.POST))
     code, out = run(capsys, root, "vc", "--dry-run")
     assert out["would_convert"] == {"Zbyszek": 4} and out["passthrough"] == {"Maciek": 2}, out
     code, out = run(capsys, root, "vc")
@@ -162,7 +164,11 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
             assert "vc" not in row and row["wav"].startswith(layout.POST_DIR)
             continue
         assert row["stage"] == "vc" and row["wav"].startswith(layout.VC_AUDIO_DIR) and row["vc"]["char_id"] == "Zbyszek"
-        assert row["pre_vc_wav"].startswith(layout.POST_DIR) and row["vc"]["index_rate"] == 0.5
+        # RVC converts the fitted take before post's channel match, then the channel is matched again
+        assert row["pre_vc_wav"] == fitted[lid]["pre_match_wav"] and row["pre_vc_wav"].startswith(layout.POST_PRE_MATCH_DIR)
+        assert row["match"]["applied"] and row["pre_match_wav"].startswith(layout.VC_PRE_MATCH_DIR)
+        assert row["vc"]["index_rate"] == 0.5
+        assert probe(root / row["pre_match_wav"])["frames"] == orig["frames"]
         info = probe(root / row["wav"])
         assert (info["sr"], info["frames"]) == (44100, orig["frames"])  # exact length after the 40 kHz conversion
         uid = lines[lid]["uid"]
@@ -176,13 +182,24 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
     code, out = run(capsys, root, "vc", "--index-rate", "0.7")
     assert out["converted"] == 4  # other settings: converted again from the pre-conversion take
     rows = latest_by(read_jsonl(root / layout.POST))
-    assert all(r["pre_vc_wav"].startswith(layout.POST_DIR) for r in rows.values() if r.get("vc"))
+    assert all(r["pre_vc_wav"].startswith(layout.POST_PRE_MATCH_DIR) for r in rows.values() if r.get("vc"))
 
     # a take converted with an older key (e.g. with --proposed-pitch) is converted again from its pre-vc take
     stale = [{**r, "vc": {**r["vc"], "model_key": "0123456789ab"}} for r in rows.values() if r.get("vc")]
     append_jsonl(root / layout.POST, stale)
     code, out = run(capsys, root, "vc", "--index-rate", "0.7")
     assert out["converted"] == 4 and out["up_to_date"] == 0, out
+
+    # another post.match: post fits again, vc converts again, without a channel match now
+    project.data["post"]["match"] = "off"
+    project.save()
+    code, out = run(capsys, root, "post")
+    assert out["done"] == 6 and "match" not in out, out
+    code, out = run(capsys, root, "vc", "--index-rate", "0.7")
+    assert out["converted"] == 4, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert all("match" not in r and "pre_match_wav" not in r for r in rows.values())
+    assert all(r["pre_vc_wav"].startswith(layout.POST_DIR) for r in rows.values() if r.get("vc"))
 
 
 def test_train_needs_a_gpu(project: Project, applio: Path, monkeypatch: pytest.MonkeyPatch,
@@ -206,14 +223,27 @@ def test_convert_for_scoring(project: Project, applio: Path, tmp_path: Path) -> 
     (folder / "model.index").write_bytes(b"I")
     (folder / layout.VC_MODEL_JSON).write_text(json.dumps({"char_id": "Zbyszek", "trained": "t"}), encoding="utf-8")
     wavs = [write_wav(tmp_path / f"c{k}.wav", speech(1.0, 24000, 150.0), 24000) for k in range(2)]
-    jobs = {"Zbyszek": [(f"u_s{k}", w) for k, w in enumerate(wavs)], "Maciek": [("m_s0", wavs[0])]}
+    lines = read_jsonl(project.path(layout.LINES))
+    jobs = {"Zbyszek": [(f"u_s{k}", w, lines[0]) for k, w in enumerate(wavs)], "Maciek": [("m_s0", wavs[0], lines[4])]}
     out, errors = vc_cmd.convert_for_scoring(project, jobs)
     assert errors == [] and sorted(out) == ["u_s0", "u_s1"]  # Maciek has no model
     assert all(p.exists() and probe(p)["sr"] == 40000 for p in out.values())
-    assert "batch-infer" in (applio / "calls.log").read_text(encoding="utf-8")
+    calls = [c for c in (applio / "calls.log").read_text(encoding="utf-8").splitlines() if c.startswith("batch-infer")]
+    assert len(calls) == 1 and "--pitch 0" in calls[0]  # vc.pitch keep
     vc_cmd.drop_scoring_files(project, {"Zbyszek"})
     assert not (folder / vc_cmd.SCORE_WORK).exists() and (folder / "model.pth").exists()
-    assert vc_cmd.convert_for_scoring(project, {"Maciek": [("m_s0", wavs[0])]}) == ({}, [])
+    assert vc_cmd.convert_for_scoring(project, {"Maciek": [("m_s0", wavs[0], lines[4])]}) == ({}, [])
+    # vc.pitch=line: each candidate is shifted toward its own original line, as `vc` will shift the winner
+    project.data["vc"]["pitch"] = "line"
+    project.save()
+    (applio / "calls.log").unlink()
+    jobs = {"Zbyszek": [("u_s0", wavs[0], lines[0]), ("u_s1", wavs[1], lines[2])]}  # originals 110 / 130 Hz
+    out, errors = vc_cmd.convert_for_scoring(project, jobs)
+    assert errors == [] and sorted(out) == ["u_s0", "u_s1"]
+    calls = (applio / "calls.log").read_text(encoding="utf-8").splitlines()
+    pitches = sorted(int(c.split("--pitch ")[1].split()[0]) for c in calls)
+    assert len(pitches) == 2 and pitches[0] < pitches[1] < 0  # 150 Hz takes go down, more for the 110 Hz line
+    vc_cmd.drop_scoring_files(project, {"Zbyszek"})
 
 
 def test_rvc_helpers(tmp_path: Path) -> None:
@@ -255,3 +285,43 @@ def test_train_command_keeps_only_the_latest_checkpoint(tmp_path: Path) -> None:
     train = rvc.train_commands(tmp_path / "python.exe", "bd_x", tmp_path, 127, "0")[2]
     assert "--save-only-latest" in train
     assert train[train.index("--save-every-epoch") + 1] == "100"
+
+
+def test_pitch_modes_shift_to_the_originals(project: Project, applio: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root = project.root
+    assert run(capsys, root, "vc", "train", "--chars", "Zbyszek", "--epochs", "2", "--minutes", "1")[0] == EXIT_OK
+    assert run(capsys, root, "synth")[0] == EXIT_OK
+    assert run(capsys, root, "post")[0] == EXIT_OK
+    lines = latest_by(read_jsonl(root / layout.LINES))
+    post = latest_by(read_jsonl(root / layout.POST))
+    zb = [lid for lid, ln in lines.items() if ln["speaker_hint"] == "Zbyszek"]
+    expected = {}
+    for lid in zb:
+        orig = vc_cmd._median_hz(root / lines[lid]["audio"]["wav"])
+        dub = vc_cmd._median_hz(root / post[lid]["wav"])
+        expected[lid] = vc_cmd._clip_shift(semitones(orig, dub))
+    code, out = run(capsys, root, "vc", "--pitch", "line")
+    assert code == EXIT_OK and out["converted"] == 4, out
+    rows = latest_by(read_jsonl(root / layout.POST))
+    assert {lid: rows[lid]["vc"]["pitch_shift_st"] for lid in zb} == expected
+    assert all(rows[lid]["vc"]["pitch"] == "line" for lid in zb)
+    calls = [c for c in (applio / "calls.log").read_text(encoding="utf-8").splitlines() if c.startswith("batch-infer")]
+    assert {int(c.split("--pitch ")[1].split()[0]) for c in calls} == set(expected.values())
+    assert len(calls) == len(set(expected.values()))  # one Applio run per distinct shift
+
+    code, out = run(capsys, root, "vc", "--pitch", "char")
+    assert code == EXIT_OK and out["converted"] == 4, out  # another mode: another conversion key
+    shifts = {latest_by(read_jsonl(root / layout.POST))[lid]["vc"]["pitch_shift_st"] for lid in zb}
+    assert len(shifts) == 1
+    assert run(capsys, root, "vc", "--pitch", "char")[1]["up_to_date"] == 4
+
+
+def test_pitch_keep_is_zero_and_unknown_mode_is_usage(project: Project, applio: Path,
+                                                      capsys: pytest.CaptureFixture[str]) -> None:
+    assert vc_cmd.pitch_shifts(project, "Zbyszek", [], "line", {}) == []
+    assert vc_cmd._clip_shift(None) == 0 and vc_cmd._clip_shift(30.0) == 12 and vc_cmd._clip_shift(-13.4) == -12
+    project.data["vc"]["pitch"] = "octave"  # a hand-edited project.json
+    project.save()
+    project.mark_stage("post", "done")
+    code, out = run(capsys, project.root, "vc", "--dry-run")
+    assert code == EXIT_USAGE and "vc.pitch" in out["error"], out

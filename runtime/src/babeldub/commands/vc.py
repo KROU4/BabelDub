@@ -5,7 +5,8 @@ vc train  For each character: a dataset of its clean original lines (2-20 s, no 
           stored in the project as vc/<char_id>/model.pth + model.index + model.json. Train once per
           main character; it works for any target language.
 vc        Converts the latest post audio of every line whose character has a model, then re-applies
-          the exact-length + loudness pass against the pre-conversion take, writes vc/audio/<uid>.wav
+          the exact-length + loudness pass against the pre-conversion take, matches the channel of the
+          original again (post.match, from the take before post's match), writes vc/audio/<uid>.wav
           and appends a post/post.jsonl row (stage "vc"), so QA checks and the build packs the
           converted take. Characters without a model pass through unchanged. Order: synth -> post
           -> vc -> qa. GPU first (Applio uses CUDA when the device is cuda), under the project GPU lock.
@@ -18,16 +19,20 @@ import contextlib
 import hashlib
 import math
 import shutil
+import statistics
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from babeldub.analysis.store import load_analysis
 from babeldub.audio.dsp import level_db, to_mono
 from babeldub.audio.fit import conform, speech_bounds
 from babeldub.audio.io import read_audio, write_wav
+from babeldub.audio.pitch import f0_median_hz, semitones
 from babeldub.cast.characters import match_char
+from babeldub.commands import voice
 from babeldub.commands.cast import sub_common
 from babeldub.core import layout
 from babeldub.core.compute import resolve_device
@@ -40,7 +45,10 @@ from babeldub.vc import rvc
 
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 DATASET_RANGE = (2.0, 20.0)
-DEFAULTS: dict[str, Any] = {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"}
+DEFAULTS: dict[str, Any] = {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
+                            "pitch": "keep"}
+PITCH_MODES = ("keep", "char", "line")
+MAX_SHIFT_ST = 12
 
 
 def _setting(project: Project, key: str) -> Any:
@@ -97,6 +105,8 @@ def conversion_key(model: dict[str, Any], settings: dict[str, Any]) -> str:
     stat = pth.stat()
     raw = (f"{model.get('trained')}|{stat.st_size}|{settings['index_rate']}|{settings['protect']}"
            f"|{settings['f0_method']}|{CONVERSION_VERSION}")
+    if settings.get("pitch", "keep") != "keep":  # keep: the same key as before vc.pitch existed
+        raw += f"|pitch={settings['pitch']}"
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
@@ -247,6 +257,52 @@ def _train_one(project: Project, python: Path, applio: Path, cid: str, data: lis
     return {"char_id": cid}
 
 
+# ---- pitch shift per line -------------------------------------------------------------------
+def _median_hz(path: Path | None) -> float | None:
+    if path is None or not path.exists():
+        return None
+    data, sr = read_audio(path)
+    return f0_median_hz(data, sr)
+
+
+def _orig_median(project: Project, line: dict[str, Any], analysis: dict[str, dict[str, Any]]) -> float | None:
+    measured = ((analysis.get(str(line.get("id"))) or {}).get("prosody") or {}).get("f0_median_hz")
+    if isinstance(measured, (int, float)) and measured > 0:
+        return float(measured)
+    return _median_hz(_abs(project, (line.get("audio") or {}).get("wav")))
+
+
+def _clip_shift(st: float | None) -> int:
+    if st is None or not math.isfinite(st):
+        return 0
+    return int(max(-MAX_SHIFT_ST, min(MAX_SHIFT_ST, round(st))))
+
+
+def pitch_shifts(project: Project, cid: str, items: list[tuple[dict[str, Any], dict[str, Any], Path]], mode: str,
+                 char_of: dict[str, str]) -> list[int]:
+    """RVC `--pitch` (semitones) for each take of one character.
+
+    keep  0: the take keeps the F0 the TTS cloned from the character's reference.
+    char  one shift for the character: its originals' median F0 over its takes' median F0.
+    line  per take: the median F0 of the take's own original line over the take's median F0.
+    A take or an original without enough voiced speech gets 0 (line) or is left out of the medians (char)."""
+    if mode == "keep" or not items:
+        return [0] * len(items)
+    analysis = load_analysis(project)
+    dubs = [_median_hz(source) for _line, _row, source in items]
+    if mode == "line":
+        return [_clip_shift(semitones(_orig_median(project, line, analysis), dub))
+                for (line, _row, _src), dub in zip(items, dubs, strict=True)]
+    lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    origs = [_orig_median(project, ln, analysis) for lid, ln in lines.items() if char_of.get(lid) == cid]
+    orig_values = [v for v in origs if v]
+    dub_values = [v for v in dubs if v]
+    if not orig_values or not dub_values:
+        return [0] * len(items)
+    shift = _clip_shift(semitones(statistics.median(orig_values), statistics.median(dub_values)))
+    return [shift] * len(items)
+
+
 # ---- vc (convert) ---------------------------------------------------------------------------
 def cmd_vc(args: argparse.Namespace) -> int:
     project = Project.load(args.project)
@@ -256,7 +312,13 @@ def cmd_vc(args: argparse.Namespace) -> int:
     char_of = _char_map(project, lines)
     post_latest = latest_by(read_jsonl(project.path(layout.POST)))
     models = load_models(project)
-    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method")}
+    mode = voice.match_mode(project)
+    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method", "pitch")}
+    if args.pitch is not None:
+        settings["pitch"] = args.pitch
+    if settings["pitch"] not in PITCH_MODES:
+        raise BabelDubError(f"vc.pitch must be one of {'|'.join(PITCH_MODES)}, got {settings['pitch']!r}",
+                            code=EXIT_USAGE, hint="babeldub set vc.pitch=keep")
     if args.index_rate is not None:
         settings["index_rate"] = args.index_rate
     if args.protect is not None:
@@ -284,10 +346,12 @@ def cmd_vc(args: argparse.Namespace) -> int:
         key = conversion_key(model, settings)
         current = _abs(project, row.get("wav"))
         if (not args.force and (row.get("vc") or {}).get("model_key") == key
+                and (row.get("match") or {}).get("mode", "off") == mode
                 and current is not None and current.exists()):
             up_to_date += 1
             continue
-        source = _abs(project, row.get("pre_vc_wav") if row.get("vc") else row.get("wav"))
+        # RVC converts the take as post fitted it, before any channel match
+        source = _abs(project, row.get("pre_vc_wav") if row.get("vc") else (row.get("pre_match_wav") or row.get("wav")))
         if source is None or not source.exists():
             missing.append(lid)
             continue
@@ -324,35 +388,45 @@ def cmd_vc(args: argparse.Namespace) -> int:
     ceiling = float(project.setting("post", "true_peak_db", -1.0))
     stamp = time.strftime("%Y%m%d-%H%M%S")
     log = project.path(layout.LOGS_DIR, f"vc-{stamp}.log")
+    pool = voice.ChannelPool(project, lines) if mode != "off" else None
     with lock if device.startswith("cuda") else contextlib.nullcontext():
         for cid, items in jobs.items():
             model = models[cid]
             key = conversion_key(model, settings)
-            work = project.path(layout.VC_DIR, cid, "batch")
-            if work.exists():
-                shutil.rmtree(work)
-            in_dir, out_dir = work / "in", work / "out"
-            in_dir.mkdir(parents=True)
-            out_dir.mkdir(parents=True)
-            for line, _row, source in items:
-                shutil.copy2(source, in_dir / f"{_uid(line)}.wav")
-            cmd = rvc.convert_command(python, in_dir, out_dir, model["pth"], model["index"],
-                                      index_rate=float(settings["index_rate"]), protect=float(settings["protect"]),
-                                      f0_method=str(settings["f0_method"]))
-            code = rvc.run(cmd, applio, log, max(600.0, 30.0 * len(items)), cpu=not device.startswith("cuda"))
+            shifts = pitch_shifts(project, cid, items, str(settings["pitch"]), char_of)
+            groups: dict[int, list[int]] = defaultdict(list)
+            for i, shift in enumerate(shifts):
+                groups[shift].append(i)
             rows: list[dict[str, Any]] = []
-            for line, row, source in items:
-                out = out_dir / f"{_uid(line)}_output.wav"
-                if not out.exists():
-                    errors.append(f"{_uid(line)}: no output (Applio exit code {code})")
-                    continue
-                try:
-                    rows.append(_finish(project, line, row, source, out, cid, key, model, settings, ceiling))
-                except (RuntimeError, ValueError, OSError) as exc:
-                    errors.append(f"{_uid(line)}: {type(exc).__name__}: {exc}")
+            for shift, members in sorted(groups.items()):
+                work = project.path(layout.VC_DIR, cid, "batch")
+                if work.exists():
+                    shutil.rmtree(work)
+                in_dir, out_dir = work / "in", work / "out"
+                in_dir.mkdir(parents=True)
+                out_dir.mkdir(parents=True)
+                for i in members:
+                    line, _row, source = items[i]
+                    shutil.copy2(source, in_dir / f"{_uid(line)}.wav")
+                cmd = rvc.convert_command(python, in_dir, out_dir, model["pth"], model["index"],
+                                          index_rate=float(settings["index_rate"]),
+                                          protect=float(settings["protect"]),
+                                          f0_method=str(settings["f0_method"]), pitch=shift)
+                code = rvc.run(cmd, applio, log, max(600.0, 30.0 * len(members)), cpu=not device.startswith("cuda"))
+                for i in members:
+                    line, row, source = items[i]
+                    out = out_dir / f"{_uid(line)}_output.wav"
+                    if not out.exists():
+                        errors.append(f"{_uid(line)}: no output (Applio exit code {code})")
+                        continue
+                    try:
+                        rows.append(_finish(project, line, row, source, out, cid, key, model, settings, ceiling,
+                                            shift, mode, pool))
+                    except (RuntimeError, ValueError, OSError) as exc:
+                        errors.append(f"{_uid(line)}: {type(exc).__name__}: {exc}")
+                shutil.rmtree(work, ignore_errors=True)
             append_jsonl(project.path(layout.POST), rows)
             converted += len(rows)
-            shutil.rmtree(work, ignore_errors=True)
     failed = total - converted
     status = "attention" if (failed or missing) else "done"
     project.mark_stage("vc", status, converted=converted, failed=failed, up_to_date=up_to_date,
@@ -372,19 +446,22 @@ def cmd_vc(args: argparse.Namespace) -> int:
 SCORE_WORK = "score"  # vc/<char_id>/score: candidates converted for `synth score`
 
 
-def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path]]],
+def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path, dict[str, Any]]]],
                         wait_lock: float = 0.0) -> tuple[dict[str, Path], list[str]]:
     """RVC-convert best-of candidates before `synth score` ranks them, so voice similarity (and MOS, prosody)
-    is measured on the timbre that ships. `jobs`: {char_id: [(name, wav)]} of characters with a model.
-    Returns ({name: converted wav}, errors); the files stay in vc/<char_id>/score/out until
-    `drop_scoring_files`. Without Applio the BabelDubError of `rvc.require_applio` propagates."""
+    is measured on the timbre that ships, with the `vc.pitch` shift `vc` would apply. `jobs`: {char_id:
+    [(name, wav, line)]} of characters with a model. Returns ({name: converted wav}, errors); the files stay
+    in vc/<char_id>/score/ until `drop_scoring_files`. Without Applio the BabelDubError of
+    `rvc.require_applio` propagates."""
     models = load_models(project)
     jobs = {cid: items for cid, items in jobs.items() if cid in models and items}
     if not jobs:
         return {}, []
     python, applio = rvc.require_applio()
     device = _device(project, None)
-    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method")}
+    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method", "pitch")}
+    mode = str(settings["pitch"]) if settings["pitch"] in PITCH_MODES else "keep"
+    char_of = _char_map(project, latest_by(read_jsonl(project.path(layout.LINES)))) if mode == "char" else {}
     from babeldub.workers.client import GpuLock
 
     lock = GpuLock(project.path(layout.GPU_LOCK), owner="vc:score", wait_s=wait_lock)
@@ -397,22 +474,29 @@ def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path]]
             work = project.path(layout.VC_DIR, cid, SCORE_WORK)
             if work.exists():
                 shutil.rmtree(work)
-            in_dir, out_dir = work / "in", work / "out"
-            in_dir.mkdir(parents=True)
-            out_dir.mkdir(parents=True)
-            for name, wav in items:
-                shutil.copy2(wav, in_dir / f"{name}.wav")
-            cmd = rvc.convert_command(python, in_dir, out_dir, model["pth"], model["index"],
-                                      index_rate=float(settings["index_rate"]), protect=float(settings["protect"]),
-                                      f0_method=str(settings["f0_method"]))
-            code = rvc.run(cmd, applio, log, max(600.0, 30.0 * len(items)), cpu=not device.startswith("cuda"))
-            shutil.rmtree(in_dir, ignore_errors=True)
-            for name, _wav in items:
-                converted = out_dir / f"{name}_output.wav"
-                if converted.exists():
-                    out[name] = converted
-                else:
-                    errors.append(f"{name}: no RVC output (Applio exit code {code})")
+            shifts = pitch_shifts(project, cid, [(line, {}, wav) for _name, wav, line in items], mode, char_of)
+            groups: dict[int, list[int]] = defaultdict(list)
+            for i, shift in enumerate(shifts):
+                groups[shift].append(i)
+            for shift, members in sorted(groups.items()):
+                in_dir, out_dir = work / f"in{shift:+d}", work / f"out{shift:+d}"
+                in_dir.mkdir(parents=True)
+                out_dir.mkdir(parents=True)
+                for i in members:
+                    shutil.copy2(items[i][1], in_dir / f"{items[i][0]}.wav")
+                cmd = rvc.convert_command(python, in_dir, out_dir, model["pth"], model["index"],
+                                          index_rate=float(settings["index_rate"]),
+                                          protect=float(settings["protect"]),
+                                          f0_method=str(settings["f0_method"]), pitch=shift)
+                code = rvc.run(cmd, applio, log, max(600.0, 30.0 * len(members)), cpu=not device.startswith("cuda"))
+                shutil.rmtree(in_dir, ignore_errors=True)
+                for i in members:
+                    name = items[i][0]
+                    converted = out_dir / f"{name}_output.wav"
+                    if converted.exists():
+                        out[name] = converted
+                    else:
+                        errors.append(f"{name}: no RVC output (Applio exit code {code})")
     return out, errors
 
 
@@ -426,8 +510,9 @@ def _rounded(value: float) -> float | None:
 
 
 def _finish(project: Project, line: dict[str, Any], row: dict[str, Any], source: Path, converted: Path, cid: str,
-            key: str, model: dict[str, Any], settings: dict[str, Any], ceiling: float) -> dict[str, Any]:
-    """Exact length + loudness of the converted take against its pre-conversion post take."""
+            key: str, model: dict[str, Any], settings: dict[str, Any], ceiling: float,
+            pitch_shift: int = 0, mode: str = "off", pool: voice.ChannelPool | None = None) -> dict[str, Any]:
+    """Exact length + loudness of the converted take against its pre-conversion post take, then post.match."""
     ref, ref_sr = read_audio(source)
     data, sr = read_audio(converted)
     measure = str(row.get("measure") or "lufs")
@@ -437,18 +522,31 @@ def _finish(project: Project, line: dict[str, Any], row: dict[str, Any], source:
         bounds = speech_bounds(mono, ref_sr) or (0, len(mono))
         level_ref = level_db(mono[bounds[0] : bounds[1]], ref_sr, measure)
     final, peak = conform(data, sr, ref, ref_sr, level_ref=float(level_ref), measure=measure, ceiling_db=ceiling)
+    extra: dict[str, Any] = {}
+    if mode != "off":
+        orig, o_sr = voice.original_audio(project, line, final.shape[0] / ref_sr, ref_sr)
+        matched, m_peak, info = voice.channel_match(line, final, ref_sr, orig, o_sr, mode, pool,
+                                                    level_ref=float(level_ref), measure=measure, ceiling_db=ceiling)
+        extra["match"] = info
+        if m_peak is not None:
+            pre = project.path(layout.VC_PRE_MATCH_DIR, f"{_uid(line)}.wav")
+            write_wav(pre, final, ref_sr, subtype="PCM_16")
+            extra["pre_match_wav"] = project.rel(pre)
+            final, peak = matched, m_peak
     out = project.path(layout.VC_AUDIO_DIR, f"{_uid(line)}.wav")
     write_wav(out, final, ref_sr, subtype="PCM_16")
     mono = to_mono(final)
     bounds = speech_bounds(mono, ref_sr)
     level_out = level_db(mono[bounds[0] : bounds[1]], ref_sr, measure) if bounds else float("nan")
-    new = {k: v for k, v in row.items() if k not in ("vc", "pre_vc_wav", "stage")}
+    new = {k: v for k, v in row.items() if k not in ("vc", "pre_vc_wav", "stage", "match", "pre_match_wav")}
     new.update({
         "wav": project.rel(out), "stage": "vc", "pre_vc_wav": project.rel(source),
         "peak_db": _rounded(peak), "lufs_out": _rounded(level_out),
         "frames": int(final.shape[0]), "dur_s": round(final.shape[0] / ref_sr, 4),
         "vc": {"char_id": cid, "engine": rvc.ENGINE, "model_key": key, "trained": model.get("trained"),
-               "index_rate": settings["index_rate"], "protect": settings["protect"], "f0_method": settings["f0_method"]},
+               "index_rate": settings["index_rate"], "protect": settings["protect"], "f0_method": settings["f0_method"],
+               "pitch": settings.get("pitch", "keep"), "pitch_shift_st": pitch_shift},
+        **extra,
         "ts": now_iso(),
     })
     return new
@@ -469,6 +567,9 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
     p.add_argument("--ids", help="only these line ids or uids (comma-separated)")
     p.add_argument("--index-rate", type=float, help="RVC index rate (default vc.index_rate 0.5)")
     p.add_argument("--protect", type=float, help="RVC consonant protection (default vc.protect 0.33)")
+    p.add_argument("--pitch", choices=PITCH_MODES, default=None,
+                   help="F0 shift: keep (the TTS's own F0), char (to the character's originals), line (to each "
+                        "original line); default vc.pitch keep")
     p.add_argument("--force", action="store_true", help="convert again even if up to date")
     p.add_argument("--dry-run", action="store_true", help="show what would be converted")
     _device_args(p)

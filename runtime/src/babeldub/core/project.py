@@ -49,12 +49,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "stress": "off",
         "tags_reference": "main",
         "delivery_tags": "on",
+        # tags: a character whose dubs speak under this share of the original's speech (median, >= 3 lines)
+        # gets the delivery tag "slow" on its next takes (0 = off); post never slows speech down
+        "slow_hint_ratio": 0.85,
     },
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
-    # its pauses, then speeds up to tempo_max (pitch kept); exact original length
-    "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
+    # its pauses, then speeds up to tempo_max (pitch kept); exact original length.
+    # match: the dub takes the original's channel: eq = long-term spectrum EQ + bandwidth, full = + radio chain,
+    # off = none (what a project created before v0.4 without this key keeps)
+    "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0,
+             "match": "eq"},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
-    "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"},
+    "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
+           "pitch": "keep"},
     # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language;
     # short_sim_*: an original under short_sim_s of speech (or below the sim bar itself) judges the dub's sim
     # relative to its own (>= short_sim_ratio x); max_pitch_shift_st: register check of the median F0 when both
