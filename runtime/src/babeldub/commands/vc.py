@@ -88,10 +88,15 @@ def load_models(project: Project) -> dict[str, dict[str, Any]]:
     return out
 
 
+# Bumped when the conversion itself changes; "keep-f0": no --proposed-pitch, so older takes are converted again.
+CONVERSION_VERSION = "keep-f0"
+
+
 def conversion_key(model: dict[str, Any], settings: dict[str, Any]) -> str:
     pth: Path = model["pth"]
     stat = pth.stat()
-    raw = f"{model.get('trained')}|{stat.st_size}|{settings['index_rate']}|{settings['protect']}|{settings['f0_method']}"
+    raw = (f"{model.get('trained')}|{stat.st_size}|{settings['index_rate']}|{settings['protect']}"
+           f"|{settings['f0_method']}|{CONVERSION_VERSION}")
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
