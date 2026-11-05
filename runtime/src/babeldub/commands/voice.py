@@ -1647,8 +1647,11 @@ def _convert_for_scoring(project: Project, rows: list[dict[str, Any]], wait_lock
     """RVC-convert the candidates of characters with a model before they are scored ({name: converted wav},
     the characters involved). Without Applio they are scored as they are, with the low `sim_rvc` weight."""
     from babeldub.commands.vc import convert_for_scoring, load_models
+    from babeldub.qa.qc import qc_missing
 
     models = load_models(project)
+    if not models or qc_missing(project.data, True, True):  # no scoring without the qc env: convert nothing
+        return {}, set()
     jobs: dict[str, list[tuple[str, Path]]] = {}
     for row in rows:
         cid = str(row.get("char_id"))
