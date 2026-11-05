@@ -77,7 +77,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `post.match` | eq | the dub takes the original's channel: `eq` spectrum EQ + band limit, `full` plus a radio/phone chain, `off` none (games that apply effects in their mixer) |
 | `post.match_target` | character | where the EQ curve comes from: `character` one curve per character from its pooled dubs against its pooled originals (the phonemes of two languages average out, the channel stays; falls back to the line's own curve under 3 lines or 10 s of speech), `line` each line's own curve |
 | `vc.epochs` / `vc.minutes` | 20 / 30 | RVC training per character (`babeldub vc train`) |
-| `vc.index_rate` / `vc.protect` | 0.5 / 0.33 | RVC conversion settings (`babeldub vc`) |
+| `vc.index_rate` / `vc.protect` | 0.75 / 0.33 | RVC conversion settings (`babeldub vc`) |
 | `vc.pitch` | line | RVC F0 shift: `line` each take to its own original line, `char` to the character's originals, `keep` the TTS's F0 |
 | `post.true_peak_db` | −1.0 | peak ceiling |
 | `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |

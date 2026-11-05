@@ -167,7 +167,7 @@ def test_train_convert_and_idempotency(project: Project, applio: Path, capsys: p
         # RVC converts the fitted take before post's channel match, then the channel is matched again
         assert row["pre_vc_wav"] == fitted[lid]["pre_match_wav"] and row["pre_vc_wav"].startswith(layout.POST_PRE_MATCH_DIR)
         assert row["match"]["applied"] and row["pre_match_wav"].startswith(layout.VC_PRE_MATCH_DIR)
-        assert row["vc"]["index_rate"] == 0.5
+        assert row["vc"]["index_rate"] == 0.75
         assert probe(root / row["pre_match_wav"])["frames"] == orig["frames"]
         info = probe(root / row["wav"])
         assert (info["sr"], info["frames"]) == (44100, orig["frames"])  # exact length after the 40 kHz conversion

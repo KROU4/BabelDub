@@ -95,7 +95,7 @@ All JSONL files are UTF-8 without BOM, one object per line; the first line of ca
           "tags_reference": "main", "delivery_tags": "on", "slow_hint_ratio": 0.85},
   "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0,
            "match": "eq", "match_target": "character"},
-  "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe", "pitch": "line"},
+  "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.75, "protect": 0.33, "f0_method": "rmvpe", "pitch": "line"},
   "qa": {"max_cer": 0.15, "min_sim_ratio": 0.75, "min_sim_ratio_xlang": 0.45, "min_sim_abs": 0.25, "min_identity_margin": -0.05, "max_duration_ratio": 1.35,
          "mos_drop": 1.0, "min_f0_range_ratio": 0.5, "max_pitch_shift_st": 3.0, "pitch_min_voiced_s": 0.5, "short_sim_s": 1.0,
          "short_sim_ratio": 0.8, "max_asr_disagreement": 0.15,

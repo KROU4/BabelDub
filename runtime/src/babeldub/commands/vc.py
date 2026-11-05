@@ -49,7 +49,7 @@ from babeldub.vc import rvc
 
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 DATASET_RANGE = (2.0, 20.0)
-DEFAULTS: dict[str, Any] = {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
+DEFAULTS: dict[str, Any] = {"epochs": 20, "minutes": 30.0, "index_rate": 0.75, "protect": 0.33, "f0_method": "rmvpe",
                             "pitch": "line"}
 PITCH_MODES = ("keep", "char", "line")
 MAX_SHIFT_ST = 12
@@ -622,7 +622,7 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
     common(p)
     p.add_argument("--chars", help="only these characters (char_id, comma-separated)")
     p.add_argument("--ids", help="only these line ids or uids (comma-separated)")
-    p.add_argument("--index-rate", type=float, help="RVC index rate (default vc.index_rate 0.5)")
+    p.add_argument("--index-rate", type=float, help="RVC index rate (default vc.index_rate 0.75)")
     p.add_argument("--protect", type=float, help="RVC consonant protection (default vc.protect 0.33)")
     p.add_argument("--pitch", choices=PITCH_MODES, default=None,
                    help="F0 shift: keep (the TTS's own F0), char (to the character's originals), line (to each "
