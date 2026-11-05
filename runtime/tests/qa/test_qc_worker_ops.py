@@ -311,6 +311,39 @@ def test_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch) -> Non
         qc_worker._get_asr2()
 
 
+@pytest.mark.parametrize("stage", ["from_pretrained", "to"])
+def test_any_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    calls: list[str] = []
+
+    class Model:
+        def eval(self) -> Model:
+            return self
+
+        def to(self, device: str) -> Model:
+            calls.append("to")
+            raise RuntimeError("CUDA out of memory")
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(folder: str, **kw: Any) -> Model:
+            calls.append("load")
+            if stage == "from_pretrained":
+                raise OSError("pytorch_model.bin not found")  # a partial download
+            return Model()
+
+    dmu = SimpleNamespace(get_imports=lambda f: [])
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoModel=AutoModel, dynamic_module_utils=dmu))
+    monkeypatch.setitem(qc_worker._STATE, "asr2", None)
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    monkeypatch.setattr(qc_worker, "_torch_device", lambda: "cuda")
+    for _ in range(3):  # `synth score` asks once per candidate: the model is loaded once
+        with pytest.raises(RuntimeError, match="GigaAM failed to load"):
+            qc_worker._get_asr2()
+    assert calls == (["load"] if stage == "from_pretrained" else ["load", "to"])
+    assert ("OSError" if stage == "from_pretrained" else "out of memory") in qc_worker._STATE["asr2_error"]
+
+
 def test_mos_backends_and_the_utmos_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
     monkeypatch.setitem(qc_worker._STATE, "device", "cpu")

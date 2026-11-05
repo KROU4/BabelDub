@@ -298,8 +298,9 @@ class QcSession:
     def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
               orig_wav: Path | None = None, refs: list[Path] | None = None,
               want: tuple[str, ...] = ("cer", "sim", "emo", "mos"), f0_hint: float | None = None) -> dict[str, Any]:
-        """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?}: metrics that cannot be
-        computed are null; prosody (with its F0 contour) only when `want` has "prosody"."""
+        """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?, asr2_error?}: metrics that
+        cannot be computed are null; prosody (with its F0 contour) only when `want` has "prosody". A second-ASR
+        failure is reported once in `warnings`, as by `asr2`."""
         req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
                                "refs": [str(r) for r in refs or []], "want": list(want)}
         if orig_wav is not None:
@@ -308,9 +309,12 @@ class QcSession:
             req["f0_hint_hz"] = round(float(f0_hint), 1)
         reply = self._call(req)
         self.mos_model = reply.get("mos_model") or self.mos_model
+        if reply.get("asr2_error") and self.has_asr2:
+            self.has_asr2 = False
+            self.warnings.append(f"second ASR (GigaAM) unavailable: {reply['asr2_error']}")
         return {k: reply.get(k) for k in ("cer", "cer_folded", "asr_text", "asr_text_raw", "asr2_text", "cer2",
                                           "sim", "emo_cos", "mos", "mos_model", "prosody", "orig_prosody",
-                                          "unavailable")}
+                                          "unavailable", "asr2_error")}
 
     def spell(self, texts: list[str], lang: str | None) -> list[str]:
         """Digits spelled out by the worker's num2words (the CLI may not have it)."""

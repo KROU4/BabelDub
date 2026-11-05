@@ -553,11 +553,14 @@ def _get_asr2() -> Any:
                 model = AutoModel.from_pretrained(folder, trust_remote_code=True, local_files_only=True)
             finally:
                 dynamic_module_utils.get_imports = scan
+            model.eval().to(_torch_device())
         except ImportError as exc:
             _STATE["asr2_error"] = (f"GigaAM needs transformers, hydra-core, omegaconf and sentencepiece in the qc "
                                     f"env ({exc}): babeldub setup --engines qc")
             raise RuntimeError(_STATE["asr2_error"]) from exc
-        model.eval().to(_torch_device())
+        except Exception as exc:  # a partial download, a transformers error, out of GPU memory: not retried either
+            _STATE["asr2_error"] = f"GigaAM failed to load ({type(exc).__name__}: {exc}): babeldub setup --engines qc"
+            raise RuntimeError(_STATE["asr2_error"]) from exc
         _STATE["asr2"] = model
         log(f"GigaAM loaded from {folder}")
     return _STATE["asr2"]

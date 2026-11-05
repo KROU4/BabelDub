@@ -178,3 +178,18 @@ def test_pitch_shift_voiced_seconds_and_loo_baseline() -> None:
     embs = [c + 0.8 * rng.standard_normal(64) for _ in range(6)]
     assert mean_loo_centroid_cosine(embs) > mean_pairwise_cosine(embs)  # centroids average line noise away
     assert mean_loo_centroid_cosine(embs[:1]) is None
+
+
+def test_session_score_reports_a_second_asr_failure_once() -> None:
+    from types import SimpleNamespace
+
+    from babeldub.qa.qc import QcSession
+
+    reply = {"ok": True, "cer": 0.0, "asr_text": "да", "unavailable": ["asr2"],
+             "asr2_error": "RuntimeError: GigaAM failed to load (OSError: missing weights)"}
+    session = QcSession(SimpleNamespace(request=lambda req: reply, restarts=0, max_restarts=3), "cpu")
+    session.has_asr2 = True
+    for _ in range(3):
+        out = session.score("a", Path("a.wav"), text="да", lang="ru", want=("cer",))
+    assert out["asr2_error"] == reply["asr2_error"] and not session.has_asr2
+    assert session.warnings == [f"second ASR (GigaAM) unavailable: {reply['asr2_error']}"]  # as `asr2` reports it

@@ -1794,6 +1794,7 @@ def _score_pass(project: Project, rows: list[dict[str, Any]], wait_lock: float,
         with _open_scorer(project, wait_lock) as session:
             summary = score_candidates(project, rows, session, converted=converted)
             device = session.device
+            notes.extend(session.warnings)  # e.g. the second ASR (GigaAM) is unavailable
     finally:
         drop_scoring_files(project, rvc_chars)
     return summary, device

@@ -301,6 +301,25 @@ def test_a_partial_rvc_failure_scores_the_whole_line_unconverted(project: Projec
     assert final["best_of"]["scored_after_rvc"] is False and final["best_of"]["sim_weight"] == 0.05
 
 
+def test_synth_score_notes_an_unavailable_second_asr(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                      capsys: pytest.CaptureFixture[str]) -> None:
+    import babeldub.qa.qc as qc
+
+    class NoGigaQc(FakeScoreQc):
+        def request(self, msg: dict[str, Any]) -> dict[str, Any]:
+            reply = super().request(msg)
+            return {**reply, "unavailable": ["asr2"], "asr2_error": "RuntimeError: GigaAM failed to load (OSError: x)"}
+
+    run(capsys, project.root, "synth")
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: NoGigaQc())
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    monkeypatch.setattr(qc, "asr2_model_dir", lambda settings: project.root / "giga")
+    code, out = run(capsys, project.root, "synth", "score")
+    assert code == EXIT_OK and out["scored"] == 1, out
+    assert [n for n in out["notes"] if "second ASR" in n] == [
+        "second ASR (GigaAM) unavailable: RuntimeError: GigaAM failed to load (OSError: x)"]
+
+
 def test_an_invalid_vc_pitch_is_a_usage_error_in_synth_score(project: Project, monkeypatch: pytest.MonkeyPatch,
                                                              capsys: pytest.CaptureFixture[str]) -> None:
     import babeldub.qa.qc as qc
