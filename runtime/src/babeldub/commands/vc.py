@@ -46,7 +46,7 @@ from babeldub.vc import rvc
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 DATASET_RANGE = (2.0, 20.0)
 DEFAULTS: dict[str, Any] = {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
-                            "pitch": "keep"}
+                            "pitch": "line"}
 PITCH_MODES = ("keep", "char", "line")
 MAX_SHIFT_ST = 12
 
@@ -318,7 +318,7 @@ def cmd_vc(args: argparse.Namespace) -> int:
         settings["pitch"] = args.pitch
     if settings["pitch"] not in PITCH_MODES:
         raise BabelDubError(f"vc.pitch must be one of {'|'.join(PITCH_MODES)}, got {settings['pitch']!r}",
-                            code=EXIT_USAGE, hint="babeldub set vc.pitch=keep")
+                            code=EXIT_USAGE, hint="babeldub set vc.pitch=line")
     if args.index_rate is not None:
         settings["index_rate"] = args.index_rate
     if args.protect is not None:
@@ -507,7 +507,7 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
     p.add_argument("--protect", type=float, help="RVC consonant protection (default vc.protect 0.33)")
     p.add_argument("--pitch", choices=PITCH_MODES, default=None,
                    help="F0 shift: keep (the TTS's own F0), char (to the character's originals), line (to each "
-                        "original line); default vc.pitch keep")
+                        "original line); default vc.pitch line")
     p.add_argument("--force", action="store_true", help="convert again even if up to date")
     p.add_argument("--dry-run", action="store_true", help="show what would be converted")
     _device_args(p)

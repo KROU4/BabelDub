@@ -59,7 +59,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
              "match": "eq"},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
     "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe",
-           "pitch": "keep"},
+           "pitch": "line"},
     # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language
     "qa": {
         "max_cer": 0.15,
