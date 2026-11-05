@@ -87,12 +87,13 @@ def train_commands(python: Path, name: str, dataset: Path, epochs: int, gpu: str
 
 
 def convert_command(python: Path, in_dir: Path, out_dir: Path, pth: Path, index: Path, *,
-                    index_rate: float, protect: float, f0_method: str) -> list[str]:
+                    index_rate: float, protect: float, f0_method: str, pitch: int = 0) -> list[str]:
     # No --proposed-pitch: it shifts every line's median F0 to a fixed 155 Hz and erases the character's register.
     return [
         str(python), "core.py", "batch-infer", "--input-folder", str(in_dir), "--output-folder", str(out_dir),
         "--pth-path", str(pth), "--index-path", str(index), "--index-rate", str(index_rate),
         "--protect", str(protect), "--f0-method", f0_method,
+        "--pitch", str(int(pitch)),
     ]
 
 
