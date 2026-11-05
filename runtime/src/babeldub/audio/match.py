@@ -8,9 +8,11 @@ to 16 kHz and corrects the dub:
   eq    LTAS EQ: the band differences relative to the speech band (315 Hz - 3.15 kHz), smoothed over
         neighbouring bands and clipped to +-MAX_EQ_DB, never boosting a band the dub has (almost) nothing
         in; plus bandwidth match: when the original has far less energy than the dub above some
-        frequency (an 8 kHz bank, a phone line), the dub is low-passed at that cutoff.
-  full  eq, and for a "radio/phone" original (both its lows under ~250 Hz and its highs above
-        RADIO_MAX_CUTOFF_HZ missing) a band-pass at the original's edges plus a mild tanh saturation.
+        frequency (an 8 kHz bank, a phone line), the dub is low-passed at that cutoff, as deep as the
+        original drops there (a soft limit gets a high shelf, a hard one a stop band).
+  full  eq, and for a "radio/phone" original (its highs above a cutoff at or under RADIO_MAX_CUTOFF_HZ
+        and its lows under ~200 Hz both at least ~10 dB down, a soft band limit counts too) a band-pass
+        at the original's edges (as deep as the original drops) plus a mild tanh saturation.
 
 The correction is one minimum-phase FIR (frequency sampling + homomorphic minimum phase, numpy only):
 deterministic, no pre-ringing, the length of the take is kept. A short original line (under
@@ -37,11 +39,13 @@ SPEECH_DB = -30.0  # STFT frames within this of the loudest frame are speech
 MAX_EQ_DB = 9.0
 EMPTY_DB = -45.0  # a dub band this far under its speech band is empty: never boosted
 CUTOFF_MIN_HZ = 2000.0  # a band limit is only searched above this
-CUTOFF_DROP_DB = 20.0  # ... where the original is this much under the dub, up to the top
+CUTOFF_DROP_DB = 12.0  # ... where the original is this much under the dub (median up to CUTOFF_TOP_HZ)
+CUTOFF_TOP_HZ = 16000.0  # above this both sides are codec roll-off and noise floor: not part of the check
 RADIO_MAX_CUTOFF_HZ = 4500.0  # radio/phone: the highs end at or under this ...
-RADIO_LOW_DB = -15.0  # ... and 100-250 Hz is this much under the dub
+RADIO_LOW_BANDS = (70.0, 220.0)  # ... and these 1/3-octave bands (80-200 Hz) ...
+RADIO_LOW_DB = -10.0  # ... are on average this much under the dub (a soft phone/radio band limit is ~-11)
 RADIO_DRIVE = 2.0  # tanh saturation of the radio chain (mild)
-STOP_DB = -60.0  # attenuation of a low-/high-pass stop band
+STOP_DB = -60.0  # the deepest a low-/high-pass goes (a softer band limit is followed at its measured depth)
 FLOOR_DB = -60.0  # band levels under the speech band are floored here for the distance
 MIN_LINE_SPEECH_S = 1.0  # a shorter original pools the character's other originals for its EQ target
 MIN_SPEECH_S = 0.3  # less speech than this: nothing is measured or applied
@@ -155,34 +159,39 @@ def _fine_bands(p: Profile, top_hz: float) -> tuple[np.ndarray, np.ndarray]:
     return centers, out
 
 
-def detect_cutoff(dub: Profile, orig: Profile) -> float | None:
-    """The frequency above which the original stays CUTOFF_DROP_DB under the dub (both re their speech
-    band) up to the top: its band limit, or None."""
-    top = 0.95 * min(dub.sr, orig.sr) / 2.0
+def detect_cutoff(dub: Profile, orig: Profile) -> tuple[float, float] | None:
+    """(cutoff Hz, depth dB): the lowest frequency (>= CUTOFF_MIN_HZ) where the original drops CUTOFF_DROP_DB
+    under the dub (both re their speech band, 1/12-octave bands smoothed over three) and stays there in the
+    median up to CUTOFF_TOP_HZ, and that median (clipped to STOP_DB): its band limit, hard or soft, or None."""
+    top = min(0.95 * min(dub.sr, orig.sr) / 2.0, CUTOFF_TOP_HZ)
     if top <= CUTOFF_MIN_HZ * 1.2 or not dub.freqs.size or not orig.freqs.size:
         return None
     centers, d_dub = _fine_bands(dub, top)
     _, d_orig = _fine_bands(orig, top)
-    diff = d_orig - d_dub
+    diff = np.convolve(np.pad(d_orig - d_dub, 1, mode="edge"), np.full(3, 1.0 / 3.0), mode="valid")
     has = d_dub > EMPTY_DB  # only where the dub has something to cut (a 24 kHz TTS has nothing above 12 kHz)
     for i in np.flatnonzero((centers >= CUTOFF_MIN_HZ) & has):
         rest = diff[i:][has[i:]]
-        if rest.size >= 2 and diff[i] <= -CUTOFF_DROP_DB and np.percentile(rest, 80) <= -CUTOFF_DROP_DB:
-            return float(_band_edges(centers[i], 12.0)[0])
+        depth = float(np.median(rest)) if rest.size >= 2 else 0.0
+        if diff[i] <= -CUTOFF_DROP_DB and depth <= -CUTOFF_DROP_DB:
+            return float(_band_edges(centers[i], 12.0)[0]), max(depth, STOP_DB)
     return None
 
 
-def detect_radio(dub: Profile, orig: Profile, cutoff: float | None) -> float | None:
-    """The low edge (Hz) of a radio/phone original (highs cut at <= RADIO_MAX_CUTOFF_HZ and 100-250 Hz at least
-    RADIO_LOW_DB under the dub, both re their speech band), or None."""
+def detect_radio(dub: Profile, orig: Profile, cutoff: float | None) -> tuple[float, float] | None:
+    """(low edge Hz, depth dB) of a radio/phone original (highs cut at <= RADIO_MAX_CUTOFF_HZ and the
+    RADIO_LOW_BANDS on average at least RADIO_LOW_DB under the dub, both re their speech band; the depth is
+    that average, clipped to STOP_DB), or None."""
     if cutoff is None or cutoff > RADIO_MAX_CUTOFF_HZ:
         return None
     diff = (orig.bands_db - _speech_level(orig.bands_db)) - (dub.bands_db - _speech_level(dub.bands_db))
-    low = [b for b, fc in enumerate(BAND_CENTERS) if 100.0 <= fc <= 250.0 and not np.isnan(diff[b])]
-    if not low or float(np.mean(diff[low])) > RADIO_LOW_DB:
+    lo_hz, hi_hz = RADIO_LOW_BANDS
+    low = [b for b, fc in enumerate(BAND_CENTERS) if lo_hz <= fc <= hi_hz and not np.isnan(diff[b])]
+    depth = float(np.mean(diff[low])) if low else 0.0
+    if depth > RADIO_LOW_DB:
         return None
     present = [fc for b, fc in enumerate(BAND_CENTERS) if 100.0 <= fc <= 800.0 and diff[b] > -10.0]
-    return float(min(max(present[0] if present else 300.0, 200.0), 600.0) / 2.0 ** (1.0 / 6.0))
+    return float(min(max(present[0] if present else 300.0, 200.0), 600.0) / 2.0 ** (1.0 / 6.0)), max(depth, STOP_DB)
 
 
 def eq_curve(dub: Profile, target: Profile, cutoff: float | None, low_edge: float | None) -> np.ndarray:
@@ -210,25 +219,26 @@ def _band_edges_array(centers: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return centers / half, centers * half
 
 
-def _shelf(freqs: np.ndarray, edge: float, high: bool) -> np.ndarray:
-    """dB of a stop band above (high) or below `edge`: 0 -> STOP_DB over 1/6 octave (raised cosine in log f)."""
+def _shelf(freqs: np.ndarray, edge: float, high: bool, depth_db: float = STOP_DB) -> np.ndarray:
+    """dB of a stop band above (high) or below `edge`: 0 -> depth_db over 1/6 octave (raised cosine in log f)."""
     x = np.log2(np.maximum(freqs, 1e-3) / edge) * 6.0 * (1.0 if high else -1.0) + 0.5  # 0..1 across the transition
     ramp = 0.5 - 0.5 * np.cos(np.pi * np.clip(x, 0.0, 1.0))
-    return STOP_DB * ramp
+    return max(depth_db, STOP_DB) * ramp
 
 
-def design_fir(sr: int, eq_db: np.ndarray, lowpass: float | None = None, highpass: float | None = None) -> np.ndarray:
+def design_fir(sr: int, eq_db: np.ndarray, lowpass: float | None = None, highpass: float | None = None,
+               lowpass_db: float = STOP_DB, highpass_db: float = STOP_DB) -> np.ndarray:
     """Minimum-phase FIR (about 40 ms) with the band gains `eq_db` (interpolated in log frequency) and optional
-    stop bands above `lowpass` / below `highpass` (Hz)."""
+    stop bands above `lowpass` / below `highpass` (Hz), `lowpass_db` / `highpass_db` deep."""
     taps = int(0.04 * sr) | 1
     n = 1 << math.ceil(math.log2(8 * taps))
     freqs = np.fft.rfftfreq(n, 1.0 / sr)
     logf = np.log2(np.maximum(freqs, 1.0))
     gain = np.interp(logf, np.log2(np.array(BAND_CENTERS)), eq_db)
     if lowpass is not None and lowpass < sr / 2.0:
-        gain = gain + _shelf(freqs, lowpass, high=True)
+        gain = gain + _shelf(freqs, lowpass, high=True, depth_db=lowpass_db)
     if highpass is not None:
-        gain = gain + _shelf(freqs, highpass, high=False)
+        gain = gain + _shelf(freqs, highpass, high=False, depth_db=highpass_db)
     mag = 10.0 ** (np.maximum(gain, STOP_DB) / 20.0)
     full = np.concatenate([mag, mag[-2:0:-1]])  # the whole FFT circle
     cep = np.fft.ifft(np.log(full)).real
@@ -266,8 +276,8 @@ def match_channel(
 ) -> MatchResult:
     """Match `dub` (at `sr`, any channels) to the channel of `orig` (see the module docstring). `extra`: profiles
     of the character's other originals for a short line's EQ target (or a function returning them, called only
-    for a short line). `info`: {mode, applied, ref, eq_db, cutoff_hz, radio, radio_chain, low_hz,
-    ltas_db: {before, after}} (or `reason` when nothing was applied)."""
+    for a short line). `info`: {mode, applied, ref, eq_db, cutoff_hz, cutoff_db, radio, radio_chain, low_hz,
+    low_db, ltas_db: {before, after}} (or `reason` when nothing was applied)."""
     if mode not in MODES:
         raise ValueError(f"match mode must be one of {MODES}")
     info: dict[str, Any] = {"mode": mode, "applied": False}
@@ -290,19 +300,25 @@ def match_channel(
     if dub_p.speech_s < MIN_SPEECH_S or (not measured and ref == "line"):
         info["reason"] = "too little speech to measure"
         return MatchResult(dub, False, info)
-    cutoff = detect_cutoff(dub_p, line) if measured else None
-    low_edge = detect_radio(dub_p, line, cutoff)
-    radio = low_edge is not None
+    cut = detect_cutoff(dub_p, line) if measured else None
+    cutoff, cut_db = cut if cut is not None else (None, STOP_DB)
+    low = detect_radio(dub_p, line, cutoff)
+    radio = low is not None
     chain = radio and mode == "full"
-    eq = eq_curve(dub_p, target, cutoff, low_edge if chain else None)
-    out = apply_fir(dub, design_fir(sr, eq, lowpass=cutoff, highpass=low_edge if chain else None))
-    if chain:
-        out = apply_fir(saturate(out), design_fir(sr, np.zeros(len(BAND_CENTERS)), lowpass=cutoff, highpass=low_edge))
+    low_edge, low_db = low if chain and low is not None else (None, STOP_DB)
+    eq = eq_curve(dub_p, target, cutoff, low_edge)
+    if chain:  # the band-pass comes after the saturation, which adds harmonics above the cutoff
+        band = design_fir(sr, np.zeros(len(BAND_CENTERS)), lowpass=cutoff, highpass=low_edge,
+                          lowpass_db=cut_db, highpass_db=low_db)
+        out = apply_fir(saturate(apply_fir(dub, design_fir(sr, eq))), band)
+    else:
+        out = apply_fir(dub, design_fir(sr, eq, lowpass=cutoff, lowpass_db=cut_db))
     after = profile(out, sr)
     info.update({
         "applied": True, "ref": ref, "eq_db": [round(float(v), 1) for v in eq],
-        "cutoff_hz": None if cutoff is None else round(cutoff), "radio": radio, "radio_chain": chain,
-        "low_hz": round(low_edge) if chain and low_edge is not None else None,
+        "cutoff_hz": None if cutoff is None else round(cutoff),
+        "cutoff_db": None if cutoff is None else round(cut_db, 1), "radio": radio, "radio_chain": chain,
+        "low_hz": None if low_edge is None else round(low_edge), "low_db": None if low_edge is None else round(low_db, 1),
         "ltas_db": {"before": _round(band_distance(dub_p, line)), "after": _round(band_distance(after, line))},
     })
     return MatchResult(out, True, info)

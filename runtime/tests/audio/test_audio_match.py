@@ -92,14 +92,35 @@ def test_radio_original_gets_the_radio_chain_only_in_full_mode() -> None:
     assert eq.info["radio"] is True and eq.info["radio_chain"] is False and eq.info["low_hz"] is None
     assert full.info["radio"] is True and full.info["radio_chain"] is True
     assert 150 <= full.info["low_hz"] <= 400 and full.info["cutoff_hz"] == pytest.approx(3400, rel=0.15)
-    out = match.profile(full.audio, SR)
-    speech = match._speech_level(out.bands_db)
-    lows = [out.bands_db[b] - speech for b, fc in enumerate(match.BAND_CENTERS) if fc <= 125]
-    assert max(lows) < -30  # band-passed
+    assert full.info["cutoff_db"] == pytest.approx(match.STOP_DB) and full.info["low_db"] <= -30  # hard edges
+    out, src, ref = (match.profile(a, SR) for a in (full.audio, dub, orig))
+    rel = [p.bands_db - match._speech_level(p.bands_db) for p in (out, src, ref)]
+    lows = [b for b, fc in enumerate(match.BAND_CENTERS) if fc <= 125]
+    assert all(rel[0][b] < rel[1][b] - 25 and abs(rel[0][b] - rel[2][b]) < 12 for b in lows)  # band-passed
     assert full.info["ltas_db"]["after"] < eq.info["ltas_db"]["after"] < eq.info["ltas_db"]["before"]
     assert np.max(np.abs(full.audio)) <= np.max(np.abs(dub)) * 1.5  # saturation, no blow-up
     # a merely darker original is no radio
     assert match.match_channel(dub, SR, channel(voice(2.0, seed=2), TILT), SR, "full").info["radio"] is False
+
+
+def test_a_soft_phone_band_limit_counts_as_radio() -> None:
+    # highs from ~4 kHz 14 dB down, lows up to 200 Hz 15 dB down: no hard edges, still a phone/radio line
+    centers = np.array(match.BAND_CENTERS)
+    soft = np.where(centers >= 4000, -14.0, 0.0) + np.where(centers <= 200, -15.0, 0.0)
+    orig, dub = channel(voice(2.0, seed=2), soft), voice(2.0, seed=1)
+    eq = match.match_channel(dub, SR, orig, SR, "eq")
+    full = match.match_channel(dub, SR, orig, SR, "full")
+    assert 3500 <= full.info["cutoff_hz"] <= match.RADIO_MAX_CUTOFF_HZ
+    assert eq.info["radio"] is True and eq.info["radio_chain"] is False
+    assert full.info["radio"] is True and full.info["radio_chain"] is True and full.info["low_hz"] is not None
+    # the stop bands follow the soft limit instead of cutting 60 dB: the dub gets closer, not further
+    assert -20 <= full.info["cutoff_db"] <= -match.CUTOFF_DROP_DB and -20 <= full.info["low_db"] <= match.RADIO_LOW_DB
+    for res in (eq, full):
+        assert res.info["ltas_db"]["after"] < res.info["ltas_db"]["before"] * 0.6
+    # the same soft high cut with full lows is a band limit, not a radio
+    highs_only = match.match_channel(dub, SR, channel(voice(2.0, seed=2), np.where(centers >= 4000, -14.0, 0.0)),
+                                     SR, "full")
+    assert highs_only.info["cutoff_hz"] is not None and highs_only.info["radio"] is False
 
 
 def test_short_line_pools_the_characters_originals_and_off_or_silence_do_nothing() -> None:
