@@ -53,7 +53,7 @@ def audio(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(data)])
     monkeypatch.setitem(qc_worker._STATE, "audio_cache", None)
     for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir", "asr2", "asr2_dir",
-                "asr2_error"):
+                "asr2_error", "mos_backend", "mos_fallback_dir", "mos_used", "device"):
         monkeypatch.setitem(qc_worker._STATE, key, None)
     return data
 
@@ -282,6 +282,51 @@ def test_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delitem(sys.modules, "transformers")
     with pytest.raises(RuntimeError, match="hydra-core"):  # not retried
         qc_worker._get_asr2()
+
+
+def test_mos_backends_and_the_utmos_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
+    monkeypatch.setitem(qc_worker._STATE, "device", "cpu")
+    for key in ("mos_backend", "mos_fallback_dir", "mos_used"):
+        monkeypatch.setitem(qc_worker._STATE, key, None)
+
+    class Model:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def eval(self) -> Model:
+            return self
+
+        def to(self, device: str) -> Model:
+            return self
+
+    loaded: list[str] = []
+    monkeypatch.setattr(qc_worker, "_load_utmos22", lambda folder: loaded.append(f"utmos:{folder}") or Model("u"))
+    monkeypatch.setattr(qc_worker, "_load_distillmos", lambda folder: loaded.append(f"distill:{folder}") or Model("d"))
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos",
+                       "mos_fallback": "ut"})
+    assert qc_worker._get_mos().name == "d" and qc_worker._STATE["mos_used"] == "distillmos"
+    assert loaded == ["distill:dm"]
+
+    def missing(folder: str) -> Any:
+        raise ImportError("No module named 'distillmos'")
+
+    monkeypatch.setattr(qc_worker, "_load_distillmos", missing)
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm2", "mos_backend": "distillmos",
+                       "mos_fallback": "ut"})
+    assert qc_worker._get_mos().name == "u" and qc_worker._STATE["mos_used"] == "utmos22"  # fell back
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm3", "mos_backend": "distillmos"})
+    monkeypatch.setitem(qc_worker._STATE, "mos_fallback_dir", None)
+    with pytest.raises(RuntimeError, match="distillmos package"):
+        qc_worker._get_mos()
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "ut2", "mos_backend": "utmos22"})
+    assert qc_worker._get_mos().name == "u" and loaded[-1] == "utmos:ut2"
+
+
+def test_mos_reports_the_model_that_answered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "mos_used", "distillmos")
+    monkeypatch.setattr(qc_worker, "_mos_of", lambda path: 3.14159)
+    assert qc_worker.op_mos({"id": "a", "wav": "a.wav"}) == {"id": "a", "mos": 3.142, "mos_model": "distillmos"}
 
 
 def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> None:

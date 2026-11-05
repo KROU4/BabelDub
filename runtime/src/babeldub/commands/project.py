@@ -23,6 +23,7 @@ from babeldub.core.paths import projects_dir
 from babeldub.core.project import DEFAULT_SETTINGS, Project
 from babeldub.core.takes import follower_map
 from babeldub.envsetup.catalog import AUTO_ENGINE, PREMIUM_TTS, engine_for_language, load_catalog
+from babeldub.qa.qc import MOS_MODELS, default_mos_model
 
 Common = Callable[[argparse.ArgumentParser], None]
 
@@ -41,6 +42,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
     "tts.tier": ("auto", "cpu", "8gb", "12gb", "24gb"),
     "tts.best_of_mode": ("auto", "length", "score"),
     "tts.stress": ("off", "on"),
+    "qa.mos_model": MOS_MODELS,
 }
 PROTECTED_KEYS = {"_schema", "cli_version", "created", "slug", "game_dir", "target_lang"}
 STAGE_COMMANDS: dict[str, str] = {
@@ -247,6 +249,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "source_lang": None,
             "cast": {"policy": policy, "list": chars},
             "translation": {"mode": args.mode},
+            "qa": {"mos_model": default_mos_model()},
         }
         if len(lang_parts) > 1:
             data["target_locale"] = f"{target_lang}-{lang_parts[1].upper()}"

@@ -8,6 +8,7 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 ### Added
 
 - **Second Russian ASR: GigaAM-v3 CTC** (`ai-sage/GigaAM-v3`, revision `ctc` pinned to commit `15ef3b5`, MIT, 0.44 GB; catalog `GigaAM-v3-ctc`, installed by default for Russian targets on every tier). The qc env gains `transformers==4.57.1`, `hydra-core==1.3.2`, `omegaconf==2.3.0`, `sentencepiece==0.2.1` (the versions of the model card); the worker op `asr2` (load key `asr2_model`) loads it lazily. For a Russian target QA and `synth score` take the lowest CER of Whisper (plain and vowel-folded) and GigaAM (`cer_asr2`), and QA flags `asr_disagree` when the two ASRs' CERs differ by more than `qa.max_asr_disagreement` (0.15); `qa` reports `asr2` and `asr_disagree` counts. Without the model, or in an older qc env that lacks the packages, QA runs with Whisper alone and a warning.
+- **Distill-MOS as the MOS model** (`microsoft/Distill-MOS` v7, MIT; package `distillmos==0.9.1` in the qc env, checkpoint pinned by commit and sha256 in the catalog as `distillmos`, 17 MB). `qa.mos_model = distillmos | utmos22`: new projects get `distillmos` when the qc env has (or will get) the package, else `utmos22`; projects without the key keep UTMOS22. The worker's `mos` reply names the model that answered (Distill-MOS falls back to UTMOS22 when its package or weights are missing). `qa/mos_baseline.json` now records the model (`{model, chars}`): a model change, or a v0.3 file, measures the originals again.
 
 ### Fixed
 

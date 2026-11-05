@@ -41,6 +41,7 @@ class FakeQc:
         self.texts2: dict[str, str] = {}  # what the second ASR (GigaAM) hears
         self.prosody: dict[str, dict[str, Any]] = {}
         self.mos: dict[str, float] = {}
+        self.mos_model = "utmos22"  # the model the fake worker says answered
         self.fail: set[str] = set()
         self.loads: list[dict[str, Any]] = []
         self.requests: list[dict[str, Any]] = []
@@ -71,7 +72,7 @@ class FakeQc:
         if msg["op"] == "prosody" and k in self.prosody:
             return {"ok": True, "op": "prosody", "id": msg.get("id"), **self.prosody[k]}
         if msg["op"] == "mos" and k in self.mos:
-            return {"ok": True, "op": "mos", "id": msg.get("id"), "mos": self.mos[k]}
+            return {"ok": True, "op": "mos", "id": msg.get("id"), "mos": self.mos[k], "mos_model": self.mos_model}
         return {"ok": False, "op": msg["op"], "error": "unsupported"}
 
     def close(self) -> None:

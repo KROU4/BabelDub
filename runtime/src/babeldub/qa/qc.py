@@ -2,9 +2,10 @@
 
 The worker is workers/qc_worker.py running in BABELDUB_HOME/envs/qc. QcSession starts it via
 babeldub.workers.client.WorkerClient, holds the project GPU lock while it runs on CUDA
-(GPU-first policy, see core/compute.py) and wraps the worker ops. MOS (UTMOS22) and emotion
-(emotion2vec+, opt-in) are optional: `mos_model_dir`/`emotion_model_dir` return None when the
-weights are not downloaded, and the worker loads them only on their first request.
+(GPU-first policy, see core/compute.py) and wraps the worker ops. MOS (Distill-MOS or UTMOS22),
+emotion (emotion2vec+, opt-in) and the second Russian ASR (GigaAM-v3) are optional: `mos_setup`,
+`emotion_model_dir` and `asr2_model_dir` return None when the weights are not downloaded, and the
+worker loads them only on their first request.
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ QC_SCRIPT = "qc_worker.py"
 DEFAULT_ASR_MODEL = "faster-whisper-large-v3-turbo"
 DEFAULT_ASR2_MODEL = "GigaAM-v3-ctc"  # second ASR for Russian targets
 DEFAULT_SV_MODEL = "spkrec-ecapa-voxceleb"
-DEFAULT_MOS_MODEL = "utmos22-strong"
+DEFAULT_MOS_MODEL = "utmos22-strong"  # UTMOS22 folder; also what an older project without qa.mos_model uses
+DISTILLMOS = "distillmos"  # qa.mos_model value and catalog folder of Distill-MOS
+MOS_MODELS = (DISTILLMOS, "utmos22")  # the values `set qa.mos_model` accepts
 DEFAULT_EMOTION_MODEL = "emotion2vec_plus_base"
 DEFAULT_ACCENT_DIR = "ruaccent"  # RUAccent workdir: it downloads its dictionaries there on first use
 QC_LOG = "logs/qc_worker.log"
@@ -54,9 +57,35 @@ def _optional_dir(settings: dict[str, Any], key: str, default: str) -> Path | No
     return folder if folder.is_dir() and any(folder.iterdir()) else None
 
 
-def mos_model_dir(settings: dict[str, Any]) -> Path | None:
-    """UTMOS22 checkpoint folder (`qa.mos_model`), None when it is not downloaded."""
-    return _optional_dir(settings, "mos_model", DEFAULT_MOS_MODEL)
+def mos_setup(settings: dict[str, Any]) -> tuple[str, Path, Path | None] | None:
+    """(backend, checkpoint folder, UTMOS22 fallback folder) of `qa.mos_model`, None without any MOS weights.
+
+    `distillmos` uses the catalog folder `distillmos` (falling back to UTMOS22 when it is not downloaded, or in
+    the worker when the distillmos package is missing); `utmos22` the folder `utmos22-strong`. Any other value
+    is an older project's UTMOS22 folder name or path (the setting used to name the folder)."""
+    value = str((settings.get("qa") or {}).get("mos_model") or DEFAULT_MOS_MODEL)
+    utmos_name = DEFAULT_MOS_MODEL if value in MOS_MODELS else value
+    utmos_dir = _optional_dir({"qa": {"mos_model": utmos_name}}, "mos_model", DEFAULT_MOS_MODEL)
+    if value == DISTILLMOS:
+        distill_dir = _optional_dir({}, "distillmos", DISTILLMOS)
+        if distill_dir is not None:
+            return DISTILLMOS, distill_dir, utmos_dir
+    return ("utmos22", utmos_dir, None) if utmos_dir is not None else None
+
+
+def default_mos_model() -> str:
+    """`qa.mos_model` of a new project: distillmos when the qc env has the distillmos package (or is not
+    installed yet: `setup` installs the current catalog spec, which has it), else utmos22."""
+    from babeldub.envsetup.catalog import env_marker, load_catalog
+
+    engine = load_catalog().engines.get(QC_ENV)
+    if engine is None:
+        return "utmos22"
+    if not env_python(QC_ENV).exists():
+        packages: list[Any] = list(engine.packages)
+    else:
+        packages = list(((env_marker(engine) or {}).get("spec") or {}).get("packages") or [])
+    return DISTILLMOS if any(str(p).startswith("distillmos") for p in packages) else "utmos22"
 
 
 def emotion_model_dir(settings: dict[str, Any]) -> Path | None:
@@ -115,6 +144,7 @@ class QcSession:
         self.has_mos = False
         self.has_emotion = False
         self.has_asr2 = False
+        self.mos_model: str | None = None  # distillmos | utmos22: requested, then the model that answered
 
     @classmethod
     def open(
@@ -152,10 +182,12 @@ class QcSession:
         if need_sv:
             req["sv_model"] = str(sv_model_dir(settings))
             req["sv_savedir"] = str(hf_home() / "speechbrain" / sv_model_dir(settings).name)
-        mos_dir = mos_model_dir(settings) if need_mos else None
+        mos = mos_setup(settings) if need_mos else None
         emo_dir = emotion_model_dir(settings) if need_emotion else None
-        if mos_dir is not None:
-            req["mos_model"] = str(mos_dir)
+        if mos is not None:
+            req.update(mos_model=str(mos[1]), mos_backend=mos[0])
+            if mos[2] is not None:
+                req["mos_fallback"] = str(mos[2])
         if emo_dir is not None:
             req["emotion_model"] = str(emo_dir)
         if need_accent:
@@ -177,7 +209,8 @@ class QcSession:
             ) from err
         actual = str(reply.get("device") or wanted)
         session = cls(client, actual, lock, reply.get("info") or {})
-        session.has_mos = mos_dir is not None
+        session.has_mos = mos is not None
+        session.mos_model = mos[0] if mos is not None else None
         session.has_emotion = emo_dir is not None
         session.has_asr2 = asr2_dir is not None
         warning = device_warning(wanted, actual)
@@ -257,7 +290,10 @@ class QcSession:
                 "emb": np.asarray(reply.get("emb") or [], dtype=np.float32)}
 
     def mos(self, key: str, wav: Path) -> float:
-        return float(self._call({"op": "mos", "id": key, "wav": str(wav)})["mos"])
+        """MOS of a file; `mos_model` then names the model that answered (Distill-MOS may fall back to UTMOS22)."""
+        reply = self._call({"op": "mos", "id": key, "wav": str(wav)})
+        self.mos_model = reply.get("mos_model") or self.mos_model
+        return float(reply["mos"])
 
     def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
               orig_wav: Path | None = None, refs: list[Path] | None = None,

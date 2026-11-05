@@ -33,9 +33,7 @@ from babeldub.core.jsonl import (
     append_jsonl,
     latest_by,
     now_iso,
-    read_json,
     read_jsonl,
-    write_json,
     write_jsonl,
 )
 from babeldub.core.output import EXIT_ATTENTION, EXIT_OK, EXIT_USAGE, BabelDubError, clip, emit
@@ -43,8 +41,9 @@ from babeldub.core.project import Project
 from babeldub.core.takes import follower_map, project_followers
 from babeldub.qa.baseline import (
     BASELINE,
+    MOS_BASELINE,
+    MosBaseline,
     char_centroids,
-    clean_items,
     clean_original,
     compute_baselines,
     load_baseline,
@@ -66,8 +65,6 @@ from babeldub.qa.qc import QcItemError, QcSession, cer_report
 QA_SCHEMA = "babeldub.qa/1"
 DECISIONS_SCHEMA = "babeldub.decisions/1"
 FLUSH_EVERY = 25  # QA rows are appended in chunks, so an interrupted run keeps its progress
-MOS_BASELINE = "qa/mos_baseline.json"  # {char_id: {median, n}}: MOS of the character's clean originals
-MOS_BASELINE_LINES = 8
 
 
 def _r(value: float | None, digits: int = 4) -> float | None:
@@ -259,29 +256,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
         save_baseline(project.path(BASELINE), baseline)
         centroids = char_centroids(root, {cid: v for cid, v in char_lines.items() if cid in voices}, embedder)
 
-        mos_base: dict[str, Any] = {} if args.rebaseline else dict(read_json(project.path(MOS_BASELINE), default={}) or {})
-
-        mos_tried: dict[str, float | None] = {}
-
-        def orig_mos_of(cid: str) -> float | None:
-            """Median MOS of the character's clean originals (measured once, cached in qa/mos_baseline.json;
-            a failed measurement is not cached: the next run tries again)."""
-            if (mos_base.get(cid) or {}).get("median") is not None:
-                return mos_base[cid]["median"]
-            if cid not in mos_tried:
-                values: list[float] = []
-                for line_id, path in clean_items(root, char_lines.get(cid, []), MOS_BASELINE_LINES):
-                    try:
-                        values.append(session.mos(f"orig:{line_id}", path))
-                    except QcItemError:
-                        continue
-                mos_tried[cid] = round(statistics.median(values), 3) if values else None
-                if values:
-                    mos_base[cid] = {"median": mos_tried[cid], "n": len(values)}
-                else:
-                    mos_base.pop(cid, None)  # an older run may have cached a failed (None) median
-                write_json(project.path(MOS_BASELINE), mos_base)
-            return mos_tried[cid]
+        mos_base = MosBaseline(root, project.path(MOS_BASELINE), session, char_lines, rebaseline=args.rebaseline)
 
         def orig_emb(line_id: str) -> np.ndarray | None:
             line = lines.get(line_id)
@@ -367,7 +342,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             psim = prosody_similarity(pros_dub, pros_orig)
             dub_range = (pros_dub or {}).get("f0_range_st")
             orig_range = (pros_orig or {}).get("f0_range_st")
-            orig_mos = orig_mos_of(cid) if mos_v is not None else None
+            orig_mos = mos_base.median(cid) if mos_v is not None else None
             ratio = post.get("ratio")
             if ratio is None and levels is not None:
                 target = post.get("target_s") or (line.get("audio") or {}).get("dur_s")

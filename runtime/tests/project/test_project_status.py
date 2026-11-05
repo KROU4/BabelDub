@@ -122,3 +122,5 @@ def test_set_validation(bd, game):
     assert bd("set")[0] == 2
     code, out = bd("set", "tts.speed_hack=1")
     assert code == 0 and "not a known setting" in out["warnings"][0]
+    assert bd("set", "qa.mos_model=utmos22")[0] == 0
+    assert bd("set", "qa.mos_model=pesq")[0] == 2

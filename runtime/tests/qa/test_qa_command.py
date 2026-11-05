@@ -296,7 +296,43 @@ def test_qa_mos_prosody_timing_and_line_classes(dub, fake_qc, run, home) -> None
     assert qa[ids["mixed"]]["class"] == "mixed" and ids["mixed"] in out["attention"]
     assert out["mos_median"] == 3.4
     mos_base = json.loads(dub.project.path("qa/mos_baseline.json").read_text(encoding="utf-8"))
-    assert mos_base["hero"] == {"median": 3.5, "n": 8}
+    assert mos_base["chars"]["hero"] == {"median": 3.5, "n": 8}
+    assert mos_base["model"] == "utmos22"  # an older project without qa.mos_model keeps UTMOS22
+    assert fake_qc.loads[0]["mos_backend"] == "utmos22" and "mos_fallback" not in fake_qc.loads[0]
+
+
+def test_qa_mos_baseline_is_remeasured_when_the_mos_model_changes(dub, fake_qc, run, home) -> None:
+    from pathlib import Path
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    for name in ("utmos22-strong", "distillmos"):
+        (home / "models" / name).mkdir(parents=True)
+        (home / "models" / name / "w.pt").write_bytes(b"x")
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    lid = dub.line("hero", 3.0)
+    dub.translate(lid, "Привет.")
+    wav = dub.dub(lid, voice="hero", asr="привет")
+    fake_qc.mos[key_of(wav)] = 3.0
+    for b in base:
+        fake_qc.mos[key_of(dub.project.path(next(x for x in dub.lines if x["id"] == b)["audio"]["wav"]))] = 3.6
+    dub.save()
+    # a v0.3 baseline file (no model recorded: UTMOS22)
+    path = dub.project.path("qa/mos_baseline.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"hero": {"median": 4.4, "n": 8}}), encoding="utf-8")
+    dub.project.data.setdefault("qa", {})["mos_model"] = "distillmos"
+    dub.project.save()
+    fake_qc.mos_model = "distillmos"
+    run(["qa", "--project", str(dub.project.root)])
+    load = fake_qc.loads[0]
+    assert load["mos_backend"] == "distillmos" and load["mos_model"].endswith("distillmos")
+    assert load["mos_fallback"].endswith("utmos22-strong")
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[lid]["orig_mos"] == 3.6  # measured again with Distill-MOS, not the UTMOS22 4.4
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["model"] == "distillmos" and saved["chars"]["hero"]["median"] == 3.6
 
 
 def test_qa_russian_vowel_reduction_is_not_a_cer_failure(dub, fake_qc, run) -> None:

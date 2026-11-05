@@ -78,7 +78,10 @@ def test_auto_models_by_tier_and_language():
         "GigaAM-v3-ctc",  # second Russian ASR
         "spkrec-ecapa-voxceleb",
         "utmos22-strong",
+        "distillmos",  # default MOS of new projects; UTMOS22 stays as its fallback
     ]
+    dmos = cat.model("distillmos")
+    assert dmos.url.endswith("distill_mos_v7.pt") and len(dmos.sha256) == 64 and dmos.license == "MIT"
     giga = cat.model("GigaAM-v3-ctc")
     assert giga.repo == "ai-sage/GigaAM-v3" and giga.revision and giga.license == "MIT" and giga.languages == ["ru"]
     assert "emotion2vec_plus_base" not in ru  # FunASR model license: opt-in only
@@ -88,10 +91,11 @@ def test_auto_models_by_tier_and_language():
     nolang = [m.name for m in auto_models(cat, ["qwen3tts"], "8gb", None)]
     assert nolang == ["Qwen3-TTS-12Hz-1.7B-Base"]
     cpu = [m.name for m in auto_models(cat, ["qwen3tts", "qc"], "cpu", "ru")]
-    assert cpu == ["Qwen3-TTS-12Hz-0.6B-Base", "faster-whisper-large-v3-turbo", "GigaAM-v3-ctc", "spkrec-ecapa-voxceleb"]
+    assert cpu == ["Qwen3-TTS-12Hz-0.6B-Base", "faster-whisper-large-v3-turbo", "GigaAM-v3-ctc", "spkrec-ecapa-voxceleb",
+                   "distillmos"]
     pl = [m.name for m in auto_models(cat, ["chatterbox", "qc"], "12gb", "pl")]
     assert set(pl) == {"chatterbox-multilingual", "faster-whisper-large-v3-turbo", "spkrec-ecapa-voxceleb",
-                       "utmos22-strong"}
+                       "utmos22-strong", "distillmos"}
 
 
 def test_default_model_prefers_general_base():

@@ -109,3 +109,47 @@ def load_baseline(path: Path) -> dict[str, Any]:
 
 def save_baseline(path: Path, data: dict[str, Any]) -> None:
     write_json(path, data)
+
+
+MOS_BASELINE = "qa/mos_baseline.json"  # {"model", "chars": {char_id: {median, n}}}
+MOS_BASELINE_LINES = 8
+
+
+class MosBaseline:
+    """Median MOS of each character's clean originals, measured once by the session's MOS model and cached
+    in qa/mos_baseline.json together with the model's name: a file of another model (or of the format before
+    the model was recorded, which was always UTMOS22) is measured again. A failed measurement is not cached."""
+
+    def __init__(self, root: Path, path: Path, session: Any, char_lines: dict[str, list[dict[str, Any]]],
+                 rebaseline: bool = False) -> None:
+        self.root, self.path, self.session, self.char_lines = root, path, session, char_lines
+        data = {} if rebaseline else dict(read_json(path, default={}) or {})
+        if data and "chars" not in data:  # v0.3 file: {char_id: {median, n}} measured by UTMOS22
+            data = {"model": "utmos22", "chars": data}
+        self.model: str | None = data.get("model")
+        self.chars: dict[str, Any] = dict(data.get("chars") or {})
+        self.tried: dict[str, float | None] = {}
+
+    def median(self, cid: str) -> float | None:
+        from babeldub.qa.qc import QcItemError
+
+        used = getattr(self.session, "mos_model", None)
+        if used and used != self.model:  # another MOS model: its scale differs, measure again
+            self.model, self.chars, self.tried = used, {}, {}
+        if (self.chars.get(cid) or {}).get("median") is not None:
+            return float(self.chars[cid]["median"])
+        if cid not in self.tried:
+            values: list[float] = []
+            for line_id, wav in clean_items(self.root, self.char_lines.get(cid, []), MOS_BASELINE_LINES):
+                try:
+                    values.append(self.session.mos(f"orig:{line_id}", wav))
+                except QcItemError:
+                    continue
+            self.tried[cid] = round(statistics.median(values), 3) if values else None
+            if values:
+                self.chars[cid] = {"median": self.tried[cid], "n": len(values)}
+            else:
+                self.chars.pop(cid, None)  # an older run may have cached a failed (None) median
+            self.model = self.model or getattr(self.session, "mos_model", None)
+            write_json(self.path, {"model": self.model, "chars": self.chars})
+        return self.tried[cid]

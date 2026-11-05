@@ -1,5 +1,5 @@
 """BabelDub QC worker: ASR (faster-whisper; GigaAM-v3 CTC for Russian), VAD (Silero), prosody (librosa pyin), speaker
-embeddings (SpeechBrain ECAPA), naturalness MOS (UTMOS22 via SpeechMOS) and, opt-in, emotion
+embeddings (SpeechBrain ECAPA), naturalness MOS (Distill-MOS or UTMOS22 via SpeechMOS) and, opt-in, emotion
 (emotion2vec+ via funasr) and Russian stress marks for homographs (RUAccent, opt-in via tts.stress).
 
 Runs inside the `qc` engine venv as `<env python> -u qc_worker.py`; it never imports babeldub.
@@ -22,7 +22,9 @@ answer per command on stdout; all logs go to stderr.
                                                               "voiced_ratio", "voiced_s", "f0_bounds_hz", "dur_s",
                                                               "contour"}: two-pass pyin
   {"op": "emotion", "id", "wav"}                          -> {"label", "score", "emb": [floats]}
-  {"op": "mos", "id", "wav"}                              -> {"mos"}
+  {"op": "mos", "id", "wav"}                              -> {"mos", "mos_model": "distillmos|utmos22"}
+      (load keys: mos_model = checkpoint folder, mos_backend = distillmos|utmos22, mos_fallback = UTMOS22 folder
+       used when the distillmos package is missing)
   {"op": "embed", "id": ..., "wav": ...}                   -> {"emb": [192 floats], "dur_s"}
   {"op": "sim", "id": ..., "wav": ..., "refs": [...]}      -> {"sim": mean cosine, "sims": [...]}
   {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
@@ -69,6 +71,9 @@ _STATE: dict[str, Any] = {
     "emb_cache": {},
     "mos": None,
     "mos_dir": None,
+    "mos_backend": None,  # distillmos | utmos22 (the load request's `mos_backend`, default utmos22)
+    "mos_fallback_dir": None,  # UTMOS22 folder used when the distillmos package is missing
+    "mos_used": None,  # the model that answers MOS requests
     "emotion": None,
     "emotion_dir": None,
     "accent": None,
@@ -245,6 +250,11 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     if asr_dir and (_STATE["asr"] is None or _STATE["asr_dir"] != asr_dir):
         info.update(_load_asr(asr_dir, device, req.get("compute_type")))
     # heavier optional models load on their first request
+    backend = req.get("mos_backend") or "utmos22"
+    if req.get("mos_model") and backend != (_STATE["mos_backend"] or "utmos22"):
+        _STATE.update(mos=None, mos_dir=None)
+    if req.get("mos_model"):
+        _STATE.update(mos_backend=backend, mos_fallback_dir=req.get("mos_fallback"))
     for key in ("mos", "emotion", "accent", "asr2"):
         folder = req.get(f"{key}_model")
         if folder and folder != _STATE[f"{key}_dir"]:
@@ -260,22 +270,55 @@ def _torch_device() -> str:
     return "cuda:0" if device == "cuda" else device
 
 
+def _checkpoint(folder: str, what: str) -> Path:
+    ckpts = sorted(Path(folder).glob("*.pt")) + sorted(Path(folder).glob("*.pth"))
+    if not ckpts:
+        raise FileNotFoundError(f"no {what} checkpoint (*.pt) in {folder}")
+    return ckpts[0]
+
+
+def _load_utmos22(folder: str) -> Any:
+    import torch
+    from speechmos.utmos22.strong.model import UTMOS22Strong
+
+    model = UTMOS22Strong()
+    model.load_state_dict(torch.load(str(_checkpoint(folder, "UTMOS22")), map_location="cpu", weights_only=True))
+    return model
+
+
+def _load_distillmos(folder: str) -> Any:
+    import distillmos  # ImportError: an older qc env without the package
+    import torch
+
+    model = distillmos.ConvTransformerSQAModel(load_weights=False)
+    state = torch.load(str(_checkpoint(folder, "Distill-MOS")), map_location="cpu", weights_only=True)
+    model.load_state_dict(state["model"] if "model" in state else state)
+    return model
+
+
 def _get_mos() -> Any:
+    """The MOS model of `mos_backend` (distillmos | utmos22); Distill-MOS without its package falls back to
+    UTMOS22 when `mos_fallback` is set. `_STATE["mos_used"]` names the model that answers."""
     if _STATE["mos"] is None:
         folder = _STATE["mos_dir"]
         if not folder:
             raise RuntimeError("MOS model not configured: send {'op': 'load', 'mos_model': dir} first")
-        import torch
-        from speechmos.utmos22.strong.model import UTMOS22Strong
-
-        ckpts = sorted(Path(folder).glob("*.pt")) + sorted(Path(folder).glob("*.pth"))
-        if not ckpts:
-            raise FileNotFoundError(f"no UTMOS22 checkpoint (*.pt) in {folder}")
-        model = UTMOS22Strong()
-        model.load_state_dict(torch.load(str(ckpts[0]), map_location="cpu", weights_only=True))
+        used = _STATE["mos_backend"] or "utmos22"
+        if used == "distillmos":
+            try:
+                model = _load_distillmos(folder)
+            except ImportError as exc:
+                fallback = _STATE["mos_fallback_dir"]
+                if not fallback:
+                    raise RuntimeError("Distill-MOS needs the distillmos package in the qc env: "
+                                       "babeldub setup --engines qc") from exc
+                log(f"distillmos is not importable ({exc}): MOS falls back to UTMOS22 from {fallback}")
+                model, used = _load_utmos22(fallback), "utmos22"
+        else:
+            model = _load_utmos22(folder)
         model.eval().to(_torch_device())
-        _STATE["mos"] = model
-        log(f"MOS model loaded from {ckpts[0]}")
+        _STATE.update(mos=model, mos_used=used)
+        log(f"MOS model {used} loaded")
     return _STATE["mos"]
 
 
@@ -650,11 +693,14 @@ def _mos_of(path: str) -> float:
     model = _get_mos()
     wave = torch.from_numpy(_audio_16k(path)).unsqueeze(0).to(_torch_device())
     with torch.inference_mode():
+        if _STATE["mos_used"] == "distillmos":  # [batch, samples] at 16 kHz -> [batch] MOS 1..5
+            return float(model(wave).reshape(-1)[0])
         return float(model(wave, SV_SR).reshape(-1)[0])
 
 
 def op_mos(req: dict[str, Any]) -> dict[str, Any]:
-    return {"id": req.get("id"), "mos": round(_mos_of(req["wav"]), 3)}
+    mos = round(_mos_of(req["wav"]), 3)
+    return {"id": req.get("id"), "mos": mos, "mos_model": _STATE["mos_used"]}
 
 
 def _norm_text(text: str | None) -> str:
@@ -771,6 +817,7 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             unavailable.append("mos")
         else:
             out["mos"] = round(_mos_of(req["wav"]), 3)
+            out["mos_model"] = _STATE["mos_used"]
     if "prosody" in want:
         hint = req.get("f0_hint_hz")
         out["prosody"] = op_prosody({"wav": req["wav"], "f0_hint_hz": hint})
