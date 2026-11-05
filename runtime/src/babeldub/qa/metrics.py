@@ -18,6 +18,8 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from babeldub.audio import match
+
 _MARKUP_RE = re.compile(r"\{[^{}]*\}|<[^<>]*>|\[[^\[\]]*\]")
 _APOSTROPHES = "'’ʼ`´"
 _SPACE_RE = re.compile(r"\s+")
@@ -172,6 +174,13 @@ def audio_levels(path: Path) -> AudioLevels:
         active = rms
     clip_frac = float(np.mean(np.abs(data) >= 0.999))
     return AudioLevels(n / float(sr), int(sr), _db(peak), _db(rms), _db(active), clip_frac)
+
+
+def ltas_distance_db(dub: np.ndarray, dub_sr: int, orig: np.ndarray, orig_sr: int) -> float | None:
+    """Channel distance: mean |difference| (dB) of the 1/3-octave long-term average spectra of the speech frames
+    of `dub` and `orig` (80 Hz - 16 kHz, the bands both rates have), after removing their median level offset;
+    None when either has under 0.3 s of speech. Informational (QA `ltas_db`), not a fail reason."""
+    return match.band_distance(match.profile(dub, dub_sr), match.profile(orig, orig_sr))
 
 
 def unit(vec: Sequence[float] | np.ndarray) -> np.ndarray:
