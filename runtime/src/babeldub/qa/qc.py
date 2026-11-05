@@ -307,6 +307,7 @@ class QcSession:
         if f0_hint:
             req["f0_hint_hz"] = round(float(f0_hint), 1)
         reply = self._call(req)
+        self.mos_model = reply.get("mos_model") or self.mos_model
         return {k: reply.get(k) for k in ("cer", "cer_folded", "asr_text", "asr_text_raw", "asr2_text", "cer2",
                                           "sim", "emo_cos", "mos", "mos_model", "prosody", "orig_prosody",
                                           "unavailable")}

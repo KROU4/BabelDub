@@ -128,3 +128,25 @@ def test_set_validation(bd, game):
     assert code == 0 and "not a known setting" in out["warnings"][0]
     assert bd("set", "qa.mos_model=utmos22")[0] == 0
     assert bd("set", "qa.mos_model=pesq")[0] == 2
+
+
+def test_set_rank_weights(bd, game):
+    _, init = bd("init", game, "--lang", "ru")
+    path = Path(init["project"]) / layout.PROJECT_JSON
+    assert read_json(path)["qa"]["rank_weights"]["sim"] == 0.3  # new projects carry the defaults
+    code, out = bd("set", "qa.rank_weights.sim=0.2", "qa.rank_weights.liveliness=0.3")
+    assert code == 0 and "warnings" not in out and out["changed"]["qa.rank_weights.sim"] == {"old": 0.3, "new": 0.2}
+    assert read_json(path)["qa"]["rank_weights"]["liveliness"] == 0.3
+    code, out = bd("set", "qa.rank_weights.timbre=0.2")
+    assert code == 2 and "unknown rank weight" in out["error"]
+    assert bd("set", "qa.rank_weights.sim=2")[0] == 2
+    assert bd("set", "qa.rank_weights.sim=high")[0] == 2
+    assert bd("set", "qa.rank_weights=0.5")[0] == 2
+    assert read_json(path)["qa"]["rank_weights"]["sim"] == 0.2  # a rejected set changes nothing
+    # a project created before the setting existed gets the section on its first key
+    data = read_json(path)
+    del data["qa"]["rank_weights"]
+    write_json(path, data)
+    code, out = bd("set", "qa.rank_weights.mos=0.15")
+    assert code == 0 and read_json(path)["qa"]["rank_weights"] == {"mos": 0.15}
+    assert bd("set", "qa.rank_weights=null")[0] == 0 and read_json(path)["qa"]["rank_weights"] is None

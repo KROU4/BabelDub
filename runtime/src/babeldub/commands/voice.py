@@ -1638,17 +1638,83 @@ def _open_scorer(project: Project, wait_lock: float) -> Any:
                           wait_lock=wait_lock, owner="synth:score")
 
 
-def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any) -> dict[str, Any]:
+def _cand_name(row: dict[str, Any], cand: dict[str, Any]) -> str:
+    return f"{make_uid(str(row['id']))}_s{cand['seed']}"
+
+
+def _convert_for_scoring(project: Project, rows: list[dict[str, Any]], wait_lock: float,
+                         notes: list[str]) -> tuple[dict[str, Path], set[str]]:
+    """RVC-convert the candidates of characters with a model before they are scored ({name: converted wav},
+    the characters involved). Without Applio they are scored as they are, with the low `sim_rvc` weight."""
+    from babeldub.commands.vc import convert_for_scoring, load_models
+
+    models = load_models(project)
+    jobs: dict[str, list[tuple[str, Path]]] = {}
+    for row in rows:
+        cid = str(row.get("char_id"))
+        if cid not in models:
+            continue
+        for cand in (row.get("best_of") or {}).get("cands") or []:
+            wav = _abs(project, cand.get("wav"))
+            if wav is not None and wav.exists():
+                jobs.setdefault(cid, []).append((_cand_name(row, cand), wav))
+    if not jobs:
+        return {}, set()
+    try:
+        converted, errors = convert_for_scoring(project, jobs, wait_lock)
+    except BabelDubError as err:
+        notes.append(f"RVC before scoring skipped ({err}); the voice similarity of {', '.join(sorted(jobs))} "
+                     "weighs qa.rank_weights.sim_rvc")
+        return {}, set(jobs)
+    if errors:
+        notes.append(f"RVC before scoring failed for {len(errors)} candidate(s), e.g. {errors[0]}; "
+                     "those lines are scored unconverted")
+    return converted, set(jobs)
+
+
+def _score_pass(project: Project, rows: list[dict[str, Any]], wait_lock: float,
+                notes: list[str]) -> tuple[dict[str, Any], str]:
+    """RVC before scoring (characters with a model), then the qc session ranks; (summary, device)."""
+    from babeldub.commands.vc import drop_scoring_files
+
+    converted, rvc_chars = _convert_for_scoring(project, rows, wait_lock, notes)
+    try:
+        with _open_scorer(project, wait_lock) as session:
+            summary = score_candidates(project, rows, session, converted=converted)
+            device = session.device
+    finally:
+        drop_scoring_files(project, rvc_chars)
+    return summary, device
+
+
+def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
+                     converted: dict[str, Path] | None = None) -> dict[str, Any]:
     """Pass 2 of best-of: score every kept candidate with the qc worker, keep the winner as the line's
-    take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest."""
+    take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest.
+    `converted`: {candidate name: RVC-converted wav} scored in place of the candidate's own file."""
+    from babeldub.cast.characters import UNKNOWN_ID
     from babeldub.commands.vc import load_models
-    from babeldub.qa.metrics import prosody_similarity
+    from babeldub.qa.baseline import MOS_BASELINE, MosBaseline, char_f0_hints
+    from babeldub.qa.metrics import f0_shift_st, prosody_similarity, voiced_seconds
     from babeldub.qa.qc import QcItemError, cer_report
 
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
     chosen = {str(r["char_id"]): r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")}
     rvc = set(load_models(project))
+    converted = converted or {}
     max_cer = float(project.setting("qa", "max_cer", 0.15))
+    mos_drop = float(project.setting("qa", "mos_drop", 1.0))
+    min_voiced = float(project.setting("qa", "pitch_min_voiced_s", 0.5))
+    weights = best_rank.weights_from(project.setting("qa", "rank_weights"))
+    assign = {r["id"]: str(r["char_id"]) for r in read_jsonl(project.path(layout.ASSIGN)) if r.get("char_id")}
+    f0_hints = char_f0_hints(load_analysis(project), assign)
+    mos_base = None
+    if getattr(session, "has_mos", False):
+        char_lines: dict[str, list[dict[str, Any]]] = {}
+        for lid, cid in assign.items():
+            if lid in lines:
+                char_lines.setdefault(cid, []).append(lines[lid])
+        mos_base = MosBaseline(project.root, project.path(MOS_BASELINE), session, char_lines)
     lang = project.target_lang
     scored, changed, done, errors = 0, 0, 0, []
     results = project.path(layout.SYNTH_RESULTS)
@@ -1665,33 +1731,50 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
         orig = _orig_wav(project, line)
         ref = chosen.get(str(row.get("char_id")))
         refs = [p for p in (orig, _abs(project, (ref or {}).get("wav"))) if p is not None and p.exists()]
+        cid = str(row.get("char_id"))
+        hint = f0_hints.get(cid)
         ranked: list[best_rank.Candidate] = []
+        all_converted = True
         for cand in cands:
             wav = _abs(project, cand["wav"])
             assert wav is not None
+            score_wav = converted.get(_cand_name(row, cand))
+            all_converted = all_converted and score_wav is not None
             try:
-                sc = session.score(f"{row['id']}#s{cand['seed']}", wav, text=row.get("text"), lang=lang,
-                                   orig_wav=orig, refs=refs, want=SCORE_WANTS)
+                sc = session.score(f"{row['id']}#s{cand['seed']}", score_wav or wav, text=row.get("text"), lang=lang,
+                                   orig_wav=orig, refs=refs, want=SCORE_WANTS, f0_hint=hint)
             except QcItemError as exc:
                 errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
                 continue
             cer_v = sc.get("cer")
             if sc.get("asr_text") is not None:  # the lowest CER: plain, vowel-folded and the second ASR (ru)
                 cer_v = cer_report(session, row.get("text"), sc["asr_text"], lang, asr2_text=sc.get("asr2_text"))["cer"]
+            dub_p, orig_p = sc.get("prosody") or {}, sc.get("orig_prosody") or {}
+            voiced = [voiced_seconds(dub_p), voiced_seconds(orig_p)]
+            shift = (f0_shift_st(dub_p.get("f0_median_hz"), orig_p.get("f0_median_hz"))
+                     if all(v is not None and v >= min_voiced for v in voiced) else None)
             ranked.append(best_rank.Candidate(
                 seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
                 sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),
-                prosody_sim=prosody_similarity(sc.get("prosody"), sc.get("orig_prosody"))["sim"]))
+                prosody_sim=prosody_similarity(dub_p, orig_p)["sim"], f0_shift_st=shift,
+                liveliness=best_rank.liveliness(dub_p, orig_p)))
         if not ranked:
             continue  # stays unscored: the next `synth score` tries again
         target = float(info.get("target_speech_s") or row.get("dur_s") or 0.0)
-        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=str(row.get("char_id")) in rvc,
-                             fixed_length=bool(line.get("fixed_length")))
+        orig_mos = mos_base.median(cid) if mos_base is not None and cid != UNKNOWN_ID else None
+        mos_floor = None if orig_mos is None else orig_mos - mos_drop
+        # an RVC character's timbre is final only when its candidates were converted before scoring
+        unconverted_rvc = cid in rvc and not all_converted
+        fixed = bool(line.get("fixed_length"))
+        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=unconverted_rvc, fixed_length=fixed,
+                             mos_floor=mos_floor, weights=weights)
         win_path = _abs(project, win.wav)
         assert win_path is not None
         changed += int(win.seed != info.get("picked_seed"))
+        used = best_rank.effective_weights(weights, rvc=unconverted_rvc, fixed_length=fixed)
         info.update(scored=True, provisional_seed=info.get("picked_seed"), picked_seed=win.seed,
-                    sim_weight=best_rank.W_SIM_RVC if str(row.get("char_id")) in rvc else best_rank.W_SIM,
+                    sim_weight=used["sim"], weights=used, scored_after_rvc=cid in rvc and all_converted,
+                    orig_mos=None if orig_mos is None else round(orig_mos, 3),
                     scores=[c.summary() for c in ranked])
         # copy the winner over the take, write its row, only then delete the candidates: a crash at any
         # point leaves the finished lines consistent and an unfinished one still scorable from all its candidates
@@ -1725,8 +1808,7 @@ def _auto_score(project: Project, ids: list[str] | None, args: argparse.Namespac
                      "`babeldub setup --engines qc`, then `babeldub synth score`")
         return {"scored": 0, "pending": len(rows)}
     try:
-        with _open_scorer(project, float(getattr(args, "wait_lock", 0.0) or 0.0)) as session:
-            return score_candidates(project, rows, session)
+        return _score_pass(project, rows, float(getattr(args, "wait_lock", 0.0) or 0.0), notes)[0]
     except BabelDubError as err:
         notes.append(f"synth score: {err} (run `babeldub synth score` later)")
         return {"scored": 0, "pending": len(rows)}
@@ -1741,11 +1823,12 @@ def cmd_synth_score(args: argparse.Namespace) -> int:
     if args.dry_run or not rows:
         return emit({"stage": "synth score", "dry_run": bool(args.dry_run), "pending": len(rows), "scored": 0,
                      "next": "babeldub post"})
-    with _open_scorer(project, float(args.wait_lock or 0.0)) as session:
-        summary = score_candidates(project, rows, session)
-        device = session.device
+    notes: list[str] = []
+    summary, device = _score_pass(project, rows, float(args.wait_lock or 0.0), notes)
     payload = {"stage": "synth score", **summary, "device": device, "results": layout.SYNTH_RESULTS,
                "next": "babeldub synth score" if summary["pending"] else "babeldub post"}
+    if notes:
+        payload["notes"] = notes
     return emit(payload, EXIT_ATTENTION if summary.get("errors") else EXIT_OK)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ class FakeScoreQc:
         self.requests.append(msg)
         if msg["op"] != "score":
             return {"ok": False, "error": "unsupported"}
-        k = int(Path(msg["wav"]).stem.split("c")[-1])
+        k = int(re.search(r"a\d+c(\d+)", Path(msg["wav"]).name).group(1))  # a1c<k>.wav or its converted copy
         contour = [float(np.sin(i / 3.0)) for i in range(40)]
         return {"ok": True, "op": "score", "asr_text": "бормотание" if k == 2 else msg["text"], "cer": None,
                 "sim": 0.5, "emo_cos": None, "mos": 4.0 if k == 1 else 3.0,
@@ -199,6 +200,77 @@ def test_score_crash_mid_pass_keeps_finished_lines_consistent(project: Project,
     assert latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[second["id"]]["best_of"]["scored"] is True
 
 
+def _rvc_model(project: Project, cid: str) -> None:
+    folder = project.path(layout.VC_DIR, cid)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "model.pth").write_bytes(b"G")
+    (folder / "model.index").write_bytes(b"I")
+    (folder / layout.VC_MODEL_JSON).write_text(json.dumps({"char_id": cid, "trained": "t"}), encoding="utf-8")
+
+
+def test_rvc_characters_are_converted_before_scoring(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                     capsys: pytest.CaptureFixture[str]) -> None:
+    import babeldub.commands.vc as vc_cmd
+    import babeldub.qa.qc as qc
+
+    assert run(capsys, project.root, "synth")[1]["score"]["pending"] == 1  # no qc env yet
+    cid = str(voice._pending_scores(project)[0]["char_id"])
+    _rvc_model(project, cid)
+    write_jsonl(project.path(voice.ANALYSIS), [{"id": f"x{i}", "prosody": {"f0_median_hz": 120.0 + i}} for i in range(3)],
+                schema="babeldub.analysis/1")
+    write_jsonl(project.path(layout.ASSIGN), [{"id": LID, "char_id": cid, "conf": 1.0},
+                                             *({"id": f"x{i}", "char_id": cid, "conf": 1.0} for i in range(3))])
+    calls: list[dict[str, Any]] = []
+
+    def fake_convert(proj: Project, jobs: dict[str, list[tuple[str, Path]]], wait_lock: float = 0.0):
+        calls.append(jobs)
+        out = {}
+        for c, items in jobs.items():
+            work = proj.path(layout.VC_DIR, c, vc_cmd.SCORE_WORK, "out")
+            work.mkdir(parents=True, exist_ok=True)
+            for name, wav in items:
+                out[name] = work / f"{wav.stem}_output.wav"
+                out[name].write_bytes(wav.read_bytes())
+        return out, []
+
+    monkeypatch.setattr(vc_cmd, "convert_for_scoring", fake_convert)
+    fake = FakeScoreQc()
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: fake)
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    code, out = run(capsys, project.root, "synth", "score")
+    assert code == EXIT_OK and out["scored"] == 1, out
+    assert list(calls[0]) == [cid] and len(calls[0][cid]) == 3
+    scored = [r for r in fake.requests if r["op"] == "score"]
+    assert all("_output.wav" in r["wav"] for r in scored)  # the converted takes were measured
+    assert all(r["f0_hint_hz"] == 121.0 for r in scored)  # the character's median F0 bounds pyin
+    final = latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[LID]
+    assert final["best_of"]["scored_after_rvc"] is True and final["best_of"]["sim_weight"] == 0.3
+    assert final["best_of"]["weights"]["sim"] == 0.3 and final["wav"].endswith("a1.wav")
+    assert not project.path(layout.VC_DIR, cid, vc_cmd.SCORE_WORK).exists()  # converted copies removed
+
+
+def test_without_applio_rvc_characters_keep_the_low_sim_weight(project: Project, monkeypatch: pytest.MonkeyPatch,
+                                                               capsys: pytest.CaptureFixture[str]) -> None:
+    import babeldub.commands.vc as vc_cmd
+    import babeldub.qa.qc as qc
+    from babeldub.core.output import EXIT_ENV, BabelDubError
+
+    run(capsys, project.root, "synth")
+    cid = str(voice._pending_scores(project)[0]["char_id"])
+    _rvc_model(project, cid)
+
+    def no_applio() -> None:
+        raise BabelDubError("Applio is not installed", code=EXIT_ENV)
+
+    monkeypatch.setattr(vc_cmd.rvc, "require_applio", no_applio)
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: FakeScoreQc())
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    code, out = run(capsys, project.root, "synth", "score")
+    assert code == EXIT_OK and out["scored"] == 1 and "RVC before scoring skipped" in out["notes"][0], out
+    final = latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[LID]
+    assert final["best_of"]["scored_after_rvc"] is False and final["best_of"]["sim_weight"] == 0.05
+
+
 def test_post_redoes_fixed_length_line_when_analysis_segments_change(project: Project, fake_qc: FakeScoreQc,
                                                                     capsys: pytest.CaptureFixture[str]) -> None:
     lines = read_jsonl(project.path(layout.LINES))
@@ -236,8 +308,8 @@ def test_rank_gates_and_weights() -> None:
     # loose CER cap: the best CER is 0.2, so up to 0.25 passes
     cands = [cand(1, cer=0.2, mos=3.0), cand(2, cer=0.24, mos=4.0)]
     assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 2
-    # voice similarity weighs less for a character with an RVC model
-    cands = [cand(1, sim=0.9, mos=3.0), cand(2, sim=0.1, mos=3.2)]
+    # voice similarity weighs less for a character whose RVC model converts the winner later
+    cands = [cand(1, sim=0.9, mos=3.0), cand(2, sim=0.1, mos=4.0)]
     assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 1
     assert rank.rank(cands, target_s=2.0, max_cer=0.15, rvc=True).seed == 2
     # nothing passes: everything is ranked
@@ -248,6 +320,58 @@ def test_rank_gates_and_weights() -> None:
     cands = [cand(1, prosody_sim=1.0, speech_s=1.7), cand(2, prosody_sim=0.5, speech_s=2.0)]
     assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 1
     assert rank.rank(cands, target_s=2.0, max_cer=0.15, fixed_length=True).seed == 2
+
+
+def test_rank_mos_gate_liveliness_and_register() -> None:
+    def cand(seed: int, **kw: Any) -> rank.Candidate:
+        return rank.Candidate(seed=seed, wav=f"c{seed}.wav", speech_s=kw.pop("speech_s", 2.0), **kw)
+
+    # MOS gate: below the character's floor (median 3.5 - mos_drop 1.0) is out, even with the best voice
+    cands = [cand(1, mos=2.0, sim=0.9), cand(2, mos=3.0, sim=0.5)]
+    win = rank.rank(cands, target_s=2.0, max_cer=0.15, mos_floor=2.5)
+    assert win.seed == 2 and cands[0].mos_gate is False and not cands[0].passed and cands[1].mos_gate is True
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 1  # no floor: no gate
+    assert cands[0].mos_gate is None
+    # every candidate under the floor: the CER/length-gated ones are ranked, the MOS gate is waived
+    cands = [cand(1, mos=1.5, sim=0.9), cand(2, mos=2.0, sim=0.2), cand(3, mos=4.0, speech_s=9.0)]
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15, mos_floor=2.5).seed == 1
+    assert cands[2].score == 0.0  # outside the ranked pool
+
+    # liveliness: a flatter take than the original loses, a livelier one does not gain
+    orig = {"f0_range_st": 6.0, "rms_std_db": 4.0}
+    assert rank.liveliness({"f0_range_st": 3.0, "rms_std_db": 4.0}, orig) == pytest.approx(0.75)
+    assert rank.liveliness({"f0_range_st": 9.0, "rms_std_db": 8.0}, orig) == 1.0
+    assert rank.liveliness({"f0_range_st": 3.0}, {"f0_range_st": 6.0, "rms_std_db": 0.0}) == 0.5
+    assert rank.liveliness({}, orig) is None
+    cands = [cand(1, liveliness=0.4), cand(2, liveliness=1.0)]
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 2
+
+    # F0-median term of the prosody score: 1 at the original's median, 0 at 6 semitones
+    assert rank.f0_median_fit(0.0) == 1.0 and rank.f0_median_fit(-3.0) == 0.5 and rank.f0_median_fit(12.0) == 0.0
+    cands = [cand(1, prosody_sim=0.8, f0_shift_st=5.0), cand(2, prosody_sim=0.7, f0_shift_st=0.5)]
+    win = rank.rank(cands, target_s=2.0, max_cer=0.15)
+    assert win.seed == 2 and cands[1].parts["prosody"] == pytest.approx((0.7 + 1 - 0.5 / 6) / 2)
+    assert set(cands[0].summary()) >= {"seed", "speech_s", "cer", "sim", "mos", "emo_cos", "prosody_sim", "passed",
+                                       "score", "f0_shift_st", "liveliness", "mos_gate"}
+
+
+def test_rank_weights_setting() -> None:
+    assert rank.effective_weights() == {"prosody": 0.25, "mos": 0.1, "liveliness": 0.2, "length": 0.15, "sim": 0.3}
+    assert rank.effective_weights(rvc=True)["sim"] == 0.05
+    fixed = rank.effective_weights(fixed_length=True)
+    assert fixed == {"prosody": 0.175, "mos": 0.1, "liveliness": 0.125, "length": 0.3, "sim": 0.3}
+    assert rank.weights_from({"sim": 0.5, "bogus": 1, "mos": "x"})["sim"] == 0.5
+    assert rank.check_weights(None) is None and rank.check_weights({"sim": 0.4}) is None
+    assert "unknown" in rank.check_weights({"timbre": 0.4})
+    assert "from 0 to 1" in rank.check_weights({"sim": 1.5})
+    assert "section" in rank.check_weights(0.3)
+    zero = dict.fromkeys(rank.SCORE_KEYS, 0)
+    assert "more than 0" in rank.check_weights(zero)
+    # a project's weights change the winner
+    cands = [rank.Candidate(1, "c1.wav", 2.0, sim=0.9, liveliness=0.2),
+             rank.Candidate(2, "c2.wav", 2.0, sim=0.3, liveliness=1.0)]
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15).seed == 1
+    assert rank.rank(cands, target_s=2.0, max_cer=0.15, weights={"sim": 0.05, "liveliness": 0.5}).seed == 2
 
 
 def test_prosody_metrics_and_number_cer(monkeypatch: pytest.MonkeyPatch) -> None:

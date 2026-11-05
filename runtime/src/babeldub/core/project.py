@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # tags_reference: main = the calm/main long reference, bucket = the nearest arousal bucket's.
     # delivery_tags: on = agent delivery > measured tags, measured = ignore the agent's, off = no control text.
     # best_of: candidates per line (different seeds); best_of_mode auto = score when the qc env exists (every
-    # candidate is ranked by prosody, MOS, length and voice similarity), else the closest speech length wins.
+    # candidate is ranked by prosody, MOS, liveliness, length and voice similarity, qa.rank_weights), else the
+    # closest speech length wins.
     # stress: on = homographs get a stress mark the engine reads (RUAccent in the qc env), off = plain text
     "tts": {
         "engine": "auto",
@@ -71,6 +73,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "short_sim_s": 1.0,
         "short_sim_ratio": 0.8,
         "max_asr_disagreement": 0.15,
+        # best-of ranking (qa/rank.py): sim_rvc replaces sim for a character whose RVC model sets the timbre
+        # after scoring; length_fixed replaces length on fixed_length lines (taken from prosody and liveliness)
+        "rank_weights": {"prosody": 0.25, "mos": 0.10, "liveliness": 0.20, "length": 0.15, "sim": 0.30,
+                         "sim_rvc": 0.05, "length_fixed": 0.30},
     },
     "build": {"codec": "auto"},
     "install": {"backup": True},
@@ -147,7 +153,8 @@ class Project:
     def create(cls, root: Path, data: dict[str, Any]) -> Project:
         merged = {"_schema": PROJECT_SCHEMA, "cli_version": __version__, "created": now_iso()}
         for key, value in DEFAULT_SETTINGS.items():
-            merged[key] = {**value, **data.get(key, {})} if isinstance(value, dict) else data.get(key, value)
+            # deep copy: nested defaults (qa.rank_weights) must not be shared with DEFAULT_SETTINGS
+            merged[key] = copy.deepcopy({**value, **data.get(key, {})} if isinstance(value, dict) else data.get(key, value))
         for key, value in data.items():
             merged.setdefault(key, value)
         project = cls(root=root, data=merged)

@@ -24,6 +24,7 @@ from babeldub.core.project import DEFAULT_SETTINGS, Project
 from babeldub.core.takes import follower_map
 from babeldub.envsetup.catalog import AUTO_ENGINE, PREMIUM_TTS, engine_for_language, load_catalog
 from babeldub.qa.qc import MOS_MODELS, default_mos_model
+from babeldub.qa.rank import check_weights
 
 Common = Callable[[argparse.ArgumentParser], None]
 
@@ -403,6 +404,11 @@ def apply_setting(data: dict[str, Any], dotted: str, text: str) -> tuple[Any, An
     elif len(parts) == 1 and parts[0] not in data and parts[0] not in ("game_name", "source_lang"):
         warning = f"'{dotted}' is not a known setting"
     node[leaf] = new
+    if parts[:2] == ["qa", "rank_weights"]:
+        problem = check_weights(data["qa"].get("rank_weights"))
+        if problem:
+            raise BabelDubError(problem, code=EXIT_USAGE,
+                                hint="babeldub set qa.rank_weights.sim=0.3 (null restores the defaults)")
     return old, new, warning
 
 

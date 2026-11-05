@@ -369,6 +369,58 @@ def cmd_vc(args: argparse.Namespace) -> int:
     return emit(payload, EXIT_ATTENTION if (failed or missing) else EXIT_OK)
 
 
+SCORE_WORK = "score"  # vc/<char_id>/score: candidates converted for `synth score`
+
+
+def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path]]],
+                        wait_lock: float = 0.0) -> tuple[dict[str, Path], list[str]]:
+    """RVC-convert best-of candidates before `synth score` ranks them, so voice similarity (and MOS, prosody)
+    is measured on the timbre that ships. `jobs`: {char_id: [(name, wav)]} of characters with a model.
+    Returns ({name: converted wav}, errors); the files stay in vc/<char_id>/score/out until
+    `drop_scoring_files`. Without Applio the BabelDubError of `rvc.require_applio` propagates."""
+    models = load_models(project)
+    jobs = {cid: items for cid, items in jobs.items() if cid in models and items}
+    if not jobs:
+        return {}, []
+    python, applio = rvc.require_applio()
+    device = _device(project, None)
+    settings = {k: _setting(project, k) for k in ("index_rate", "protect", "f0_method")}
+    from babeldub.workers.client import GpuLock
+
+    lock = GpuLock(project.path(layout.GPU_LOCK), owner="vc:score", wait_s=wait_lock)
+    out: dict[str, Path] = {}
+    errors: list[str] = []
+    log = project.path(layout.LOGS_DIR, f"vc-score-{time.strftime('%Y%m%d-%H%M%S')}.log")
+    with lock if device.startswith("cuda") else contextlib.nullcontext():
+        for cid, items in jobs.items():
+            model = models[cid]
+            work = project.path(layout.VC_DIR, cid, SCORE_WORK)
+            if work.exists():
+                shutil.rmtree(work)
+            in_dir, out_dir = work / "in", work / "out"
+            in_dir.mkdir(parents=True)
+            out_dir.mkdir(parents=True)
+            for name, wav in items:
+                shutil.copy2(wav, in_dir / f"{name}.wav")
+            cmd = rvc.convert_command(python, in_dir, out_dir, model["pth"], model["index"],
+                                      index_rate=float(settings["index_rate"]), protect=float(settings["protect"]),
+                                      f0_method=str(settings["f0_method"]))
+            code = rvc.run(cmd, applio, log, max(600.0, 30.0 * len(items)), cpu=not device.startswith("cuda"))
+            shutil.rmtree(in_dir, ignore_errors=True)
+            for name, _wav in items:
+                converted = out_dir / f"{name}_output.wav"
+                if converted.exists():
+                    out[name] = converted
+                else:
+                    errors.append(f"{name}: no RVC output (Applio exit code {code})")
+    return out, errors
+
+
+def drop_scoring_files(project: Project, char_ids: set[str] | list[str]) -> None:
+    for cid in char_ids:
+        shutil.rmtree(project.path(layout.VC_DIR, cid, SCORE_WORK), ignore_errors=True)
+
+
 def _rounded(value: float) -> float | None:
     return round(value, 2) if math.isfinite(value) else None
 

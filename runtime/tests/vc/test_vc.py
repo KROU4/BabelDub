@@ -199,6 +199,23 @@ def test_missing_applio_is_exit_env(project: Project, capsys: pytest.CaptureFixt
     assert code == 4 and out["hint"].startswith("babeldub setup --engines applio")
 
 
+def test_convert_for_scoring(project: Project, applio: Path, tmp_path: Path) -> None:
+    folder = project.path(layout.VC_DIR, "Zbyszek")
+    folder.mkdir(parents=True)
+    (folder / "model.pth").write_bytes(b"G")
+    (folder / "model.index").write_bytes(b"I")
+    (folder / layout.VC_MODEL_JSON).write_text(json.dumps({"char_id": "Zbyszek", "trained": "t"}), encoding="utf-8")
+    wavs = [write_wav(tmp_path / f"c{k}.wav", speech(1.0, 24000, 150.0), 24000) for k in range(2)]
+    jobs = {"Zbyszek": [(f"u_s{k}", w) for k, w in enumerate(wavs)], "Maciek": [("m_s0", wavs[0])]}
+    out, errors = vc_cmd.convert_for_scoring(project, jobs)
+    assert errors == [] and sorted(out) == ["u_s0", "u_s1"]  # Maciek has no model
+    assert all(p.exists() and probe(p)["sr"] == 40000 for p in out.values())
+    assert "batch-infer" in (applio / "calls.log").read_text(encoding="utf-8")
+    vc_cmd.drop_scoring_files(project, {"Zbyszek"})
+    assert not (folder / vc_cmd.SCORE_WORK).exists() and (folder / "model.pth").exists()
+    assert vc_cmd.convert_for_scoring(project, {"Maciek": [("m_s0", wavs[0])]}) == ({}, [])
+
+
 def test_rvc_helpers(tmp_path: Path) -> None:
     name = rvc.model_name("low-budget-repairs", "збышек")
     assert name.startswith("bd_lowbudgetrepai") and name.isascii()
