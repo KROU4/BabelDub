@@ -61,6 +61,7 @@ from babeldub.qa.baseline import (
 )
 from babeldub.qa.decisions import (
     DECISIONS,
+    MIN_REL_ORIG_SIM,
     Thresholds,
     auto_decide,
     evaluate,
@@ -678,8 +679,9 @@ def cmd_report(args: argparse.Namespace) -> int:
         "Voice similarity (`sim`) is the ECAPA cosine between the dub and the hero's original voice; `sim_ref` is the",
         "character's baseline (how similar the character's own original lines are to each other). Checks:",
         f"`sim ≥ max({th.sim_ratio} × sim_ref, {th.min_sim_abs})` ({lang_note}); both are line-to-line cosines. An original",
-        f"with under {th.short_sim_s} s of speech, or below that bar itself, judges the dub relative to its own similarity",
-        f"(`sim_rule: relative`, dub ≥ {th.short_sim_ratio} × the original's). Identity margin ≥ {th.min_identity_margin}",
+        f"with under {th.short_sim_s} s of speech, or below that bar itself, relaxes it (`sim_rule: relative`): the dub",
+        f"passes at the bar, or when `sim_rel` (its cosine to the voice target / the original's own, `orig_sim`) ≥ {th.short_sim_ratio};",
+        f"an `orig_sim` ≤ {MIN_REL_ORIG_SIM} keeps the absolute rule (`sim_rel` is null under it). Identity margin ≥ {th.min_identity_margin}",
         f"(the dub is closer to its own character's voice than to any other); CER ≤ {th.max_cer} (the lowest of Whisper,",
         "Whisper with Russian vowels folded, and GigaAM for Russian). Register: the dub's median F0 within",
         f"±{th.max_pitch_shift_st} semitones of the original line's (`pitch`, when both have ≥ {th.pitch_min_voiced_s} s voiced).",

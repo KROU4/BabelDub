@@ -100,6 +100,9 @@ def test_qa_verdicts_and_auto_decisions(dub, fake_qc, run) -> None:
     report = dub.project.path(layout.QA_REPORT).read_text(encoding="utf-8")
     assert report.startswith("# QA report — Demo Game")
     assert "| Hero | `hero` | 8 |" in report
+    # the relative SIM rule only relaxes the absolute bar; an orig_sim at about zero keeps the absolute rule
+    assert "relaxes it (`sim_rule: relative`): the dub\npasses at the bar" in report
+    assert "an `orig_sim` ≤ 0.05 keeps the absolute rule" in report
     assert ids["long"] in report
 
 
