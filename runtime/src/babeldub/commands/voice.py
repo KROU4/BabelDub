@@ -39,7 +39,7 @@ from typing import Any
 
 import numpy as np
 
-from babeldub.analysis.prosody_tags import Measured, clean_tags, control_phrase, delivery_counts
+from babeldub.analysis.prosody_tags import MAX_TAGS, Measured, clean_tags, control_phrase, delivery_counts
 from babeldub.analysis.store import keep_original_classes, line_classes, load_analysis, measured_tags
 from babeldub.audio.dsp import fade, speech_seconds, to_mono
 from babeldub.audio.fit import fit_segments, length_score, speech_span
@@ -73,6 +73,10 @@ LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags")  # the ~15-20 s long
 TAGS_REFERENCES = ("main", "bucket")  # tts.tags_reference
 DELIVERY_SETTINGS = ("on", "measured", "off")  # tts.delivery_tags
 DROP_CONTROL_ATTEMPT = 3  # a QA regen from this take of the current text on is voiced without the control text
+SLOW_HINT_RATIO = 0.85  # tts.slow_hint_ratio: dub/original speech under this adds the tempo hint "slow"
+SLOW_HINT_MIN_LINES = 3  # ... measured on at least this many of the character's lines (median)
+SLOW_HINT_MIN_S = 1.0  # ... each with at least this much original speech (shorter ratios are noise)
+SLOW_STRONG_RATIO = 0.7  # under this ratio the hint reads "slow pace", else "slightly slower"
 # same models and the same output for one seed: a take of one is "done" for the other
 ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
@@ -495,8 +499,9 @@ class Job:
 class Delivery:
     """Delivery of one take under ref_strategy=tags."""
     tags: list[str]
-    source: str  # agent | measured | none | dropped
+    source: str  # agent | measured | none | dropped | tempo
     control: str | None  # the phrase sent as "(control)text"; None = no control text
+    tempo: str | None = None  # source tempo: the slow-down phrase apply_tempo added
 
 
 def plan_delivery(setting: str, translation: dict[str, Any] | None, measured: Measured | None) -> Delivery:
@@ -526,15 +531,37 @@ def apply_drop(plan: Delivery, drop: bool) -> Delivery:
     return Delivery(plan.tags, "dropped", None) if drop and plan.control else plan
 
 
+def tempo_phrase(ratio: float) -> str:
+    """The slow-down phrase for a dub/original speech ratio under tts.slow_hint_ratio."""
+    return "slow pace" if ratio < SLOW_STRONG_RATIO else "slightly slower"
+
+
+def apply_tempo(plan: Delivery, phrase: str | None) -> Delivery:
+    """Add the tempo hint `phrase` (tempo_phrase) to a measured or tag-less delivery: a measured `quick` is
+    dropped (the dub already runs fast), `slow` is added with `phrase` as its control phrase. An agent
+    delivery wins, a dropped control stays dropped, a delivery that is already `slow` or has MAX_TAGS tags
+    is left alone."""
+    if phrase is None or plan.source not in ("measured", "none"):
+        return plan
+    tags = [t for t in plan.tags if t != "quick"]
+    if "slow" in tags or len(tags) >= MAX_TAGS:
+        return plan
+    control = ", ".join(p for p in (control_phrase(tags), phrase) if p)
+    return Delivery([*tags, "slow"], "tempo", control, phrase)
+
+
 def delivery_matches(row: dict[str, Any], plan: Delivery) -> bool:
     """The take already has the delivery the line asks for now. A take without `tags_source` (made before
     v0.3 or by another strategy) stands; a take whose control a regen dropped stands while the tags are the
     same; otherwise the control text must match (a changed agent delivery, re-measured tags or a changed
-    tts.delivery_tags make the take stale)."""
+    tts.delivery_tags make the take stale). A take with a tempo hint is compared with the line's delivery
+    plus that same hint (a hint that comes or goes alone never makes a take stale)."""
     if "tags_source" not in row:
         return True
     if row.get("tags_source") == "dropped":
         return plan.control is None or list(row.get("tags") or []) == plan.tags
+    if row.get("tempo_hint"):
+        plan = apply_tempo(plan, str(row["tempo_hint"]))
     return (row.get("control") or None) == plan.control
 
 
@@ -814,6 +841,55 @@ def tags_reference(project: Project) -> str:
     return value
 
 
+def slow_hint_ratio(project: Project) -> float:
+    """tts.slow_hint_ratio (0 = no tempo hint)."""
+    raw = project.setting("tts", "slow_hint_ratio", SLOW_HINT_RATIO)
+    try:
+        value = float(SLOW_HINT_RATIO if raw is None else raw)
+    except (TypeError, ValueError):
+        value = -1.0
+    if not 0.0 <= value <= 1.0:
+        raise BabelDubError("tts.slow_hint_ratio must be a number in [0, 1] (0 = off)", code=EXIT_USAGE,
+                            hint="`babeldub set tts.slow_hint_ratio=0.85`")
+    return value
+
+
+def speech_ratios(post_rows: list[dict[str, Any]], hinted: set[tuple[str, int]]) -> dict[str, float]:
+    """{line id: dub/original speech before the fit (`ratio_raw`)} of the latest post row of every line whose
+    take had no tempo hint (`hinted`: (id, attempt) of such takes) and whose original has at least
+    SLOW_HINT_MIN_S of speech: how fast the engine speaks this character on its own."""
+    out: dict[str, float] = {}
+    for row in post_rows:
+        lid, ratio = row.get("id"), row.get("ratio_raw")
+        if not lid or ratio is None or float(row.get("target_s") or 0.0) < SLOW_HINT_MIN_S:
+            continue
+        if (str(lid), int(row.get("attempt") or 0)) in hinted:
+            continue
+        out[str(lid)] = float(ratio)
+    return out
+
+
+def character_tempo(ratios: dict[str, float], char_of: dict[str, str]) -> dict[str, tuple[float, int]]:
+    """{char_id: (median ratio, lines)} over `speech_ratios` of each character with SLOW_HINT_MIN_LINES lines."""
+    by_char: dict[str, list[float]] = defaultdict(list)
+    for lid, ratio in ratios.items():
+        if lid in char_of:
+            by_char[char_of[lid]].append(ratio)
+    return {cid: (float(np.median(v)), len(v)) for cid, v in by_char.items() if len(v) >= SLOW_HINT_MIN_LINES}
+
+
+def tempo_hint(reason: str, own: float | None, character: tuple[float, int] | None, threshold: float) -> str | None:
+    """The slow-down phrase of the next take of a line: a regen of a take that came out under `threshold` of
+    the original's speech (`own`), else the character's median under it; None = no hint."""
+    if threshold <= 0.0:
+        return None
+    if reason == "regen" and own is not None and own < threshold:
+        return tempo_phrase(own)
+    if character is not None and character[0] < threshold:
+        return tempo_phrase(character[0])
+    return None
+
+
 # ---- synth --------------------------------------------------------------------------------
 REBUCKET_REASONS = frozenset({"flat", "mos"})  # QA reasons a regen answers with another arousal bucket
 
@@ -927,6 +1003,13 @@ def _plan_synth(
     ignores = engine.name not in CONTROL_ENGINES and delivery_mode != "off"
     measured = measured_tags(project, analysis, lines_all.values()) if controls and delivery_mode != "off" else {}
     agent_tagged = 0  # ignores: planned lines whose translation carries the agent's tags
+    # tempo hint: a character the engine voices too fast gets "slow" on its next takes (speech is never slowed)
+    hint_threshold = slow_hint_ratio(project) if controls and delivery_mode != "off" else 0.0
+    post_rows = read_jsonl(project.path(layout.POST)) if hint_threshold > 0.0 else []
+    hinted = {(lid, int(r.get("attempt") or 0)) for lid, rows in history.items() for r in rows if r.get("tempo_hint")}
+    char_tempo = character_tempo(speech_ratios(post_rows, hinted), voiced) if post_rows else {}
+    post_latest = latest_by(post_rows) if post_rows else {}
+    hinted_lines: Counter[str] = Counter()
 
     accent_map: dict[str, str] = {}
     if accent is not None:
@@ -1076,8 +1159,17 @@ def _plan_synth(
         if plan is not None:
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
-            job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
+            drop = drops_control(reason, tries_for_text + 1, qa_reasons)
+            prow = post_latest.get(line_id) or {}
+            own = (float(prow["ratio_raw"]) if latest_ok and prow.get("attempt") == latest_ok.get("attempt")
+                   and prow.get("ratio_raw") is not None and float(prow.get("target_s") or 0.0) >= SLOW_HINT_MIN_S
+                   else None)
+            phrase = None if drop else tempo_hint(reason, own, char_tempo.get(char_id) if char_id != "unknown" else None,
+                                                  hint_threshold)
+            job.delivery = apply_drop(plan, True) if drop else apply_tempo(plan, phrase)
             job.delivery_tags = delivery_mode
+            if job.delivery.tempo:
+                hinted_lines[char_id] += 1
         elif ignores and delivery_mode == "on" and clean_tags(tr.get("delivery")):
             agent_tagged += 1
         job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
@@ -1086,6 +1178,12 @@ def _plan_synth(
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
     jobs.sort(key=lambda j: j.sort_key)
+    if hinted_lines and notes is not None:
+        chars_note = ", ".join(
+            f"{cid} {n}" + (f" (median {char_tempo[cid][0]:.2f} over {char_tempo[cid][1]} lines)" if cid in char_tempo else "")
+            for cid, n in hinted_lines.most_common(5))
+        notes.append(f"tempo_hint: {sum(hinted_lines.values())} takes get a slow-down control phrase, the dub spoke under "
+                     f"tts.slow_hint_ratio {hint_threshold} of the original's speech: {chars_note}")
     if ignores and jobs and (analysis or agent_tagged) and notes is not None:
         sources = (["measured on the originals"] if analysis else []) + (
             [f"the translator's on {agent_tagged} lines"] if agent_tagged else [])
@@ -1415,6 +1513,8 @@ class _SynthRun:
         if job.delivery is not None:
             row.update(control=job.delivery.control, tags=job.delivery.tags, tags_source=job.delivery.source,
                        delivery_tags=job.delivery_tags)
+            if job.delivery.tempo:
+                row["tempo_hint"] = job.delivery.tempo
         if reply.get("prompt_dropped"):
             row["prompt_dropped"] = True
         if job.line_class:

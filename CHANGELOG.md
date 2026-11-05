@@ -5,6 +5,10 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+### Added
+
+- **Tempo hint: a rushed character is told to speak slower** (speech is still never slowed down in `post`). VoxCPM2 often speaks faster than the original (Zbyszek on Low-Budget Repairs: dub/original speech 0.74 before the fit). When a character's takes without a hint measure a median `ratio_raw` under `tts.slow_hint_ratio` (new setting, default 0.85, 0 = off) over at least 3 lines with ≥ 1 s of original speech, or a `regen` follows a take that came out under it, the next take adds the delivery tag `slow` ("slightly slower", "slow pace" under 0.7) to its measured or empty delivery and removes a measured `quick`. The translator's `delivery` wins, a dropped control text stays dropped, never more than 3 tags, only for engines with a control text. Results rows have `tags_source: tempo` and `tempo_hint`; `synth` reports a `tempo_hint` note. Done takes are not voiced again because of it.
+
 ### Fixed
 
 - **Cutscene chunks no longer push the next one late.** In a `fixed_length` line a dub chunk that ran past the next segment's onset started the next chunk that much later (+360 ms and +240 ms on two Low-Budget Repairs cutscenes). Such a chunk now takes the time from itself first (its pauses and a speed-up up to `post.tempo_max`, also for an overrun within `post.tolerance`), then from the silence before it (it starts up to 0.3 s early); only what is still left pushes the next chunk. Onsets are measured the same way on both sides: the first sample above the energy-VAD threshold minus the 30 ms pad of the Silero `vad_segments` (`audio.fit.refine_onsets`), and a placed chunk fades in over 3 ms instead of 10 ms, so the attack is not smeared.

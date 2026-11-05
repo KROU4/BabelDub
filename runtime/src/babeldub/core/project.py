@@ -47,6 +47,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "stress": "off",
         "tags_reference": "main",
         "delivery_tags": "on",
+        # tags: a character whose dubs speak under this share of the original's speech (median, >= 3 lines)
+        # gets the delivery tag "slow" on its next takes (0 = off); post never slows speech down
+        "slow_hint_ratio": 0.85,
     },
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
     # its pauses, then speeds up to tempo_max (pitch kept); exact original length

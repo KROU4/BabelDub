@@ -239,7 +239,7 @@ def clean_tags(value: Any) -> list[str]:
 
 
 def delivery_counts(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
-    """{by_source: {agent|measured|none|dropped: lines}, tags: {tag: lines}} over rows with `tags_source`
+    """{by_source: {agent|measured|none|dropped|tempo: lines}, tags: {tag: lines}} over rows with `tags_source`
     (synth results rows or planned takes); the histogram counts the tags actually sent. None without rows."""
     by_source: dict[str, int] = {}
     histogram: dict[str, int] = {}
@@ -248,7 +248,7 @@ def delivery_counts(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
         if not source:
             continue
         by_source[str(source)] = by_source.get(str(source), 0) + 1
-        if source in ("agent", "measured") and row.get("control"):
+        if source in ("agent", "measured", "tempo") and row.get("control"):
             for tag in clean_tags(row.get("tags")):
                 histogram[tag] = histogram.get(tag, 0) + 1
     if not by_source:
