@@ -463,16 +463,29 @@ def test_pitch_char_is_one_shift_over_all_current_takes(project: Project, applio
     rows = latest_by(read_jsonl(root / layout.POST))
     assert {rows[lid]["vc"]["pitch_shift_st"] for lid in zb} == {second}
 
-    # `synth score` converts candidates with the same character-wide shift, not one from the candidates
+    # `synth score` converts candidates with the character-wide shift vc will give after post: the scored line's
+    # stale post take is left out and the line counts once, by the median F0 of its candidates
     project.data["vc"]["pitch"] = "char"
     project.save()
     (applio / "calls.log").unlink()
-    cand = _tone(tmp_path / "cand.wav", 400.0)
-    out_files, errors = vc_cmd.convert_for_scoring(project, {"Zbyszek": [("c_s0", cand, lines[zb[0]])]})
-    assert errors == [] and list(out_files) == ["c_s0"]
+    cands = [_tone(tmp_path / "cand0.wav", 90.0), _tone(tmp_path / "cand1.wav", 110.0)]
+    others = [root / rows[lid]["pre_vc_wav"] for lid in zb[1:]]
+    cand_hz = float(np.median([vc_cmd._median_hz(p) for p in cands]))
+    third = vc_cmd._clip_shift(semitones(orig, float(np.median([cand_hz, *(vc_cmd._median_hz(p) for p in others)]))))
+    assert third != second
+    out_files, errors = vc_cmd.convert_for_scoring(
+        project, {"Zbyszek": [("c_s0", cands[0], lines[zb[0]]), ("c_s1", cands[1], lines[zb[0]])]})
+    assert errors == [] and sorted(out_files) == ["c_s0", "c_s1"]
     calls = (applio / "calls.log").read_text(encoding="utf-8").splitlines()
-    assert [int(c.split("--pitch ")[1].split()[0]) for c in calls] == [second]
+    assert [int(c.split("--pitch ")[1].split()[0]) for c in calls] == [third]
     vc_cmd.drop_scoring_files(project, {"Zbyszek"})
+    # after post keeps one of the candidates, vc gives the same shift
+    rows = latest_by(read_jsonl(root / layout.POST))
+    kept = {k: v for k, v in rows[zb[0]].items() if k not in ("vc", "pre_vc_wav", "stage")}
+    take = _tone(root / layout.POST_DIR / "kept.wav", cand_hz, like=root / rows[zb[0]]["pre_vc_wav"])
+    append_jsonl(root / layout.POST, [{**kept, "wav": project.rel(take), "pre_match_wav": project.rel(take)}])
+    assert vc_cmd.char_shift(project, "Zbyszek", vc_cmd._char_map(project, lines), lines,
+                             latest_by(read_jsonl(root / layout.POST)), {}) == third
 
 
 def test_channel_pool_leaves_an_unreadable_mate_out(project: Project) -> None:

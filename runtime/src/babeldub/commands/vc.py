@@ -316,17 +316,22 @@ def _pre_vc_source(project: Project, row: dict[str, Any]) -> Path | None:
 
 
 def char_shift(project: Project, cid: str, char_of: dict[str, str], lines: dict[str, dict[str, Any]],
-               post_latest: dict[str, dict[str, Any]], follows: dict[str, Any], fallback: list[Path] | None = None) -> int:
+               post_latest: dict[str, dict[str, Any]], follows: dict[str, Any],
+               scoring: dict[str, list[Path]] | None = None) -> int:
     """vc.pitch=char: the character's one shift, the median F0 of its originals over the median F0 of all its
-    current pre-conversion takes (every latest post row, followers left out). A character without a measurable
-    take yet uses the files in `fallback` (the candidates `synth score` converts)."""
+    current pre-conversion takes (every latest post row, followers left out). `scoring` ({line id: candidate
+    takes}, from `synth score`): the post rows of those lines are left out (their takes are being replaced) and
+    each line counts once with the median of its candidates' F0, as one of them becomes its take after `post`."""
+    scoring = scoring or {}
     analysis = load_analysis(project)
     orig_values = [v for lid, ln in lines.items() if char_of.get(lid) == cid
                    if (v := _orig_median(project, ln, analysis))]
-    dub_values = [v for lid, row in post_latest.items() if lid in lines and lid not in follows and char_of.get(lid) == cid
+    dub_values = [v for lid, row in post_latest.items()
+                  if lid in lines and lid not in follows and lid not in scoring and char_of.get(lid) == cid
                   if (v := _median_hz(_pre_vc_source(project, row)))]
-    if not dub_values:
-        dub_values = [v for path in fallback or [] if (v := _median_hz(path))]
+    for paths in scoring.values():
+        if cand_values := [v for path in paths if (v := _median_hz(path))]:
+            dub_values.append(statistics.median(cand_values))
     if not orig_values or not dub_values:
         return 0
     return _clip_shift(semitones(statistics.median(orig_values), statistics.median(dub_values)))
@@ -529,7 +534,7 @@ def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path, 
                         wait_lock: float = 0.0) -> tuple[dict[str, Path], list[str]]:
     """RVC-convert best-of candidates before `synth score` ranks them, so voice similarity (and MOS, prosody)
     is measured on the timbre that ships, with the `vc.pitch` shift `vc` would apply (char: `char_shift` over
-    the character's current takes). `jobs`: {char_id: [(name, wav, line)]} of characters with a model. Returns
+    the character's current takes, the scored lines counted by their candidates). `jobs`: {char_id: [(name, wav, line)]} of characters with a model. Returns
     ({name: converted wav}, errors); the files stay in vc/<char_id>/score/ until `drop_scoring_files`. An
     invalid vc.pitch is a usage error, as in `vc`; without Applio the BabelDubError of `rvc.require_applio`
     propagates."""
@@ -557,8 +562,11 @@ def convert_for_scoring(project: Project, jobs: dict[str, list[tuple[str, Path, 
             work = project.path(layout.VC_DIR, cid, SCORE_WORK)
             if work.exists():
                 shutil.rmtree(work)
-            char_st = (char_shift(project, cid, char_of, lines, post_latest, follows, [wav for _n, wav, _l in items])
-                       if mode == "char" else 0)
+            scoring: dict[str, list[Path]] = defaultdict(list)
+            for _name, wav, line in items:
+                if line.get("id") is not None and str(line["id"]) not in follows:
+                    scoring[str(line["id"])].append(wav)
+            char_st = char_shift(project, cid, char_of, lines, post_latest, follows, scoring) if mode == "char" else 0
             shifts = pitch_shifts(project, [(line, {}, wav) for _name, wav, line in items], mode, char_st)
             groups: dict[int, list[int]] = defaultdict(list)
             for i, shift in enumerate(shifts):
