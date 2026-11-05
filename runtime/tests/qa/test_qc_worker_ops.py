@@ -154,20 +154,15 @@ def test_prosody_hint_sets_the_bounds_and_they_are_clipped(monkeypatch: pytest.M
     assert (calls[0]["fmin"], calls[0]["fmax"]) == (450.0, 1000.0)  # never above 1000 Hz
 
 
-def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 250 Hz tone for a 120 Hz character: pyin bounded at 2 x hint reads its subharmonic (125 Hz), so the dub
-    pass reaches DUB_F0_UP x hint and the original's pass stays at one octave."""
+def _tone_pyin(monkeypatch: pytest.MonkeyPatch, tones: dict[str, float]) -> None:
+    """pyin that reads each file's tone, or its subharmonic when the tone lies above the bounds."""
     t = np.arange(2 * SR) / SR
-    tones = {"dub.wav": 250.0, "orig.wav": 120.0}
-    calls: list[tuple[float, float]] = []
 
     def pyin(y: np.ndarray, **kw: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         spectrum = np.abs(np.fft.rfft(y))
         true_f0 = float(np.fft.rfftfreq(y.size, 1.0 / SR)[int(np.argmax(spectrum))])
-        calls.append((kw["fmin"], kw["fmax"]))
         f0 = true_f0 if kw["fmin"] <= true_f0 <= kw["fmax"] else true_f0 / 2.0  # pyin's subharmonic outside the band
-        frames = np.full(50, f0)
-        return frames, np.ones(50, dtype=bool), np.ones(50)
+        return np.full(50, f0), np.ones(50, dtype=bool), np.ones(50)
 
     lib = ModuleType("librosa")
     lib.pyin = pyin  # type: ignore[attr-defined]
@@ -175,15 +170,32 @@ def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.Mo
     monkeypatch.setitem(sys.modules, "librosa", lib)
     monkeypatch.setattr(qc_worker, "_read_16k",
                         lambda path: [FakeTensor((0.3 * np.sin(2 * np.pi * tones[path] * t)).astype(np.float32))])
+
+
+def test_a_shouted_original_and_its_faithful_dub_show_no_shift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An original at 2.5 x the character's hint (a shout) and a dub at the same F0: both passes share the bounds,
+    so neither reads a subharmonic and the register check sees no shift."""
+    _tone_pyin(monkeypatch, {"dub.wav": 300.0, "orig.wav": 300.0})
+    out = qc_worker.op_score({"id": "a", "wav": "dub.wav", "orig_wav": "orig.wav", "want": ["prosody"],
+                              "f0_hint_hz": 120.0})
+    assert out["prosody"]["f0_bounds_hz"] == out["orig_prosody"]["f0_bounds_hz"] == [60.0, 480.0]
+    assert out["prosody"]["f0_median_hz"] == out["orig_prosody"]["f0_median_hz"] == pytest.approx(300.0)
+    assert abs(12 * np.log2(out["prosody"]["f0_median_hz"] / out["orig_prosody"]["f0_median_hz"])) < 0.01
+
+
+def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 250 Hz tone for a 120 Hz character: pyin bounded at 2 x hint reads its subharmonic (125 Hz), so the
+    register check's passes (dub and original) reach HINT_F0_UP x hint."""
+    _tone_pyin(monkeypatch, {"dub.wav": 250.0, "orig.wav": 120.0})
     banded = qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 120.0})
     assert banded["f0_bounds_hz"] == [60.0, 240.0] and banded["f0_median_hz"] == pytest.approx(125.0)  # +0.7 st
     out = qc_worker.op_score({"id": "a", "wav": "dub.wav", "orig_wav": "orig.wav", "want": ["prosody"],
                               "f0_hint_hz": 120.0})
     assert out["prosody"]["f0_bounds_hz"] == [60.0, 480.0] and out["prosody"]["f0_median_hz"] == pytest.approx(250.0)
-    assert out["orig_prosody"]["f0_bounds_hz"] == [60.0, 240.0] and out["orig_prosody"]["f0_median_hz"] == 120.0
+    assert out["orig_prosody"]["f0_bounds_hz"] == [60.0, 480.0] and out["orig_prosody"]["f0_median_hz"] == 120.0
     shift = 12 * np.log2(out["prosody"]["f0_median_hz"] / out["orig_prosody"]["f0_median_hz"])
     assert shift > 12  # the register check sees the octave
-    assert qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 400.0, "f0_up": qc_worker.DUB_F0_UP})[
+    assert qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 400.0, "f0_up": qc_worker.HINT_F0_UP})[
         "f0_bounds_hz"] == [200.0, 1000.0]  # capped at F0_CLIP_HZ
 
 

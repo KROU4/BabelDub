@@ -32,7 +32,7 @@ MOS_MODELS = (DISTILLMOS, "utmos22")  # the values `set qa.mos_model` accepts
 DEFAULT_EMOTION_MODEL = "emotion2vec_plus_base"
 DEFAULT_ACCENT_DIR = "ruaccent"  # RUAccent workdir: it downloads its dictionaries there on first use
 QC_LOG = "logs/qc_worker.log"
-DUB_F0_UP = 4.0  # a dub's pyin bounds reach this multiple of the F0 hint (the worker's `score` uses the same)
+HINT_F0_UP = 4.0  # hinted pyin bounds (dub and original) reach this multiple of the F0 hint, as in the worker's `score`
 
 
 class QcItemError(Exception):
@@ -276,15 +276,15 @@ class QcSession:
         """Silero speech segments: {segments [[start_s, end_s]], speech_s, dur_s}."""
         return self._call({"op": "vad", "id": key, "wav": str(wav)})
 
-    def prosody(self, key: str, wav: Path, f0_hint: float | None = None, dub: bool = False) -> dict[str, Any]:
+    def prosody(self, key: str, wav: Path, f0_hint: float | None = None) -> dict[str, Any]:
         """{f0_median_hz, f0_range_st, rms_db, rms_std_db, voiced_ratio, voiced_s, f0_bounds_hz, dur_s, contour};
-        `f0_hint` (the character's median F0) bounds pyin to one octave either side of it; for a `dub` up to
-        DUB_F0_UP x it, so a take an octave above the character reads as such (the register check)."""
+        `f0_hint` (the character's median F0) bounds pyin from half of it up to HINT_F0_UP x it, the same for a dub
+        and its original, so a take or an original an octave above the character reads as such (the register
+        check)."""
         req: dict[str, Any] = {"op": "prosody", "id": key, "wav": str(wav)}
         if f0_hint:
             req["f0_hint_hz"] = round(float(f0_hint), 1)
-            if dub:
-                req["f0_up"] = DUB_F0_UP
+            req["f0_up"] = HINT_F0_UP
         return self._call(req)
 
     def emotion(self, key: str, wav: Path) -> dict[str, Any]:

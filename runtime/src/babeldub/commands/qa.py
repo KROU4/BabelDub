@@ -406,7 +406,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                         mos_v = None
                 hint = f0_hints.get(cid)  # both F0 passes are bounded around the character's voice
                 try:
-                    pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav, f0_hint=hint, dub=True)
+                    pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav, f0_hint=hint)
                 except QcItemError:
                     pros_dub = None
                 # any length: the register check needs short originals too

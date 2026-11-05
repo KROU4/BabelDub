@@ -57,7 +57,9 @@ VAD_PARAMETERS = {"min_silence_duration_ms": 500, "speech_pad_ms": 200}
 SEGMENT_VAD = {"threshold": 0.5, "min_silence_duration_ms": 250, "speech_pad_ms": 30, "min_speech_duration_ms": 60}
 F0_MIN_HZ, F0_MAX_HZ = 60.0, 700.0  # coarse pass: wide search range
 F0_CLIP_HZ = (50.0, 1000.0)  # fine pass: median / 2 .. median x 2, clipped to this range
-DUB_F0_UP = 4.0  # a dub's fine pass reaches 2 octaves above the hint: an octave-up take is seen, not its subharmonic
+# the register check's fine passes (dub and original alike) reach 2 octaves above the hint: an octave-up take or a
+# shouted original is seen, not its subharmonic, and both sides of the comparison are measured with the same bounds
+HINT_F0_UP = 4.0
 COARSE_HOP = 640  # 40 ms frames are enough for the median of the coarse pass
 SCORE_WANTS = ("cer", "sim", "emo", "mos", "prosody")
 CONTOUR_HZ = 20  # F0 contour points per second returned by prosody (for the contour correlation)
@@ -615,8 +617,8 @@ def _voiced_f0(f0: Any, voiced: Any) -> Any:
 
 def f0_bounds(audio: Any, hint_hz: float | None, frame: int, up: float = 2.0) -> tuple[float, float, str]:
     """(fmin, fmax, source) of the fine pyin pass: one octave either side of the speaker's median F0, with a
-    hint up to `up` x it (a dub's pass uses DUB_F0_UP so a take an octave above the character is not read as
-    its subharmonic), clipped to F0_CLIP_HZ. The median is `hint_hz` (e.g. the character's) or a coarse pyin pass
+    hint up to `up` x it (the register check's passes use HINT_F0_UP so a take or an original an octave above the
+    character is not read as its subharmonic), clipped to F0_CLIP_HZ. The median is `hint_hz` (e.g. the character's) or a coarse pyin pass
     over the wide F0_MIN_HZ..F0_MAX_HZ range; the wide range itself when the coarse pass hears no voice."""
     import librosa
     import numpy as np
@@ -640,7 +642,7 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
     """Arousal features: F0 median and 10-90 % range in semitones (two-pass pyin: a coarse median, then
     pyin within one octave of it, so octave jumps do not inflate the range), active RMS and its spread,
     voiced ratio and voiced seconds. `f0_hint_hz` (the character's median F0) sets the bounds directly;
-    `f0_up` (default 2) is the top of the bounds as a multiple of the median (DUB_F0_UP for a dub)."""
+    `f0_up` (default 2) is the top of the bounds as a multiple of the median (HINT_F0_UP for the register check)."""
     import librosa
     import numpy as np
 
@@ -835,9 +837,9 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
             out["mos_model"] = _STATE["mos_used"]
     if "prosody" in want:
         hint = req.get("f0_hint_hz")
-        out["prosody"] = op_prosody({"wav": req["wav"], "f0_hint_hz": hint, "f0_up": DUB_F0_UP})
-        if req.get("orig_wav"):
-            out["orig_prosody"] = op_prosody({"wav": req["orig_wav"], "f0_hint_hz": hint})
+        out["prosody"] = op_prosody({"wav": req["wav"], "f0_hint_hz": hint, "f0_up": HINT_F0_UP})
+        if req.get("orig_wav"):  # the same bounds as the dub's: a shift is never an artefact of the bounds
+            out["orig_prosody"] = op_prosody({"wav": req["orig_wav"], "f0_hint_hz": hint, "f0_up": HINT_F0_UP})
     if unavailable:
         out["unavailable"] = unavailable
     return out

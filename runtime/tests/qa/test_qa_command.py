@@ -486,10 +486,10 @@ def test_qa_pitch_register_check(dub, fake_qc, run) -> None:
     assert out["pitch"] == {"checked": 2, "over": 1, "median_abs_st": round(sum(shifts) / 2, 2)}
     hints = {r.get("f0_hint_hz") for r in fake_qc.requests if r["op"] == "prosody"}
     assert hints == {150.0}  # the character's median F0 from analysis.jsonl bounds every pyin pass
-    # the dub's pass reaches 4 x the hint (an octave-up take is not read as its subharmonic), the original's does not
+    # both passes reach 4 x the hint (an octave-up take or a shouted original is not read as its subharmonic)
     passes = [(Path(r["wav"]).as_posix(), r.get("f0_up")) for r in fake_qc.requests if r["op"] == "prosody"]
     assert {up for wav, up in passes if f"/{layout.POST_DIR}/" in wav} == {4.0}
-    assert {up for wav, up in passes if f"/{layout.ORIG_AUDIO_DIR}/" in wav} == {None}
+    assert {up for wav, up in passes if f"/{layout.ORIG_AUDIO_DIR}/" in wav} == {4.0}
 
 def test_voice_checks_use_the_take_before_the_channel_match(dub, fake_qc, run) -> None:
     from pathlib import Path
