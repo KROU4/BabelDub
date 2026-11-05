@@ -67,7 +67,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `tts.tags_reference` | `main` | `tags`: the calm/main long reference for every line; `bucket` takes the reference of the line's arousal bucket |
 | `tts.delivery_tags` | `on` | `tags`: the translator's `delivery` > the measured tags > none; `measured` ignores the translator's tags; `off` sends no control text |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |
-| `tts.best_of` | 3 | takes per line; scored with the `qc` env (delivery, naturalness, length, voice), else the one closest to the original's speech length is kept |
+| `tts.best_of` | 3 | takes per line; scored with the `qc` env (delivery, liveliness, naturalness, length, voice; `qa.rank_weights`), else the one closest to the original's speech length is kept |
 | `tts.bootstrap_lines` | 4 | `bootstrap` only: first lines of a character dubbed before its target-language prompt exists |
 | `tts.bootstrap_min_accepted` | 3 | `bootstrap` only: accepted first lines needed to build the prompt |
 | `tts.max_attempts` | 3 | attempts before `keep_original` |

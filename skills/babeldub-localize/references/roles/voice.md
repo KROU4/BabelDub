@@ -17,7 +17,7 @@ You make sure every line is spoken **in the voice of its original hero**: the sa
 - `line` — (Qwen3-TTS, Chatterbox) the prompt is the original line itself with its source text: the timbre, emotion and pace of this exact phrase.
 - `char` — the character's best clean reference (`cast/refs`): short lines, interjections, lines without text or with music.
 - `auto` with the fallback engines — `line` if the original is at least `tts.line_ref_min_s` (1.6 s) long and has a source text; otherwise `char`.
-- Every line is generated `tts.best_of` (3) times; with the `qc` env (`tts.best_of_mode=score`) the takes are ranked after the TTS model unloads (intonation, MOS, length, voice similarity; `synth score` finishes lines left unscored), otherwise the take closest to the original's speech length is kept. `post` then fits it exactly (never slower; pauses, then tempo up to 1.15; the rest silence; the original's sample count), and `vc` converts it with the character's RVC model.
+- Every line is generated `tts.best_of` (3) times; with the `qc` env (`tts.best_of_mode=score`) the takes are ranked after the TTS model unloads (MOS gate against the character's originals, then intonation and register, liveliness, MOS, length and voice similarity, measured after RVC for characters with a model; weights `qa.rank_weights`; `synth score` finishes lines left unscored), otherwise the take closest to the original's speech length is kept. `post` then fits it exactly (never slower; pauses, then tempo up to 1.15; the rest silence; the original's sample count), and `vc` converts it with the character's RVC model.
 
 ## GPU-first
 
