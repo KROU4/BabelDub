@@ -4,8 +4,8 @@ For the latest post-processed file of every line: ASR in the target language -> 
 the dub text (digits spelled out on both sides; for Russian also vowel-folded and by a second ASR,
 GigaAM, the lowest counts); speaker similarity (ECAPA) of the dub to the hero's original line and to his
 reference, judged against the character's own baseline (with a lower ratio for a dub in
-another language than the original audio, and an absolute floor), or, for a short or atypical
-original, relative to the original's own similarity; the identity margin (the
+another language than the original audio, and an absolute floor), for a short or atypical
+original also relative to the original's own similarity; the identity margin (the
 dub must sound like its own character more than like any other); duration ratio; peaks and
 silence; naturalness (Distill-MOS or UTMOS22) against the median MOS of the character's own originals
 (qa/mos_baseline.json); prosody similarity to the original (F0 range ratio and contour
@@ -20,6 +20,7 @@ follow project.json `qa` thresholds; agents add theirs via `decide apply`.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import statistics
 from collections import Counter
 from collections.abc import Callable
@@ -86,6 +87,13 @@ FLUSH_EVERY = 25  # QA rows are appended in chunks, so an interrupted run keeps 
 
 def _r(value: float | None, digits: int = 4) -> float | None:
     return None if value is None else round(float(value), digits)
+
+
+def _target_id(kind: str, cid: str, vec: np.ndarray) -> str:
+    """`against` of a cached orig_sim: what it was measured against (`ref:<ref_id>` or `centroid`), the
+    character and a sha1 of the embedding rounded to 4 decimals."""
+    digest = hashlib.sha1(np.round(np.asarray(vec, dtype=np.float64), 4).tobytes()).hexdigest()[:12]
+    return f"{kind}:{cid}:{digest}"
 
 
 def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> None:
@@ -303,11 +311,12 @@ def cmd_qa(args: argparse.Namespace) -> int:
 
         def voice_target(cid: str, lid: str) -> tuple[np.ndarray | None, str | None]:
             """The voice the relative SIM rule measures the original and the dub against: the chosen reference
-            (another line), else the character's centroid."""
+            (another line), else the character's centroid; with its identity `against` (kind, character and a
+            fingerprint of the embedding: a re-cast, a new reference or a moved centroid misses the cache)."""
             ref = chosen_ref.get(cid)
             if ref is not None and ref.get("line_id") != lid and (vec := ref_vec_of(ref)) is not None:
-                return vec, f"ref:{ref['ref_id']}"
-            return (centroids[cid], "centroid") if cid in centroids else (None, None)
+                return vec, _target_id(f"ref:{ref['ref_id']}", cid, vec)
+            return (centroids[cid], _target_id("centroid", cid, centroids[cid])) if cid in centroids else (None, None)
 
         def orig_own_sim(lid: str, target: np.ndarray, against: str) -> float | None:
             """The original line's own SIM to `target` (any length; cached in qa/baseline.json `lines`)."""
@@ -363,15 +372,17 @@ def cmd_qa(args: argparse.Namespace) -> int:
                             sims["char"] = cosine(synth, ref_vec)
             sim = float(np.mean(list(sims.values()))) if sims else None
             sim_ref = sim_ref_for(baseline, cid)
-            # short or atypical originals: the dub is judged against the original's own SIM to the same voice
-            orig_sim = sim_rel = None
+            # short or atypical originals: the dub is also judged against the original's own SIM to the same voice
+            orig_sim = dub_cos = None
             if synth is not None:
                 target, against = voice_target(cid, lid)
                 if target is not None and against is not None:
                     orig_sim = orig_own_sim(lid, target, against)
-                    sim_rel = cosine(synth, target)
+                    dub_cos = cosine(synth, target)
             orig_speech = (analysis.get(lid) or {}).get("speech_s") or (line.get("audio") or {}).get("dur_s")
             sim_rule = th.sim_rule(orig_speech, orig_sim, sim_ref)
+            # relative: orig_sim > MIN_REL_ORIG_SIM > 0, so the ratio is defined
+            sim_rel = dub_cos / orig_sim if sim_rule == "relative" and dub_cos is not None and orig_sim else None
             margin, closest = identity_margin(synth, cid, centroids, same_voice) if synth is not None else (None, None)
             nonverbal = "nonverbal" in (line.get("flags") or [])  # a scream: voice and words are not comparable
             cers: dict[str, Any] = {}
@@ -445,7 +456,6 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 pitch=th.off_pitch(shift),
                 sim_rule=sim_rule,
                 sim_rel=sim_rel,
-                orig_sim=orig_sim,
             )
             new_qa.append(
                 {

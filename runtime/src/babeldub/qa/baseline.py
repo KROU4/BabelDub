@@ -102,7 +102,8 @@ def compute_baselines(
     force: bool = False,
 ) -> dict[str, Any]:
     """{"chars": {char_id: {"sim_ref", "sim_ref_loo", "n", "source"}}, "default": float, "definition",
-    "lines": {line_id: {"orig_sim", "against"}}} (missing chars computed; entries written before `sim_ref_loo`
+    "lines": {line_id: {"orig_sim", "against"}}} (`against`: the voice target's kind, character and embedding
+    fingerprint, set by `qa`; missing chars computed; entries written before `sim_ref_loo`
     existed are computed again from the cached embeddings)."""
     data = dict(cached or {})
     chars: dict[str, Any] = dict(data.get("chars") or {}) if not force else {}

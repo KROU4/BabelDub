@@ -412,12 +412,41 @@ def test_qa_short_lines_judge_sim_relative_to_the_original(dub, fake_qc, run) ->
     qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
     ok, bad = qa[short_ok], qa[short_bad]
     assert ok["sim_rule"] == "relative" and ok["sim"] < ok["sim_threshold"]  # the absolute bar would fail it
-    assert ok["sim_rel"] >= 0.8 * ok["orig_sim"] and ok["verdict"] == "pass"
-    assert bad["sim_rule"] == "relative" and bad["reasons"] == ["sim"]
+    assert ok["sim_rel"] >= 0.8 and ok["verdict"] == "pass"  # sim_rel: the dub's cosine / orig_sim
+    assert bad["sim_rule"] == "relative" and bad["sim_rel"] < 0.8 and bad["reasons"] == ["sim"]
     assert out["sim_relative"] == 2
     baseline = json.loads(dub.project.path("qa/baseline.json").read_text(encoding="utf-8"))
-    assert baseline["lines"][short_ok]["orig_sim"] == ok["orig_sim"] and baseline["lines"][short_ok]["against"].startswith("ref:")
+    assert baseline["lines"][short_ok]["orig_sim"] == ok["orig_sim"]
+    ref_id = dub.refs[0]["ref_id"]  # what orig_sim was measured against: the reference, its character, its embedding
+    assert baseline["lines"][short_ok]["against"].startswith(f"ref:{ref_id}:hero:")
     assert baseline["definition"].startswith("line-to-line") and baseline["chars"]["hero"]["sim_ref_loo"] is not None
+
+
+def test_qa_cached_orig_sim_follows_a_recast(dub, fake_qc, run) -> None:
+    v = dub.voices
+    for char in ("hero", "villain"):
+        for _ in range(3):
+            dub.line(char, 4.0)
+    long = dub.line("hero", 3.0)
+    dub.translate(long, "Длинная реплика.")
+    dub.dub(long, voice="hero", asr="длинная реплика")
+    short = dub.line("hero", 0.7, vec=v.mix({"hero": 1.0, "villain": 0.2}))
+    dub.translate(short, "Эй!")
+    dub.dub(short, voice="hero", asr="эй", dur_s=0.7)
+    dub.save()
+    run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[long]["sim_rule"] == "absolute" and qa[long]["sim_rel"] is None  # sim_rel only under the relative rule
+    path = dub.project.path("qa/baseline.json")
+    first = json.loads(path.read_text(encoding="utf-8"))["lines"][short]
+    assert first["against"].startswith("centroid:hero:")
+    # the line belonged to the villain: its own sim is measured again against the villain's centroid
+    dub.assign = [a if a["id"] != short else {**a, "char_id": "villain"} for a in dub.assign]
+    dub.save()
+    run(["qa", "--project", str(dub.project.root), "--force"])
+    second = json.loads(path.read_text(encoding="utf-8"))["lines"][short]
+    assert second["against"].startswith("centroid:villain:") and second["orig_sim"] < first["orig_sim"]
+    assert latest_by(read_jsonl(dub.project.path(layout.QA)))[short]["orig_sim"] == second["orig_sim"]
 
 
 def test_qa_pitch_register_check(dub, fake_qc, run) -> None:

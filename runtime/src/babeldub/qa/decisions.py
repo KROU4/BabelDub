@@ -8,7 +8,8 @@ Reason codes written to qa.jsonl:
   no_dub_text   no translation for the line    -> no auto decision (attention)
   cer           ASR differs from dub text      -> regen, then keep_original
   sim           voice drifted from the hero    -> regen, then keep_original (a short original, or one whose own
-                sim is below the bar, judges the dub relative to the original's own sim: sim_rule "relative")
+                sim is below the bar, also passes a dub at short_sim_ratio of the original's own sim:
+                sim_rule "relative")
   pitch         median F0 more than qa.max_pitch_shift_st (3) semitones from the original line's (wrong
                 register, e.g. a voice conversion shifting it) -> regen, then keep_original
   identity      dub sounds like another char   -> regen, then keep_original
@@ -43,6 +44,7 @@ BLOCKING_REASONS = frozenset({"missing_file", "no_dub_text", "qc_error"})
 # (with attention) instead of keep_original
 SOFT_REASONS = frozenset({"mos", "flat"})
 MAX_SHORTEN = 2  # after two shortened texts that still do not fit, the line needs a human
+MIN_REL_ORIG_SIM = 0.05  # an original's own sim at or below this (ECAPA noise around 0) keeps the absolute rule
 
 
 def _lang(code: Any) -> str | None:
@@ -78,7 +80,7 @@ class Thresholds:
     max_pitch_shift_st: float = 3.0  # |median F0 of the dub vs the original line| above this -> pitch
     pitch_min_voiced_s: float = 0.5  # ... when both have at least this much voiced speech
     short_sim_s: float = 1.0  # an original with less speech judges the dub's sim relative to its own sim
-    short_sim_ratio: float = 0.8  # relative rule: dub sim >= ratio x the original's own sim
+    short_sim_ratio: float = 0.8  # relative rule: sim_rel (dub cosine / the original's own) >= ratio also passes
 
     @property
     def sim_ratio(self) -> float:
@@ -120,8 +122,9 @@ class Thresholds:
     def sim_rule(self, orig_speech_s: float | None, orig_sim: float | None, sim_ref: float | None) -> str:
         """`relative` when the original line itself is no reliable voice sample — less than short_sim_s of
         speech (ECAPA is noise on such lines) or its own sim below the bar a dub must reach — else `absolute`.
-        Without the original's own sim there is nothing to be relative to."""
-        if orig_sim is None:
+        Without the original's own sim, or with one at about zero (MIN_REL_ORIG_SIM: a ratio to it would pass
+        any voice), there is nothing to be relative to."""
+        if orig_sim is None or orig_sim <= MIN_REL_ORIG_SIM:
             return "absolute"
         short = orig_speech_s is not None and orig_speech_s < self.short_sim_s
         return "relative" if short or orig_sim < self.sim_threshold(sim_ref) else "absolute"
@@ -165,10 +168,10 @@ def evaluate(
     pitch: bool = False,
     sim_rule: str = "absolute",
     sim_rel: float | None = None,
-    orig_sim: float | None = None,
 ) -> tuple[str, list[str]]:
-    """Apply the thresholds; returns (verdict, reasons). With sim_rule `relative` the voice check is
-    `sim_rel >= short_sim_ratio x orig_sim` (the dub and the original measured against the same voice)."""
+    """Apply the thresholds; returns (verdict, reasons). With sim_rule `relative` the voice check is a
+    relaxation: `sim` fails only when the dub misses the absolute bar (`sim < sim_threshold`) and also
+    `sim_rel` (the dub's cosine to the voice target / the original's own, orig_sim) < short_sim_ratio."""
     reasons: list[str] = []
     if not exists:
         return "fail", ["missing_file"]
@@ -183,10 +186,10 @@ def evaluate(
     elif cer is not None and cer > th.max_cer and not nonverbal:
         reasons.append("cer")
     if not nonverbal:
-        if sim_rule == "relative":
-            if sim_rel is not None and orig_sim is not None and sim_rel < th.short_sim_ratio * orig_sim:
-                reasons.append("sim")
-        elif sim is not None and sim < th.sim_threshold(sim_ref):
+        below_bar = sim is not None and sim < th.sim_threshold(sim_ref)
+        if sim_rule == "relative" and sim_rel is not None:
+            below_bar = (sim is None or below_bar) and sim_rel < th.short_sim_ratio
+        if below_bar:
             reasons.append("sim")
         if pitch:
             reasons.append("pitch")

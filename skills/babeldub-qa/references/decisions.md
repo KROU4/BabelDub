@@ -35,7 +35,7 @@ Go from top to bottom; the first matching rule decides:
    - both low again → `reref`;
    - widespread for a character (more than 20 % in a chunk) → do not decide line by line; return the character in `failing_chars`.
    - `sim_ratio` is 0.75 on a dub into another language → `source_lang` is wrong in `project.json`; fix it (`babeldub set source_lang=en`) and rerun `babeldub qa --force` instead of deciding.
-   - `sim_rule: relative` (a short or atypical original): judge `sim_rel` against `qa.short_sim_ratio`, not `sim` against `sim_threshold`; a bark that fails relatively too → `regen`, then `keep_original` (short barks rarely matter).
+   - `sim_rule: relative` (a short or atypical original): the line failed `sim` only if both `sim` < `sim_threshold` and `sim_rel` (the dub's cosine to the target / `orig_sim`) < `qa.short_sim_ratio`; a bark that fails both → `regen`, then `keep_original` (short barks rarely matter).
 5a. **Another character's voice** (`identity`: `margin` < `min_identity_margin`, `closest_char` names someone else):
    - first attempt → `regen`; on repeat with the same `closest_char` → `reref`;
    - many lines of one character closest to the same other character → a reference or attribution problem: return the character in `failing_chars` (caster role), do not decide line by line.
@@ -66,7 +66,7 @@ Go from top to bottom; the first matching rule decides:
 | `ratio` 1.22, `fixed_length` true | `shorten` | "ratio 1.22 on a cutscene: cut ~3 syllables of 14" |
 | `ratio` 3.4, `cer` 0.7 | `regen` | "runaway generation" |
 | `pitch_shift_st` +11.8, `sim` fine | `regen` (auto) | "octave jump, attempt 1" |
-| short bark, `sim_rule` relative, `orig_sim` 0.30, `sim` 0.27 (`sim_rel` 0.9) | `accept` (auto) | — |
+| short bark, `sim_rule` relative, `orig_sim` 0.30, `sim` 0.20 < `sim_threshold` 0.32, dub cosine 0.27 (`sim_rel` 0.9 ≥ 0.8) | `accept` (auto) | — |
 | `synth` keeps failing with `error: "runaway"` (every prompt looped), attempts exhausted, the line never reached `post` | `keep_original` (or `retranslate` with a simpler text) | "loops in every prompt mode" |
 | attempt 3, `sim` still low | `keep_original` | "3 attempts, voice drifts on whisper" |
 | `dub_text` «Ха-ха», the model produced noise | `keep_original` | "laughter, original kept" |

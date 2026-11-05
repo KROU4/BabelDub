@@ -64,8 +64,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.75, "protect": 0.33, "f0_method": "rmvpe",
            "pitch": "line"},
     # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language;
-    # short_sim_*: an original under short_sim_s of speech (or below the sim bar itself) judges the dub's sim
-    # relative to its own (>= short_sim_ratio x); max_pitch_shift_st: register check of the median F0 when both
+    # short_sim_*: an original under short_sim_s of speech (or below the sim bar itself) also passes a dub whose
+    # cosine is >= short_sim_ratio x its own; max_pitch_shift_st: register check of the median F0 when both
     # sides have pitch_min_voiced_s of voiced speech; max_asr_disagreement: Whisper vs GigaAM CER gap flagged
     "qa": {
         "max_cer": 0.15,

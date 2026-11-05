@@ -11,8 +11,8 @@ Read this when there are suspiciously many or suspiciously few defects, and afte
 | `qa.min_sim_ratio_xlang` | 0.45 | voice similarity of a dub in another language than the original audio (the normal case): `sim ≥ 0.45 × sim_ref` |
 | `qa.min_sim_ratio` | 0.75 | voice similarity of a same-language dub (`source_lang` = `target_lang`): `sim ≥ 0.75 × sim_ref` |
 | `qa.min_sim_abs` | 0.25 | absolute floor: `sim_threshold = max(ratio × sim_ref, 0.25)` |
-| `qa.short_sim_s` | 1.0 | an original with less speech than this (or below the bar itself) judges the dub relatively ... |
-| `qa.short_sim_ratio` | 0.8 | ... `sim ≥ 0.8 × orig_sim`, the original's own similarity (`sim_rule: relative`) |
+| `qa.short_sim_s` | 1.0 | an original with less speech than this (or below the bar itself) also passes a dub relatively ... |
+| `qa.short_sim_ratio` | 0.8 | ... `sim_rel` (dub cosine to the target / `orig_sim`, the original's own) ≥ 0.8 (`sim_rule: relative`; `orig_sim` ≤ 0.05 keeps the absolute rule) |
 | `qa.min_identity_margin` | −0.05 | identity: similarity to the own character's centroid minus the best other character's |
 | `cast.merge_threshold` | 0.75 | two characters this similar in voice count as one voice in the identity check (and `cast` merges such clusters) |
 | `qa.max_duration_ratio` | 1.35 | length of ordinary lines |
@@ -66,7 +66,7 @@ babeldub report
 - **Similarity.** If almost all of a character's lines fail similarity, and `sim_line` and `sim_char` behave the same, check the reference and the attribution (casting) first, and only then the threshold. Check `sim_ratio` in the rows too: 0.75 on a dub into another language means `source_lang` is set to the target language by mistake. For a cross-language dub, lowering `min_sim_ratio_xlang` below 0.35 or `min_sim_abs` below 0.2 means letting "foreign" voices through; for a same-language dub the same holds for `min_sim_ratio` below 0.65.
 - **Identity.** If many lines of one character fail `identity` with the same `closest_char`, that other character is not a synthesis accident: the reference or the attribution is wrong (skill `babeldub-cast`), or the two characters are one actor (then raise nothing; the identity check treats voices at least `cast.merge_threshold` similar as one voice). Loosen `min_identity_margin` (e.g. −0.1) only when the characters' voices are close by nature.
 - **Register.** `pitch` failures across one character with shifts of about ±12 semitones mean the TTS jumps an octave for this voice (regens usually fix it); a steady shift of 3–5 semitones on every line of a character means its reference or RVC model is in the wrong register: check the reference first. Loosen `qa.max_pitch_shift_st` (e.g. 4) only for deliberately stylised voices.
-- **Short lines.** `sim_rule: relative` rows pass or fail against the original's own similarity (`orig_sim`). If short barks still fail, compare `sim_rel` with `qa.short_sim_ratio` before touching the absolute bar.
+- **Short lines.** `sim_rule: relative` rows pass when they reach the absolute bar or `sim_rel` ≥ `qa.short_sim_ratio` (`sim_rel` is already the ratio to the original's own similarity `orig_sim`). If short barks still fail, look at how far `sim_rel` is below `qa.short_sim_ratio` before touching the absolute bar.
 - **Length.** If lines in the game are tightly bound to timing (synchronous instruments, the next dialogue starts on a timer), tighten it: `babeldub set qa.max_duration_ratio=1.15`.
 
 Put every threshold change, with its reason, into the final report.
