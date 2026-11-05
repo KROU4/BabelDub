@@ -530,6 +530,7 @@ def op_asr_words(req: dict[str, Any]) -> dict[str, Any]:
 
 ASR2_MODEL = "gigaam-v3-ctc"
 ASR2_CHUNK_S = 20.0  # GigaAM transcribes at most 25 s per call: longer clips go in chunks
+ASR2_OPTIONAL_IMPORTS = frozenset({"pyannote"})  # imported by GigaAM's modeling file only for long-form audio
 
 
 def _get_asr2() -> Any:
@@ -542,9 +543,16 @@ def _get_asr2() -> Any:
         if _STATE.get("asr2_error"):
             raise RuntimeError(_STATE["asr2_error"])
         try:
-            from transformers import AutoModel
+            from transformers import AutoModel, dynamic_module_utils
 
-            model = AutoModel.from_pretrained(folder, trust_remote_code=True, local_files_only=True)
+            # transformers refuses a remote modeling file whose imports are missing, but GigaAM imports pyannote
+            # only for long-form transcription (VAD segmentation), which BabelDub does not use: clips are chunked
+            scan = dynamic_module_utils.get_imports
+            dynamic_module_utils.get_imports = lambda f: [m for m in scan(f) if m not in ASR2_OPTIONAL_IMPORTS]
+            try:
+                model = AutoModel.from_pretrained(folder, trust_remote_code=True, local_files_only=True)
+            finally:
+                dynamic_module_utils.get_imports = scan
         except ImportError as exc:
             _STATE["asr2_error"] = (f"GigaAM needs transformers, hydra-core, omegaconf and sentencepiece in the qc "
                                     f"env ({exc}): babeldub setup --engines qc")

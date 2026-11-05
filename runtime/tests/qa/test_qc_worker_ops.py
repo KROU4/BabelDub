@@ -221,6 +221,12 @@ class FakeGiga:
 
         self.model = Inner()
 
+    def eval(self) -> FakeGiga:
+        return self
+
+    def to(self, device: Any) -> FakeGiga:
+        return self
+
 
 class FakeTorchTensor:
     def __init__(self, data: np.ndarray) -> None:
@@ -270,6 +276,27 @@ def test_score_uses_the_second_asr_for_russian_only(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(qc_worker, "_asr2_text", broken)
     out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"]})
     assert out["unavailable"] == ["asr2"] and "transformers" in out["asr2_error"] and out["cer"] is not None
+
+
+def test_asr2_load_ignores_the_long_form_only_pyannote_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    scanned: list[list[str]] = []
+    dmu = SimpleNamespace(get_imports=lambda f: ["torch", "hydra", "pyannote", "omegaconf"])
+    giga = FakeGiga(["привет"])
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(folder: str, **kw: Any) -> FakeGiga:
+            scanned.append(dmu.get_imports("modeling_gigaam.py"))  # what transformers' check_imports would see
+            assert kw == {"trust_remote_code": True, "local_files_only": True}
+            return giga
+
+    original = dmu.get_imports
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoModel=AutoModel, dynamic_module_utils=dmu))
+    monkeypatch.setitem(qc_worker._STATE, "asr2", None)
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    assert qc_worker._get_asr2() is giga
+    assert scanned == [["torch", "hydra", "omegaconf"]] and dmu.get_imports is original  # restored after the load
 
 
 def test_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
