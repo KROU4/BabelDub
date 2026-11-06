@@ -364,14 +364,19 @@ QC worker (`workers/qc_worker.py`, env `qc`):
 → {"op": "asr_words", "id", "wav", "lang"?}  ← {"text", "lang", "lang_prob", "words": [{"w", "start", "end", "prob"}], "avg_logprob", "no_speech_prob", "dur_s"}
 → {"op": "prosody", "id", "wav", "f0_hint_hz"?, "f0_up"?}
                                              ← {"f0_median_hz", "f0_range_st", "rms_db", "rms_std_db", "voiced_ratio", "voiced_s",
-                                                   "f0_bounds_hz": [fmin, fmax], "f0_bounds_source": "hint|coarse|wide", "dur_s",
+                                                   "f0_bounds_hz": [fmin, fmax], "f0_bounds_source": "hint|coarse|wide",
+                                                   "f0_range_bounds_hz": [lo, hi], "dur_s",
                                                    "contour": [semitones from the median or null, 20 per second]}
      (two-pass pyin: the median comes from `f0_hint_hz` (the character's median F0) or a coarse pyin pass (60–700 Hz,
       40 ms hop); the fine pass searches median / 2 … median × 2, clipped to 50–1000 Hz, so octave jumps cannot
       inflate the range; with a hint the top is `f0_up` × the hint (default 2): the register check's passes send 4
       (`qa.qc.HINT_F0_UP`, for the dub and its original alike; `score` does it for `wav` and `orig_wav`), so a take
       or a shouted original an octave above the character is measured there and not as its subharmonic inside the
-      one-octave band, and both sides of the shift are measured with the same bounds; without a voiced frame in the coarse pass the fine pass keeps 60–700 Hz. `voiced_s`: voiced
+      one-octave band, and both sides of the shift are measured with the same bounds; such a hinted pass with
+      `f0_up` > 2 takes `f0_median_hz`, `voiced_s` and `voiced_ratio` from all its voiced frames, while `f0_range_st`
+      and `contour` keep only the frames within one octave of that median (`f0_range_bounds_hz` = median / 2 …
+      median × 2; otherwise it equals `f0_bounds_hz`), so octave errors of the wide search do not inflate the range
+      or the contour; without a voiced frame in the coarse pass the fine pass keeps 60–700 Hz. `voiced_s`: voiced
       frames × 10 ms; `rms_std_db`: spread of the active (within 30 dB of the peak) frame levels)
 → {"op": "emotion", "id", "wav"}             ← {"label", "score", "emb": [768 floats]}      (opt-in emotion2vec+, needs funasr)
 → {"op": "mos", "id", "wav"}                 ← {"mos": 3.42, "mos_model": "distillmos"}
@@ -380,14 +385,17 @@ QC worker (`workers/qc_worker.py`, env `qc`):
       input [1, samples] at 16 kHz; without the package the worker uses `mos_fallback` and says so in `mos_model`)
 → {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs": [...], "want": ["cer", "sim", "emo", "mos", "prosody"], "f0_hint_hz"?, "asr2"?}
    ← {"cer", "cer_folded"?, "asr_text", "asr_text_raw", "asr2_text"?, "cer2"?, "asr2_error"?, "sim", "emo_cos", "mos",
-      "mos_model", "prosody", "orig_prosody", "unavailable"?: [...]}
+      "mos_model", "mos_error"?, "prosody", "orig_prosody", "unavailable"?: [...]}
      (a metric without its model or input is null and listed; prosody: the `prosody` reply of wav and of orig_wav, both
       with `f0_hint_hz` and `f0_up` 4; `cer_folded` for Russian; `asr2_text`/`cer2` when the second ASR is loaded, "asr2" in
-      `unavailable` and `asr2_error` when it fails; `asr2: false` skips the second ASR for this request)
+      `unavailable` and `asr2_error` when it fails; `asr2: false` skips the second ASR for this request; a MOS failure,
+      e.g. Distill-MOS without the distillmos package and without a `mos_fallback`, leaves `mos` null, lists "mos" in
+      `unavailable` and sets `mos_error`, the other metrics are kept; the worker remembers a MOS load failure, so later
+      requests fail fast without retrying the import, until a `load` request with `mos_model`)
 → {"op": "spell", "texts": [...], "lang": "ru"}                     ← {"texts": [...]}   (digits spelled out, num2words)
 → {"op": "accent", "texts": [...], "homographs_only": true}         ← {"texts": [...]}   ("+" before the stressed vowel)
 ```
-The worker decodes a file once for consecutive ops on it (soundfile + torchaudio in memory, never PyAV). `score`'s CER uses the normalisation of `qa.metrics.cer` with digits spelled out on both sides; `emo_cos` is the cosine of the emotion embeddings of `wav` and `orig_wav`. `QcSession.open(..., need_mos=, need_emotion=, need_asr2=)` passes the optional models only when their folders exist (`qa.qc.mos_setup`, `emotion_model_dir`, `asr2_model_dir`: only for a Russian `target_lang`, folder `qa.asr2_model`, default `GigaAM-v3-ctc`; `QcSession.asr2` turns the second ASR off for the session at its first failure and adds a warning, and `QcSession.score` does the same at the first reply with `asr2_error`, which it also returns (its later requests send `asr2: false`, so the worker no longer runs GigaAM for them); `synth score` adds the session's warnings to its `notes`) and exposes `vad`, `asr_words`, `prosody`, `emotion`, `mos`, `score`, `spell` and `accent`. `accent` (`need_accent=True`, workdir `qa.accent_model`, default `BABELDUB_HOME/models/ruaccent`, where RUAccent downloads its dictionaries and models, ~0.5 GB, on first use, with HF offline mode lifted for that load) runs RUAccent (ONNX, CPU) (`turbo3.1` homograph model, dictionary on) and, with `homographs_only`, keeps a mark only on a word RUAccent lists as a stress homograph or that was already marked in the input.
+The worker decodes a file once for consecutive ops on it (soundfile + torchaudio in memory, never PyAV). `score`'s CER uses the normalisation of `qa.metrics.cer` with digits spelled out on both sides; `emo_cos` is the cosine of the emotion embeddings of `wav` and `orig_wav`. `QcSession.open(..., need_mos=, need_emotion=, need_asr2=)` passes the optional models only when their folders exist (`qa.qc.mos_setup`, `emotion_model_dir`, `asr2_model_dir`: only for a Russian `target_lang`, folder `qa.asr2_model`, default `GigaAM-v3-ctc`; `QcSession.asr2` turns the second ASR off for the session at its first failure and adds a warning, and `QcSession.score` does the same at the first reply with `asr2_error`, which it also returns (its later requests send `asr2: false`, so the worker no longer runs GigaAM for them); `QcSession.score` also returns `mos_error` and adds one warning at the first reply with it; `synth score` adds the session's warnings to its `notes`) and exposes `vad`, `asr_words`, `prosody`, `emotion`, `mos`, `score`, `spell` and `accent`. `accent` (`need_accent=True`, workdir `qa.accent_model`, default `BABELDUB_HOME/models/ruaccent`, where RUAccent downloads its dictionaries and models, ~0.5 GB, on first use, with HF offline mode lifted for that load) runs RUAccent (ONNX, CPU) (`turbo3.1` homograph model, dictionary on) and, with `homographs_only`, keeps a mark only on a word RUAccent lists as a stress homograph or that was already marked in the input.
 
 The CLI-side client is `babeldub/workers/client.py`: `WorkerClient(env|python_path, script, timeout, load_timeout, log_path).load()/request()/close()` (timeouts kill the process; after a crash it restarts, repeats `load` and retries the request once; errors `WorkerError`, `WorkerTimeout`, `WorkerCrashed`; a missing env is `EXIT_ENV`). `GpuLock(project/state/locks/gpu.lock, owner, wait_s)` is an exclusive PID lock on the GPU; the lock of a dead process is released, a busy lock is `EXIT_USAGE` with a `--wait-lock` hint. The qc session for `cast`/`qa` is `qa/qc.py:QcSession`.
 

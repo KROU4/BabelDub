@@ -146,6 +146,7 @@ class QcSession:
         self.has_emotion = False
         self.has_asr2 = False
         self.mos_model: str | None = None  # distillmos | utmos22: requested, then the model that answered
+        self.mos_error: str | None = None  # the first `mos_error` of a score reply (reported once in `warnings`)
 
     @classmethod
     def open(
@@ -280,7 +281,8 @@ class QcSession:
         """{f0_median_hz, f0_range_st, rms_db, rms_std_db, voiced_ratio, voiced_s, f0_bounds_hz, dur_s, contour};
         `f0_hint` (the character's median F0) bounds pyin from half of it up to HINT_F0_UP x it, the same for a dub
         and its original, so a take or an original an octave above the character reads as such (the register
-        check)."""
+        check); the range and the contour then keep the frames within one octave of the measured median
+        (`f0_range_bounds_hz`)."""
         req: dict[str, Any] = {"op": "prosody", "id": key, "wav": str(wav)}
         if f0_hint:
             req["f0_hint_hz"] = round(float(f0_hint), 1)
@@ -302,10 +304,10 @@ class QcSession:
     def score(self, key: str, wav: Path, *, text: str | None = None, lang: str | None = None,
               orig_wav: Path | None = None, refs: list[Path] | None = None,
               want: tuple[str, ...] = ("cer", "sim", "emo", "mos"), f0_hint: float | None = None) -> dict[str, Any]:
-        """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?, asr2_error?}: metrics that
-        cannot be computed are null; prosody (with its F0 contour) only when `want` has "prosody". A second-ASR
+        """{cer, asr_text, sim, emo_cos, mos, prosody, orig_prosody, unavailable?, asr2_error?, mos_error?}: metrics
+        that cannot be computed are null; prosody (with its F0 contour) only when `want` has "prosody". A second-ASR
         failure turns the second ASR off for the session (later requests send `asr2: false`) and is reported once
-        in `warnings`, as by `asr2`."""
+        in `warnings`, as by `asr2`; a MOS failure (the worker remembers a load failure) is reported once too."""
         req: dict[str, Any] = {"op": "score", "id": key, "wav": str(wav), "text": text, "lang": lang,
                                "refs": [str(r) for r in refs or []], "want": list(want), "asr2": self.has_asr2}
         if orig_wav is not None:
@@ -317,9 +319,12 @@ class QcSession:
         if reply.get("asr2_error") and self.has_asr2:
             self.has_asr2 = False
             self.warnings.append(f"second ASR (GigaAM) unavailable: {reply['asr2_error']}")
+        if reply.get("mos_error") and self.mos_error is None:
+            self.mos_error = str(reply["mos_error"])
+            self.warnings.append(f"MOS unavailable: {self.mos_error}")
         return {k: reply.get(k) for k in ("cer", "cer_folded", "asr_text", "asr_text_raw", "asr2_text", "cer2",
                                           "sim", "emo_cos", "mos", "mos_model", "prosody", "orig_prosody",
-                                          "unavailable", "asr2_error")}
+                                          "unavailable", "asr2_error", "mos_error")}
 
     def spell(self, texts: list[str], lang: str | None) -> list[str]:
         """Digits spelled out by the worker's num2words (the CLI may not have it)."""

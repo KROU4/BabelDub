@@ -53,7 +53,7 @@ def audio(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(data)])
     monkeypatch.setitem(qc_worker._STATE, "audio_cache", None)
     for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir", "asr2", "asr2_dir",
-                "asr2_error", "mos_backend", "mos_fallback_dir", "mos_used", "device"):
+                "asr2_error", "mos_backend", "mos_fallback_dir", "mos_used", "mos_error", "device"):
         monkeypatch.setitem(qc_worker._STATE, key, None)
     return data
 
@@ -197,6 +197,23 @@ def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.Mo
     assert shift > 12  # the register check sees the octave
     assert qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 400.0, "f0_up": qc_worker.HINT_F0_UP})[
         "f0_bounds_hz"] == [200.0, 1000.0]  # capped at F0_CLIP_HZ
+
+
+def test_a_wide_hinted_pass_keeps_octave_errors_out_of_the_range_and_contour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """f0_up 4 reaches 480 Hz for a 120 Hz character: its octave errors (460-480 Hz) count for the median and the
+    voiced seconds, but the range and the contour keep only the frames within one octave of the median."""
+    fine = np.array([115.0, 120.0, 125.0, 118.0, 122.0, 460.0, 470.0, 480.0, np.nan, 121.0])
+    _fake_pyin(monkeypatch, np.array([np.nan]), fine)
+    monkeypatch.setattr(qc_worker, "CONTOUR_HZ", 100)  # one point per frame
+    out = qc_worker.op_prosody({"wav": "a.wav", "f0_hint_hz": 120.0, "f0_up": qc_worker.HINT_F0_UP})
+    assert out["f0_bounds_hz"] == [60.0, 480.0] and out["f0_median_hz"] == 122.0 and out["voiced_s"] == 0.09
+    assert out["f0_range_bounds_hz"] == [61.0, 244.0]
+    lo, hi = np.percentile([115.0, 120.0, 125.0, 118.0, 122.0, 121.0], [10, 90])
+    assert out["f0_range_st"] == round(12 * np.log2(hi / lo), 2) and out["f0_range_st"] < 2.0
+    assert out["contour"][5:9] == [None, None, None, None] and out["contour"][0] == round(12 * np.log2(115 / 122), 2)
+    # the one-octave pass is unchanged: its range uses every voiced frame
+    banded = qc_worker.op_prosody({"wav": "a.wav", "f0_hint_hz": 120.0})
+    assert banded["f0_range_bounds_hz"] == banded["f0_bounds_hz"] == [60.0, 240.0] and banded["f0_range_st"] > 12
 
 
 def test_prosody_without_a_voice_in_the_coarse_pass_keeps_the_wide_range(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -429,6 +446,31 @@ def test_mos_backends_and_the_utmos_fallback(monkeypatch: pytest.MonkeyPatch) ->
         qc_worker._get_mos()
     qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "ut2", "mos_backend": "utmos22"})
     assert qc_worker._get_mos().name == "u" and loaded[-1] == "utmos:ut2"
+
+
+def test_score_keeps_the_other_metrics_when_mos_cannot_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Distill-MOS without its package and without a UTMOS22 fallback: score reports mos_error, keeps CER, and
+    the worker does not retry the import until a new load request."""
+    monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
+    monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+    monkeypatch.setitem(qc_worker._STATE, "asr", FakeWhisper())
+    tries: list[str] = []
+
+    def missing(folder: str) -> Any:
+        tries.append(folder)
+        raise ImportError("No module named 'distillmos'")
+
+    monkeypatch.setattr(qc_worker, "_load_distillmos", missing)
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos"})
+    outs = [qc_worker.op_score({"wav": "a.wav", "text": "Hello there, bye!", "lang": "en", "want": ["cer", "mos"]})
+            for _ in range(2)]
+    for out in outs:
+        assert out["cer"] == 0.0 and out["mos"] is None and out["unavailable"] == ["mos"]
+        assert "distillmos package" in out["mos_error"] and "mos_model" not in out
+    assert tries == ["dm"]  # the failure is remembered
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos"})
+    qc_worker.op_score({"wav": "a.wav", "want": ["mos"]})
+    assert tries == ["dm", "dm"]  # a new load request tries again
 
 
 def test_mos_reports_the_model_that_answered(monkeypatch: pytest.MonkeyPatch) -> None:

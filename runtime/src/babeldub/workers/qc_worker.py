@@ -19,8 +19,9 @@ answer per command on stdout; all logs go to stderr.
                                                               "avg_logprob", "no_speech_prob", "dur_s"}
   {"op": "vad", "id", "wav", "options"?}                  -> {"segments": [[start_s, end_s]], "speech_s", "dur_s"}
   {"op": "prosody", "id", "wav", "f0_hint_hz"?, "f0_up"?} -> {"f0_median_hz", "f0_range_st", "rms_db", "rms_std_db",
-                                                              "voiced_ratio", "voiced_s", "f0_bounds_hz", "dur_s",
-                                                              "contour"}: two-pass pyin
+                                                              "voiced_ratio", "voiced_s", "f0_bounds_hz",
+                                                              "f0_range_bounds_hz", "dur_s", "contour"}: two-pass
+                                                              pyin
   {"op": "emotion", "id", "wav"}                          -> {"label", "score", "emb": [floats]}
   {"op": "mos", "id", "wav"}                              -> {"mos", "mos_model": "distillmos|utmos22"}
       (load keys: mos_model = checkpoint folder, mos_backend = distillmos|utmos22, mos_fallback = UTMOS22 folder
@@ -30,7 +31,7 @@ answer per command on stdout; all logs go to stderr.
   {"op": "score", "id", "wav", "text", "lang", "orig_wav", "refs", "want": [cer, sim, emo, mos, prosody],
    "f0_hint_hz"?, "asr2"? (false: skip the second ASR)}
       -> {"cer", "cer_folded" (ru), "asr_text", "asr_text_raw", "asr2_text", "cer2" (ru with asr2), "sim",
-          "emo_cos", "mos", "prosody", "orig_prosody", "unavailable": [...]}
+          "emo_cos", "mos", "mos_error" (MOS failed), "prosody", "orig_prosody", "unavailable": [...]}
   {"op": "spell", "texts": [...], "lang": "ru"}           -> {"texts": [...]}: digits spelled out (num2words)
   {"op": "accent", "texts": [...], "homographs_only": true}
       -> {"texts": [...]}: "+" before the stressed vowel (RUAccent; loads on the first request)
@@ -77,6 +78,7 @@ _STATE: dict[str, Any] = {
     "mos_backend": None,  # distillmos | utmos22 (the load request's `mos_backend`, default utmos22)
     "mos_fallback_dir": None,  # UTMOS22 folder used when the distillmos package is missing
     "mos_used": None,  # the model that answers MOS requests
+    "mos_error": None,  # a MOS load failure, remembered so later requests fail fast instead of retrying the import
     "emotion": None,
     "emotion_dir": None,
     "accent": None,
@@ -256,8 +258,8 @@ def op_load(req: dict[str, Any]) -> dict[str, Any]:
     backend = req.get("mos_backend") or "utmos22"
     if req.get("mos_model") and backend != (_STATE["mos_backend"] or "utmos22"):
         _STATE.update(mos=None, mos_dir=None)
-    if req.get("mos_model"):
-        _STATE.update(mos_backend=backend, mos_fallback_dir=req.get("mos_fallback"))
+    if req.get("mos_model"):  # a MOS configuration re-arms a remembered load failure
+        _STATE.update(mos_backend=backend, mos_fallback_dir=req.get("mos_fallback"), mos_error=None)
     for key in ("mos", "emotion", "accent", "asr2"):
         folder = req.get(f"{key}_model")
         if folder and folder != _STATE[f"{key}_dir"]:
@@ -301,25 +303,38 @@ def _load_distillmos(folder: str) -> Any:
 
 def _get_mos() -> Any:
     """The MOS model of `mos_backend` (distillmos | utmos22); Distill-MOS without its package falls back to
-    UTMOS22 when `mos_fallback` is set. `_STATE["mos_used"]` names the model that answers."""
+    UTMOS22 when `mos_fallback` is set. `_STATE["mos_used"]` names the model that answers. A load failure is
+    remembered in `_STATE["mos_error"]` (until the next load request with `mos_model`): later requests fail fast."""
     if _STATE["mos"] is None:
+        if _STATE["mos_error"]:
+            raise RuntimeError(_STATE["mos_error"])
         folder = _STATE["mos_dir"]
         if not folder:
             raise RuntimeError("MOS model not configured: send {'op': 'load', 'mos_model': dir} first")
         used = _STATE["mos_backend"] or "utmos22"
-        if used == "distillmos":
-            try:
-                model = _load_distillmos(folder)
-            except ImportError as exc:
-                fallback = _STATE["mos_fallback_dir"]
-                if not fallback:
-                    raise RuntimeError("Distill-MOS needs the distillmos package in the qc env: "
-                                       "babeldub setup --engines qc") from exc
-                log(f"distillmos is not importable ({exc}): MOS falls back to UTMOS22 from {fallback}")
-                model, used = _load_utmos22(fallback), "utmos22"
-        else:
-            model = _load_utmos22(folder)
-        model.eval().to(_torch_device())
+        try:
+            if used == "distillmos":
+                try:
+                    model = _load_distillmos(folder)
+                except ImportError as exc:
+                    fallback = _STATE["mos_fallback_dir"]
+                    if not fallback:
+                        raise
+                    log(f"distillmos is not importable ({exc}): MOS falls back to UTMOS22 from {fallback}")
+                    used = "utmos22"
+                    model = _load_utmos22(fallback)
+            else:
+                model = _load_utmos22(folder)
+            model.eval().to(_torch_device())
+        except ImportError as exc:
+            _STATE["mos_error"] = ("Distill-MOS needs the distillmos package in the qc env: babeldub setup --engines qc"
+                                   if used == "distillmos" else
+                                   f"UTMOS22 is not importable ({exc}): babeldub setup --engines qc")
+            raise RuntimeError(_STATE["mos_error"]) from exc
+        except Exception as exc:
+            _STATE["mos_error"] = (f"MOS model {used} failed to load ({type(exc).__name__}: {exc}): "
+                                   "babeldub setup --engines qc")
+            raise RuntimeError(_STATE["mos_error"]) from exc
         _STATE.update(mos=model, mos_used=used)
         log(f"MOS model {used} loaded")
     return _STATE["mos"]
@@ -642,7 +657,10 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
     """Arousal features: F0 median and 10-90 % range in semitones (two-pass pyin: a coarse median, then
     pyin within one octave of it, so octave jumps do not inflate the range), active RMS and its spread,
     voiced ratio and voiced seconds. `f0_hint_hz` (the character's median F0) sets the bounds directly;
-    `f0_up` (default 2) is the top of the bounds as a multiple of the median (HINT_F0_UP for the register check)."""
+    `f0_up` (default 2) is the top of the bounds as a multiple of the median (HINT_F0_UP for the register check).
+    A hinted pass wider than that (`f0_up` > 2) gives only the median and voiced seconds from all its frames; the
+    range and the contour keep the frames within one octave of that median (`f0_range_bounds_hz`), so octave errors
+    of the wide search do not inflate them."""
     import librosa
     import numpy as np
 
@@ -651,9 +669,17 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
     frame, hop = 1024, 160
     if audio.size < frame:
         audio = np.pad(audio, (0, frame - audio.size))
-    fmin, fmax, source = f0_bounds(audio, req.get("f0_hint_hz"), frame, float(req.get("f0_up") or 2.0))
+    up = max(2.0, float(req.get("f0_up") or 2.0))
+    fmin, fmax, source = f0_bounds(audio, req.get("f0_hint_hz"), frame, up)
     f0, voiced, _prob = librosa.pyin(audio, fmin=fmin, fmax=fmax, sr=SV_SR, frame_length=frame, hop_length=hop)
     f0v = _voiced_f0(f0, voiced)
+    band = (fmin, fmax)
+    in_band = voiced & np.isfinite(f0) if f0 is not None and voiced is not None else None
+    if in_band is not None and f0v.size >= 3 and source == "hint" and up > 2.0:
+        median = float(np.median(f0v))
+        band = (median / 2.0, median * 2.0)
+        in_band = in_band & (np.nan_to_num(f0) >= band[0]) & (np.nan_to_num(f0) <= band[1])
+    f0r = f0[in_band] if in_band is not None else f0v  # the frames of the range and the contour
     rms = librosa.feature.rms(y=audio, frame_length=frame // 2, hop_length=hop)[0]
     rms_db = 20.0 * np.log10(np.maximum(rms, 1e-6))
     active = rms_db[rms_db > rms_db.max() - 30.0] if rms_db.size else rms_db  # speech frames, not silence
@@ -667,20 +693,23 @@ def op_prosody(req: dict[str, Any]) -> dict[str, Any]:
         "voiced_s": round(f0v.size * hop / SV_SR, 3),
         "f0_bounds_hz": [round(fmin, 1), round(fmax, 1)],
         "f0_bounds_source": source,
+        "f0_range_bounds_hz": [round(band[0], 1), round(band[1], 1)],
         "dur_s": round(dur, 3),
         "contour": [],
     }
-    if f0 is not None and f0v.size >= 3:
-        # voiced F0 in semitones relative to the median, CONTOUR_HZ points per second (null = unvoiced)
+    if in_band is not None and f0v.size >= 3:
+        # voiced F0 in semitones relative to the median, CONTOUR_HZ points per second (null = unvoiced or
+        # outside the range band)
         step = max(1, int(round(SV_SR / hop / CONTOUR_HZ)))
         ref = float(np.median(f0v))
         out["contour"] = [
-            round(float(12.0 * np.log2(v / ref)), 2) if ok and np.isfinite(v) else None
-            for v, ok in zip(f0[::step], voiced[::step], strict=True)
+            round(float(12.0 * np.log2(v / ref)), 2) if ok else None
+            for v, ok in zip(f0[::step], in_band[::step], strict=True)
         ]
     if f0v.size >= 3:
-        lo, hi = np.percentile(f0v, [10, 90])
         out["f0_median_hz"] = round(float(np.median(f0v)), 1)
+    if f0r.size >= 3:
+        lo, hi = np.percentile(f0r, [10, 90])
         out["f0_range_st"] = round(float(12.0 * np.log2(hi / lo)), 2)
     return out
 
@@ -833,8 +862,14 @@ def op_score(req: dict[str, Any]) -> dict[str, Any]:
         if not _STATE["mos_dir"]:
             unavailable.append("mos")
         else:
-            out["mos"] = round(_mos_of(req["wav"]), 3)
-            out["mos_model"] = _STATE["mos_used"]
+            try:
+                out["mos"] = round(_mos_of(req["wav"]), 3)
+            except Exception as exc:  # MOS is optional: report it, keep the other metrics
+                log(f"mos failed: {exc}")
+                unavailable.append("mos")
+                out["mos_error"] = f"{type(exc).__name__}: {exc}"
+            else:
+                out["mos_model"] = _STATE["mos_used"]
     if "prosody" in want:
         hint = req.get("f0_hint_hz")
         out["prosody"] = op_prosody({"wav": req["wav"], "f0_hint_hz": hint, "f0_up": HINT_F0_UP})

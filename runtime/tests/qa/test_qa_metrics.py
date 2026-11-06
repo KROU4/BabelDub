@@ -200,3 +200,17 @@ def test_session_score_reports_a_second_asr_failure_once() -> None:
     assert session.warnings == [f"second ASR (GigaAM) unavailable: {reply['asr2_error']}"]  # as `asr2` reports it
     # the second ASR is off for the session: later score requests do not ask the worker for it
     assert [r["asr2"] for r in sent] == [True, False, False]
+
+
+def test_session_score_reports_a_mos_failure_once() -> None:
+    from types import SimpleNamespace
+
+    from babeldub.qa.qc import QcSession
+
+    error = "RuntimeError: Distill-MOS needs the distillmos package in the qc env: babeldub setup --engines qc"
+    reply = {"ok": True, "cer": 0.0, "mos": None, "unavailable": ["mos"], "mos_error": error}
+    session = QcSession(SimpleNamespace(request=lambda req: reply, restarts=0, max_restarts=3), "cpu")
+    session.has_mos = True
+    outs = [session.score("a", Path("a.wav"), text="да", lang="ru", want=("cer", "mos")) for _ in range(3)]
+    assert all(o["mos_error"] == error and o["cer"] == 0.0 for o in outs)
+    assert session.warnings == [f"MOS unavailable: {error}"]
