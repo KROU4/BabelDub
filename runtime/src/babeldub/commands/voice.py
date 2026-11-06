@@ -1091,8 +1091,10 @@ def _plan_synth(
             continue
         tags_plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
         boot = states.get(char_id)
-        # a clone character's takes carry no delivery: a done take stands whatever the tags say now
-        plan = None if boot is not None and boot.clone else tags_plan
+        # the done check compares every take with the line's current delivery: a clone take has no
+        # tags_source, so it stands whatever the tags say (delivery_matches); a tagged take of a clone
+        # character (short_word first take, reref, fallback) goes stale when its control text changes
+        plan = tags_plan
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)

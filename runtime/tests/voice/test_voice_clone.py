@@ -273,6 +273,21 @@ def test_short_word_line_first_then_clone_on_regen(project: Project, capsys: pyt
     assert "control" not in row and "tags_source" not in row
 
 
+def test_tagged_take_of_a_clone_character_goes_stale(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    set_class(project, 8, "short_word")
+    append_jsonl(project.path(layout.TRANSLATIONS), [
+        {"id": line_id(8), "dub_text": dub(8), "lang": "ru", "by": "agent", "rev": 2, "delivery": ["shouting"]}])
+    run(capsys, project.root, "synth")
+    assert results(project)[line_id(8)]["control"] == "shouting"
+    append_jsonl(project.path(layout.TRANSLATIONS), [
+        {"id": line_id(8), "dub_text": dub(8), "lang": "ru", "by": "agent", "rev": 3, "delivery": ["whispered"]}])
+    code, out = run(capsys, project.root, "synth")
+    assert code == EXIT_OK and out["done"] == 1 and out["skipped"]["done"] == N_LINES - 1, out  # clone takes stand
+    row = results(project)[line_id(8)]
+    assert row["attempt"] == 2 and row["reason"] == "delivery" and row["ref_mode"] == "line"
+    assert row["control"] != "shouting" and row["tags_source"] == "agent"
+
+
 def test_switching_strategy_needs_force_or_a_decision(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     run(capsys, project.root, "set", "tts.ref_strategy=tags")
     assert run(capsys, project.root, "synth")[1]["by_ref"] == {"tags": N_LINES}

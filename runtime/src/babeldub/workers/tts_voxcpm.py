@@ -9,8 +9,9 @@ JSONL protocol (contract §6):
                        the dub text. It works with a timbre reference only: with a prompt as well the
                        prompt is dropped (`prompt_dropped`), never the control put in the middle of the
                        continuation text. The length cap and the bad-case check count the dub text alone.
-        prompt_wav  -> prompt_wav_path + prompt_text: a continuation prompt in the target language
-                       (the character's accepted dubs and their exact text); both or neither
+        prompt_wav  -> prompt_wav_path + prompt_text: a continuation prompt with its exact transcript, both or
+                       neither: the character's accepted dubs (bootstrap, target language) or the long
+                       original reference itself with its source transcript (clone)
         params      cfg_value (2.0), inference_timesteps (10), min_len, max_len, normalize,
                     retry_badcase, retry_badcase_max_times, retry_badcase_ratio_threshold
         ref_text and x_vector_only are ignored: a VoxCPM2 reference needs no transcript.
