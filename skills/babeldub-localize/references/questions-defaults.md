@@ -63,7 +63,7 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `cast.merge_threshold` | 0.75 | a voice cluster at least this similar to a named character is merged into him |
 | `tts.engine` | `auto` | VoxCPM2 (`voxcpm`, Apache-2.0) on an NVIDIA GPU with its env; otherwise `qwen3tts-fast` (CUDA) / `qwen3tts` (CPU) / `chatterbox` by language |
 | `tts.model` | `null` | the model is picked by the engine, tier and language |
-| `tts.ref_strategy` | `auto` | VoxCPM2: `tags` (the long original timbre reference plus the line's delivery tags as a short control text); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char`; `bootstrap` (long reference, then a target-language prompt from the character's accepted dubs) only explicitly |
+| `tts.ref_strategy` | `auto` | VoxCPM2: `tags` (the long original timbre reference plus the line's delivery tags as a short control text); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char`; `bootstrap` (long reference, then a target-language prompt from the character's accepted dubs) and `clone` (the long reference with its source transcript as a continuation prompt, no tags) only explicitly |
 | `tts.tags_reference` | `main` | `tags`: the calm/main long reference for every line; `bucket` takes the reference of the line's arousal bucket |
 | `tts.delivery_tags` | `on` | `tags`: the translator's `delivery` > the measured tags > none; `measured` ignores the translator's tags; `off` sends no control text |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |

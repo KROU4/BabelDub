@@ -5,7 +5,9 @@ synth  tts.engine=auto runs VoxCPM2 (voxcpm) on an NVIDIA GPU, else qwen3tts-fas
        plus a short English delivery control text "(shouting, fast pace)" before the dub text, from the
        translator agent's `delivery` or measured on the original against the character's other lines
        (analysis/prosody_tags.py). ref_strategy=bootstrap (explicit) adds a target-language continuation
-       prompt made of the character's first accepted dubs instead (cast/bootstrap.py). Other engines use
+       prompt made of the character's first accepted dubs instead (cast/bootstrap.py). ref_strategy=clone
+       (explicit) sends the long reference built from lines with a usable source transcript both as the
+       timbre and as a continuation prompt with that exact transcript, no control text. Other engines use
        the original line itself with its source transcript (line) or the character's best clean
        reference (char). Every line is
        generated tts.best_of times with different seeds; the take whose speech length is closest to the
@@ -68,9 +70,10 @@ ENGINES = ("voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy")
 AUTO = "auto"  # tts.engine=auto: voxcpm on CUDA when its env exists, else the preference below
 AUTO_PREFERENCE = ("qwen3tts-fast", "qwen3tts", "chatterbox")
 PREMIUM = "voxcpm"
-PROMPT_ENGINES = ("voxcpm", "dummy")  # timbre reference + target-language continuation prompt (bootstrap)
+PROMPT_ENGINES = ("voxcpm", "dummy")  # timbre reference + continuation prompt (bootstrap, clone)
 CONTROL_ENGINES = ("voxcpm", "dummy")  # read a "(delivery control)" text before the dub text (ref_strategy=tags)
-LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags")  # the ~15-20 s long timbre reference, never cut
+LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags", "clone")  # the ~15-20 s long timbre reference, never cut
+CLONE_FALLBACK = "clone: no long reference with source transcripts: tags"  # ref_reason of such a character's lines
 TAGS_REFERENCES = ("main", "bucket")  # tts.tags_reference
 DELIVERY_SETTINGS = ("on", "measured", "off")  # tts.delivery_tags
 DROP_CONTROL_ATTEMPT = 3  # a QA regen from this take of the current text on is voiced without the control text
@@ -454,7 +457,7 @@ def _usable(project: Project, row: dict[str, Any]) -> bool:
 
 @dataclass
 class Ref:
-    mode: str  # line | char | bootstrap-src | bootstrap-tgt | tags
+    mode: str  # line | char | bootstrap-src | bootstrap-tgt | tags | clone
     ref_id: str
     wav: Path
     text: str  # transcript (may be empty -> speaker-embedding-only cloning)
@@ -483,7 +486,7 @@ class Job:
     alt_ref: Ref | None = None  # character reference to fall back to when a line prompt runs away
     ref_reason: str | None = None  # why the CLI changed the prompt picked by the strategy
     src_rate: float | None = None  # syllables/s of the line transcript over its original speech
-    prompt: Prompt | None = None  # bootstrap-tgt: target-language continuation prompt (wav + exact text)
+    prompt: Prompt | None = None  # continuation prompt (wav + exact text): bootstrap-tgt target language, clone source
     target_speech: float | None = None  # speech span of the original (best-of picks the closest)
     line_class: str | None = None  # analyze class of the original (speech, short_word, mixed, ...)
     bucket: str | None = None  # arousal bucket of the bootstrap reference/prompt (calm, animated, loud, soft)
@@ -493,7 +496,7 @@ class Job:
 
     @property
     def ref_mode(self) -> str:
-        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt | tags (-xvec: timbre only)."""
+        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt | tags | clone (-xvec: timbre only)."""
         return f"{self.ref.mode}-xvec" if self.x_vector_only else self.ref.mode
 
     @property
@@ -722,6 +725,8 @@ class _Bootstrap:
     phase1: list[str]
     phase1_done: bool
     arousal: dict[str, Arousal] = field(default_factory=dict)  # line id -> where its original sits
+    clone: bool = False  # ref_strategy=clone: long_refs carry their source transcripts (continuation prompts)
+    note: str | None = None  # ref_reason of the lines voiced with these references (clone fallback)
 
     @property
     def long_ref(self) -> Prompt | None:
@@ -809,9 +814,12 @@ def _tags_states(
     refs_by_char: dict[str, list[dict[str, Any]]],
     analysis: dict[str, dict[str, Any]],
     reference: str,
+    transcript: Callable[[dict[str, Any]], str | None] | None = None,
 ) -> dict[str, _Bootstrap]:
     """Per character the long original timbre reference of ref_strategy=tags: `main` = the calm/main one
-    (the same file bootstrap uses), `bucket` = one per arousal bucket, picked per line like bootstrap."""
+    (the same file bootstrap uses), `bucket` = one per arousal bucket, picked per line like bootstrap.
+    With `transcript` (ref_strategy=clone, _source_transcript) the references are built from lines with a
+    usable source transcript (`clone`); a character without such a reference gets the tags ones (`note`)."""
     by_char: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for lid, cid in char_of.items():
         if lid not in follows:
@@ -823,10 +831,39 @@ def _tags_states(
         banks = emotion_banks(lines, analysis)
         if reference == "main":
             banks = {"calm": banks.get("calm", [])}
-        long_refs = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks)
         arousal = line_arousal(lines, analysis) if reference == "bucket" else {}
-        states[cid] = _Bootstrap(long_refs, {}, [], True, arousal)
+        if transcript is not None:
+            cloned = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks, transcript)
+            if cloned:
+                states[cid] = _Bootstrap(cloned, {}, [], True, arousal, clone=True)
+                continue
+        long_refs = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks)
+        note = CLONE_FALLBACK if transcript is not None else None
+        states[cid] = _Bootstrap(long_refs, {}, [], True, arousal, note=note)
     return states
+
+
+def _source_transcript(project: Project, prepare: Callable[[str, str, str], str]) -> Callable[[dict[str, Any]], str | None]:
+    """ref_strategy=clone: a line's prepared source transcript (as a line reference's) when it can continue a
+    voice prompt, else None: non-empty text.src whose syllable rate over the original's speech is inside
+    ICL_RATE_RANGE (transcript_rate, the ICL pre-check). Cached per line id."""
+    cache: dict[str, str | None] = {}
+    lo, hi = ICL_RATE_RANGE
+
+    def transcript(line: dict[str, Any]) -> str | None:
+        lid = str(line["id"])
+        if lid not in cache:
+            text = line.get("text") or {}
+            src_lang = str(text.get("src_lang") or _primary(line.get("locale")) or "")
+            raw = str(text.get("src") or "")
+            src = prepare(raw, src_lang, "keep") if raw.strip() else ""
+            wav = _abs(project, (line.get("audio") or {}).get("wav"))
+            dur = float((line.get("audio") or {}).get("dur_s") or 0.0)
+            usable = bool(src) and wav is not None and wav.exists()
+            cache[lid] = src if usable and lo <= transcript_rate(Ref("line", "", wav, src, src_lang, dur)) <= hi else None
+        return cache[lid]
+
+    return transcript
 
 
 def delivery_setting(project: Project) -> str:
@@ -926,7 +963,9 @@ def _plan_synth(
     Strategy `tags`: every job carries its Delivery (plan_delivery, drops_control); a changed control text
     makes a done take stale (reason `delivery`), unless QA accepted it and only the measured tags drifted
     (accepted_delivery_stands). An engine without a control text ignores the tags and
-    says so once in `notes` (control_ignored)."""
+    says so once in `notes` (control_ignored).
+    Strategy `clone`: a character with a long reference built from transcribed lines gets it as the timbre and
+    as the continuation prompt (`ref_mode: clone`, no Delivery); the other lines are planned as under `tags`."""
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
     if not lines_all:
         raise BabelDubError("no lines in inventory/lines.jsonl", code=EXIT_USAGE, hint="run `babeldub extract` and `babeldub link` first")
@@ -1000,15 +1039,18 @@ def _plan_synth(
         states = _bootstrap_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars},
                                    translations, decisions, history, follows, refs_by_char, analysis,
                                    {lid for lid, c in classes.items() if c in keep_classes})
-    elif strategy == "tags":
+    elif strategy in ("tags", "clone"):
         states = _tags_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars}, follows,
-                              refs_by_char, analysis, tags_reference(project))
+                              refs_by_char, analysis, tags_reference(project),
+                              _source_transcript(project, prepare) if strategy == "clone" else None)
     delivery_mode = delivery_setting(project)
-    controls = engine.name in CONTROL_ENGINES and strategy == "tags"
+    # clone: the lines not voiced with a clone reference (fallback, short words, unknown) are voiced as tags
+    controls = engine.name in CONTROL_ENGINES and strategy in ("tags", "clone")
     # an engine without a control text measures nothing: one note says the tags are not voiced
     ignores = engine.name not in CONTROL_ENGINES and delivery_mode != "off"
     measured = measured_tags(project, analysis, lines_all.values()) if controls and delivery_mode != "off" else {}
     agent_tagged = 0  # ignores: planned lines whose translation carries the agent's tags
+    cloned = 0  # planned takes with a clone reference + prompt
     # tempo hint: a character the engine voices too fast gets "slow" on its next takes (speech is never slowed)
     hint_threshold = slow_hint_ratio(project) if controls and delivery_mode != "off" else 0.0
     post_rows = read_jsonl(project.path(layout.POST)) if hint_threshold > 0.0 else []
@@ -1047,7 +1089,10 @@ def _plan_synth(
         if not text:
             skipped["empty_text"] += 1
             continue
-        plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
+        tags_plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
+        boot = states.get(char_id)
+        # a clone character's takes carry no delivery: a done take stands whatever the tags say now
+        plan = None if boot is not None and boot.clone else tags_plan
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)
@@ -1110,7 +1155,6 @@ def _plan_synth(
         ref_reason: str | None = None
         bucket: str | None = None
         avoid_bucket = _avoid_bucket(reason, latest_ok, qa_latest.get(line_id))
-        boot = states.get(char_id)
         # a short word's first take uses the line itself; its regen goes through the character's own
         # (bootstrap) reference, whose pronunciation of the target language is steadier
         orig = _orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen" else None
@@ -1123,8 +1167,12 @@ def _plan_synth(
         elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             bucket, long_ref, tgt = boot.pick(line_id, avoid_bucket)
-            if strategy == "tags":  # the long original reference alone; the delivery comes from the control text
+            if boot.clone:  # the long original reference continued by its own transcript, then the dub text
+                ref = Ref("clone", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+                prompt = long_ref
+            elif strategy in ("tags", "clone"):  # the long original reference alone; the delivery comes from the control text
                 ref = Ref("tags", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+                ref_reason = boot.note
             elif tgt is not None:
                 ref = Ref("bootstrap-tgt", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
                 prompt = tgt
@@ -1138,7 +1186,8 @@ def _plan_synth(
                 continue
         else:
             choice = _choose_ref(project, line, refs_by_char.get(char_id, []),
-                                 "auto" if strategy in ("bootstrap", "tags") else strategy, min_s, prefer, avoid, prepare)
+                                 "auto" if strategy in ("bootstrap", "tags", "clone") else strategy, min_s, prefer,
+                                 avoid, prepare)
             if choice is None:
                 skipped["no_ref"] += 1
                 attention.append(line_id)
@@ -1162,7 +1211,11 @@ def _plan_synth(
                 job.alt_ref = char_ref
         if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and job.ref.mode not in LONG_REF_MODES:
             job.x_vector_only = True  # a prompt without a transcript can only give the timbre
-        if plan is not None:
+        # clone: VoxCPM2 drops a control text sent with a prompt, so a clone take has no delivery (and no tempo hint)
+        plan = None if ref.mode == "clone" else tags_plan
+        if ref.mode == "clone":
+            cloned += 1
+        elif plan is not None:
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
             drop = drops_control(reason, tries_for_text + 1, qa_reasons)
@@ -1195,6 +1248,9 @@ def _plan_synth(
             [f"the translator's on {agent_tagged} lines"] if agent_tagged else [])
         notes.append(f"control_ignored: the {engine.name} engine reads no delivery control text, the delivery tags "
                      f"({', '.join(sources)}) are not voiced")
+    if cloned and delivery_mode != "off" and notes is not None:
+        notes.append(f"clone: {cloned} takes voice no delivery tags (tts.delivery_tags={delivery_mode}), their "
+                     "delivery comes from the continuation of the character's original reference")
     if keep_rows and not args.dry_run:
         _ensure_header(project.path(layout.DECISIONS), DECISIONS_SCHEMA)
         append_jsonl(project.path(layout.DECISIONS), keep_rows)
@@ -1243,13 +1299,13 @@ def _engine_params(project: Project, engine: EngineChoice, job: Job) -> dict[str
 
 def effective_strategy(configured: str, engine: str) -> tuple[str, str | None]:
     """ref_strategy for this engine: auto -> tags on voxcpm (and the dummy test engine); tags needs an
-    engine that reads a control text, bootstrap one that takes a continuation prompt."""
+    engine that reads a control text, bootstrap and clone one that takes a continuation prompt."""
     if configured == "auto" and engine in CONTROL_ENGINES:
         return "tags", None
     if configured == "tags" and engine not in CONTROL_ENGINES:
         return "auto", f"ref_strategy=tags needs the {PREMIUM} engine (delivery control text): using auto (line/char) with {engine}"
-    if configured == "bootstrap" and engine not in PROMPT_ENGINES:
-        return "auto", f"ref_strategy=bootstrap needs the {PREMIUM} engine: using auto (line/char) with {engine}"
+    if configured in ("bootstrap", "clone") and engine not in PROMPT_ENGINES:
+        return "auto", f"ref_strategy={configured} needs the {PREMIUM} engine: using auto (line/char) with {engine}"
     return configured, None
 
 
@@ -2301,8 +2357,8 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
         "synth",
         help="dub translated lines in the original character's voice (TTS voice cloning)",
         description="Synthesize dub_text of selected lines; the voice prompt is the character's long original "
-        "reference with delivery tags (ref_strategy=tags, VoxCPM2), the original line (line) or the character's "
-        "best reference (char).",
+        "reference with delivery tags (ref_strategy=tags, VoxCPM2), the same reference continued by its source "
+        "transcript (clone), the original line (line) or the character's best reference (char).",
     )
     common(p)
     p.add_argument("action", nargs="?", choices=("score",),

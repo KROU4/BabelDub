@@ -28,7 +28,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # "(shouting, fast pace)" from the agent's `delivery` or the tags measured on the original), else
     # line/char: "line" = the original line itself is the voice prompt (timbre AND delivery), "char" = best
     # clean reference of the character; bootstrap (explicit) = long reference, then a target-language prompt
-    # built from the character's first accepted dubs.
+    # built from the character's first accepted dubs; clone (explicit) = the long reference of lines with a source
+    # transcript as timbre AND continuation prompt (that transcript), no control text.
     # tags_reference: main = the calm/main long reference, bucket = the nearest arousal bucket's.
     # delivery_tags: on = agent delivery > measured tags, measured = ignore the agent's, off = no control text.
     # best_of: candidates per line (different seeds); best_of_mode auto = score when the qc env exists (every

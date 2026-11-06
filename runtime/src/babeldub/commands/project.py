@@ -31,7 +31,7 @@ Common = Callable[[argparse.ArgumentParser], None]
 VOICED_KINDS = ("dialogue", "cutscene", "bark")
 CAST_POLICIES = ("all", "main", "list")
 TRANSLATION_MODES = ("auto", "translate", "adapt", "official")
-REF_STRATEGIES = ("auto", "tags", "bootstrap", "line", "char")
+REF_STRATEGIES = ("auto", "tags", "clone", "bootstrap", "line", "char")
 ENUMS: dict[str, tuple[str, ...]] = {
     "compute.device": ("auto", "cuda", "cpu"),
     "cast.policy": CAST_POLICIES,

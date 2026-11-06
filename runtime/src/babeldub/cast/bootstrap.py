@@ -1,5 +1,5 @@
 """Bootstrap voice prompts (tts.ref_strategy=bootstrap; its long references also serve ref_strategy=tags,
-the default for VoxCPM2).
+the default for VoxCPM2, and, built from lines with a usable source transcript, ref_strategy=clone).
 
 1. Long timbre references: 3-4 clean original lines of the character (4-7.5 s each, no flags, the
    cast references first) joined with 0.35 s gaps, ~15-20 s. It is the `reference_wav_path` of every
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -103,11 +103,20 @@ def _clean(line: dict[str, Any]) -> bool:
     return not (line.get("flags") or []) and bool((line.get("audio") or {}).get("wav"))
 
 
+Transcript = Callable[[dict[str, Any]], str | None]  # line -> its usable source transcript, or None
+
+
 def long_reference(root: Path, char_id: str, lines: Iterable[dict[str, Any]], refs: list[dict[str, Any]],
-                   bucket: str | None = None) -> Prompt | None:
+                   bucket: str | None = None, transcript: Transcript | None = None) -> Prompt | None:
     """The character's ~15-20 s timbre reference (cached under synth/prompts/<char_id>/); `bucket`
-    names a non-calm reference (file src-<bucket>-<key>.wav, ref_id long:<char>:<bucket>:<key>)."""
+    names a non-calm reference (file src-<bucket>-<key>.wav, ref_id long:<char>:<bucket>:<key>).
+
+    `transcript` (ref_strategy=clone): the exact source transcript of a line's original, None when it has
+    no usable one. Only such lines become parts, and Prompt.text is their transcripts in order. The file
+    and ref_id depend on the parts alone: a timbre-only reference of the same parts is the same file."""
     pool = [ln for ln in lines if _clean(ln)]
+    if transcript is not None:
+        pool = [ln for ln in pool if transcript(ln)]
     ref_order = {str(r.get("line_id")): n for n, r in enumerate(refs)}
     picked: list[dict[str, Any]] = []
     for lo, hi in (LONG_REF_RANGE, LONG_REF_RELAXED):
@@ -139,27 +148,32 @@ def long_reference(root: Path, char_id: str, lines: Iterable[dict[str, Any]], re
         data, sr = read_audio(out)
         dur = data.shape[0] / sr
     ref_id = f"long:{char_id}:{bucket}:{key}" if tag else f"long:{char_id}:{key}"
-    return Prompt(out, "", ref_id, round(dur, 2), [ln["id"] for ln in picked])
+    text = " ".join(str(transcript(ln)).strip() for ln in picked) if transcript is not None else ""
+    return Prompt(out, text, ref_id, round(dur, 2), [ln["id"] for ln in picked])
 
 
 def long_references(root: Path, char_id: str, lines: list[dict[str, Any]], refs: list[dict[str, Any]],
-                    banks: dict[str, list[str]] | None = None) -> dict[str, Prompt]:
+                    banks: dict[str, list[str]] | None = None,
+                    transcript: Transcript | None = None) -> dict[str, Prompt]:
     """{bucket: long reference}. Calm is built from the calm lines (all lines when they are too few);
-    another bucket only with BUCKET_MIN_S of clean material in 2-12 s lines."""
+    another bucket only with BUCKET_MIN_S of clean material in 2-12 s lines (with `transcript`: only lines
+    that have one count, see long_reference)."""
     banks = banks or {}
     by_id = {ln["id"]: ln for ln in lines}
     out: dict[str, Prompt] = {}
     calm = [by_id[i] for i in banks.get("calm", []) if i in by_id]
-    ref = long_reference(root, char_id, calm, refs) if calm else None
-    ref = ref or long_reference(root, char_id, lines, refs)
+    ref = long_reference(root, char_id, calm, refs, transcript=transcript) if calm else None
+    ref = ref or long_reference(root, char_id, lines, refs, transcript=transcript)
     if ref is None:
         return out
     out["calm"] = ref
     lo, hi = LONG_REF_RELAXED
     for bucket in BUCKETS[1:]:
-        pool = [by_id[i] for i in banks.get(bucket, []) if i in by_id and _clean(by_id[i])]
+        pool = [by_id[i] for i in banks.get(bucket, []) if i in by_id and _clean(by_id[i])
+                and (transcript is None or transcript(by_id[i]))]
         material = sum(d for ln in pool if lo <= (d := _num((ln.get("audio") or {}).get("dur_s"))) <= hi)
-        if material >= BUCKET_MIN_S and (prompt := long_reference(root, char_id, pool, refs, bucket)) is not None:
+        if material >= BUCKET_MIN_S and (prompt := long_reference(root, char_id, pool, refs, bucket,
+                                                                  transcript)) is not None:
             out[bucket] = prompt
     return out
 
