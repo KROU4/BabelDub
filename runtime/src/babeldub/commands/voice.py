@@ -632,10 +632,14 @@ def _char_ref(
     src_lang: str,
     avoid_ref: str | None,
     prepare: Callable[[str, str, str], str],
+    keep_ref: str | None = None,
 ) -> Ref | None:
-    """The character's chosen reference (another one first when `avoid_ref` is given)."""
+    """The character's chosen reference (another one first when `avoid_ref` is given; `keep_ref`, the
+    reference a re-voiced take used, first of all, so a delivery re-voice does not undo a QA reref)."""
     pool = [r for r in char_refs if r.get("chosen")] or char_refs
     ordered = [r for r in pool if str(r.get("ref_id")) != avoid_ref] + [r for r in pool if str(r.get("ref_id")) == avoid_ref]
+    if keep_ref:
+        ordered = [r for r in char_refs if str(r.get("ref_id")) == keep_ref] + ordered
     for row in ordered:
         wav = _abs(project, row.get("wav"))
         if wav is None or not wav.exists():
@@ -655,6 +659,7 @@ def _choose_ref(
     prefer: str | None,
     avoid_ref: str | None,
     prepare: Callable[[str, str, str], str],
+    keep_ref: str | None = None,
 ) -> Ref | None:
     text = line.get("text") or {}
     src_lang = str(text.get("src_lang") or _primary(line.get("locale")) or "")
@@ -672,7 +677,7 @@ def _choose_ref(
         return Ref("line", f"line:{_line_uid(line)}", orig, src, src_lang, dur)
 
     def char_ref() -> Ref | None:
-        return _char_ref(project, char_refs, src_lang, avoid_ref, prepare)
+        return _char_ref(project, char_refs, src_lang, avoid_ref, prepare, keep_ref)
 
     if prefer == "line" and line_ok:
         return line_ref()
@@ -1112,6 +1117,7 @@ def _plan_synth(
 
         prefer: str | None = None
         avoid: str | None = None
+        keep_ref: str | None = None  # a delivery re-voice of a char take keeps its reference (a second reref's B, not A)
         keep_tags = False  # a delivery re-voice of a `tags` take stays `tags` (never short_word's line, never clone)
         reason = "new" if not rows else "retry"
         if pending and args.attempt_next and latest_ok is not None:
@@ -1152,6 +1158,8 @@ def _plan_synth(
                 kept = str(latest_ok.get("ref_mode") or "").removesuffix("-xvec")
                 if kept in ("line", "char") and not (kept == "line" and cls == "short_word"):
                     prefer = kept
+                if kept == "char":
+                    keep_ref = str(latest_ok.get("ref_id") or "") or None
                 keep_tags = kept == "tags"
         elif args.force and rows:
             reason = "force"
@@ -1198,7 +1206,7 @@ def _plan_synth(
         else:
             choice = _choose_ref(project, line, refs_by_char.get(char_id, []),
                                  "auto" if strategy in ("bootstrap", "tags", "clone") else strategy, min_s, prefer,
-                                 avoid, prepare)
+                                 avoid, prepare, keep_ref)
             if choice is None:
                 skipped["no_ref"] += 1
                 attention.append(line_id)

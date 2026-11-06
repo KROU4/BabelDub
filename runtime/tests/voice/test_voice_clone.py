@@ -305,6 +305,24 @@ def test_a_reref_take_keeps_its_prompt_family_when_its_delivery_changes(project:
     assert row["control"] not in (None, "shouting") and row["tags"] == ["whispered"] and row["tags_source"] == "agent"
 
 
+def test_a_delivery_revoice_keeps_the_char_reference_a_second_reref_chose(project: Project, tmp_path: Path) -> None:
+    # two refs, none chosen: reref #1 gave A (top score), reref #2 avoided A and gave B; a delivery
+    # re-voice of the B take keeps B instead of going back to the top-ranked A
+    refs = []
+    for name, score in (("A", 0.9), ("B", 0.8)):
+        wav = tmp_path / f"{name}.wav"
+        write_wav(wav, np.zeros(16000, dtype=np.float32), 16000)
+        refs.append({"ref_id": name, "char_id": "c1", "wav": str(wav), "score": score, "dur_s": 1.0})
+
+    def keep(text: str, _lang: str, _mode: str) -> str:
+        return text
+
+    assert voice._char_ref(project, refs, "en", None, keep).ref_id == "A"
+    assert voice._char_ref(project, refs, "en", "A", keep).ref_id == "B"
+    assert voice._char_ref(project, refs, "en", None, keep, keep_ref="B").ref_id == "B"
+    assert voice._char_ref(project, refs, "en", None, keep, keep_ref="gone").ref_id == "A"  # a removed ref falls back
+
+
 def test_a_fallback_tags_take_stays_tags_when_its_delivery_changes(project: Project,
                                                                    capsys: pytest.CaptureFixture[str]) -> None:
     originals = {n: f"This is the original line number {n}." for n in range(1, N_LINES + 1)}
