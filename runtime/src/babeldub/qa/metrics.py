@@ -251,6 +251,11 @@ def identity_margin(
     return sims[own] - max(others), closest
 
 
+def mean_cosine(vec: Sequence[float] | np.ndarray, embs: Sequence[np.ndarray]) -> float:
+    """Average cosine of `vec` to each of `embs` (line to line, the scale of `mean_pairwise_cosine`)."""
+    return float(np.mean([cosine(vec, e) for e in embs]))
+
+
 def mean_pairwise_cosine(embs: Sequence[np.ndarray]) -> float | None:
     """Average cosine over all distinct pairs (the voice baseline of a speaker)."""
     if len(embs) < 2:

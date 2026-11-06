@@ -53,6 +53,7 @@ from babeldub.qa.baseline import (
     MosBaseline,
     char_centroids,
     char_f0_hints,
+    clean_items,
     clean_original,
     compute_baselines,
     load_baseline,
@@ -76,6 +77,7 @@ from babeldub.qa.metrics import (
     f0_shift_st,
     identity_margin,
     ltas_distance_db,
+    mean_cosine,
     prosody_similarity,
     voiced_seconds,
 )
@@ -91,8 +93,8 @@ def _r(value: float | None, digits: int = 4) -> float | None:
 
 
 def _target_id(kind: str, cid: str, vec: np.ndarray) -> str:
-    """`against` of a cached orig_sim: what it was measured against (`ref:<ref_id>` or `centroid`), the
-    character and a sha1 of the embedding rounded to 4 decimals."""
+    """`against` of a cached orig_sim: what it was measured against (`ref:<ref_id>` or `lines`, the character's
+    other clean originals), the character and a sha1 of the embedding(s) rounded to 4 decimals."""
     digest = hashlib.sha1(np.round(np.asarray(vec, dtype=np.float64), 4).tobytes()).hexdigest()[:12]
     return f"{kind}:{cid}:{digest}"
 
@@ -310,16 +312,24 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 vec = embedder.embed_one(f"ref:{ref['ref_id']}", ref_wav)
             return vec
 
-        def voice_target(cid: str, lid: str) -> tuple[np.ndarray | None, str | None]:
-            """The voice the relative SIM rule measures the original and the dub against: the chosen reference
-            (another line), else the character's centroid; with its identity `against` (kind, character and a
-            fingerprint of the embedding: a re-cast, a new reference or a moved centroid misses the cache)."""
+        clean_embs: dict[str, dict[str, np.ndarray]] = {}  # the baseline's clean originals per character
+
+        def voice_target(cid: str, lid: str) -> tuple[list[np.ndarray] | None, str | None]:
+            """The voice lines the relative SIM rule measures the original and the dub against, line to line like
+            `sim_ref`: the chosen reference (another line), else the character's other clean originals (the line
+            itself left out); with its identity `against` (kind, character and a fingerprint of the embeddings: a
+            re-cast, a new reference or other baseline lines miss the cache)."""
             ref = chosen_ref.get(cid)
             if ref is not None and ref.get("line_id") != lid and (vec := ref_vec_of(ref)) is not None:
-                return vec, _target_id(f"ref:{ref['ref_id']}", cid, vec)
-            return (centroids[cid], _target_id("centroid", cid, centroids[cid])) if cid in centroids else (None, None)
+                return [vec], _target_id(f"ref:{ref['ref_id']}", cid, vec)
+            if cid not in centroids:  # no voice of its own (unknown) or under MIN_CENTROID_LINES clean originals
+                return None, None
+            if cid not in clean_embs:
+                clean_embs[cid] = embedder.embed(clean_items(root, char_lines.get(cid, [])))
+            others = [v for k, v in clean_embs[cid].items() if k != lid]
+            return (others, _target_id("lines", cid, np.stack(others))) if others else (None, None)
 
-        def orig_own_sim(lid: str, target: np.ndarray, against: str) -> float | None:
+        def orig_own_sim(lid: str, target: list[np.ndarray], against: str) -> float | None:
             """The original line's own SIM to `target` (any length; cached in qa/baseline.json `lines`)."""
             cached = own_sims.get(lid) or {}
             if cached.get("against") == against and cached.get("orig_sim") is not None:
@@ -327,7 +337,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             vec = orig_emb(lid, 0.0)
             if vec is None:
                 return None
-            own_sims[lid] = {"orig_sim": round(cosine(vec, target), 4), "against": against}
+            own_sims[lid] = {"orig_sim": round(mean_cosine(vec, target), 4), "against": against}
             return float(own_sims[lid]["orig_sim"])
 
         for lid in to_check:
@@ -379,7 +389,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
                 target, against = voice_target(cid, lid)
                 if target is not None and against is not None:
                     orig_sim = orig_own_sim(lid, target, against)
-                    dub_cos = cosine(synth, target)
+                    dub_cos = mean_cosine(synth, target)
             orig_speech = (analysis.get(lid) or {}).get("speech_s") or (line.get("audio") or {}).get("dur_s")
             sim_rule = th.sim_rule(orig_speech, orig_sim, sim_ref)
             # relative: orig_sim > MIN_REL_ORIG_SIM > 0, so the ratio is defined
@@ -398,6 +408,7 @@ def cmd_qa(args: argparse.Namespace) -> int:
             mos_v: float | None = None
             pros_dub: dict[str, Any] | None = None
             pros_orig: dict[str, Any] | None = None
+            orig_fallback = False  # pros_orig is the analysis.jsonl prosody (unhinted): no register verdict
             if audible and not qc_error and not nonverbal:
                 assert voice_wav is not None
                 if session.has_mos:
@@ -410,15 +421,18 @@ def cmd_qa(args: argparse.Namespace) -> int:
                     pros_dub = session.prosody(f"{lid}#a{attempt}", voice_wav, f0_hint=hint)
                 except QcItemError:
                     pros_dub = None
-                # any length: the register check needs short originals too
-                orig_wav = clean_original(root, line, 0.0) if line and pros_dub is not None else None
-                if orig_wav is not None:
+                # the raw original of any length, has_bed/alt_take included (SIM_BAD_FLAGS concern the voice
+                # embedding): the register check needs the hinted F0 of every original with audio
+                has_audio = "no_audio" not in (line.get("flags") or [])
+                orig_wav = wav_path(root, line) if line and has_audio and pros_dub is not None else None
+                if orig_wav is not None and orig_wav.exists():
                     try:
                         pros_orig = session.prosody(lid, orig_wav, f0_hint=hint)
                     except QcItemError:
                         pros_orig = None
                 if pros_dub is not None and pros_orig is None:
                     pros_orig = (analysis.get(lid) or {}).get("prosody")
+                    orig_fallback = pros_orig is not None
             psim = prosody_similarity(pros_dub, pros_orig)
             ltas = _ltas(root, line, wav) if audible else None
             dub_range = (pros_dub or {}).get("f0_range_st")
@@ -427,9 +441,10 @@ def cmd_qa(args: argparse.Namespace) -> int:
             orig_f0 = (pros_orig or {}).get("f0_median_hz")
             voiced = (voiced_seconds(pros_dub, levels.dur_s if levels else None),
                       voiced_seconds(pros_orig, (line.get("audio") or {}).get("dur_s")))
-            # the register check needs enough voiced speech on both sides: a median of a few frames is noise
-            shift = f0_shift_st(dub_f0, orig_f0) if all(v is not None and v >= th.pitch_min_voiced_s
-                                                        for v in voiced) else None
+            # the register check needs enough voiced speech on both sides (a median of a few frames is noise) and
+            # both measured with the same hinted bounds (never the unhinted analysis fallback)
+            shift = f0_shift_st(dub_f0, orig_f0) if not orig_fallback and all(
+                v is not None and v >= th.pitch_min_voiced_s for v in voiced) else None
             orig_mos = mos_base.median(cid) if mos_v is not None else None
             ratio = post.get("ratio")
             if ratio is None and levels is not None:

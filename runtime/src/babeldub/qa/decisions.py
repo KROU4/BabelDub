@@ -122,8 +122,10 @@ class Thresholds:
     def sim_rule(self, orig_speech_s: float | None, orig_sim: float | None, sim_ref: float | None) -> str:
         """`relative` when the original line itself is no reliable voice sample — less than short_sim_s of
         speech (ECAPA is noise on such lines) or its own sim below the bar a dub must reach — else `absolute`.
-        Without the original's own sim, or with one at about zero (MIN_REL_ORIG_SIM: a ratio to it would pass
-        any voice), there is nothing to be relative to."""
+        `orig_sim` must be line to line like `sim_ref` (the cosine to the chosen reference line, or the mean cosine
+        to the character's other clean originals; never a centroid cosine, which runs higher), so it compares
+        with `sim_threshold(sim_ref)`. Without the original's own sim, or with one at about zero
+        (MIN_REL_ORIG_SIM: a ratio to it would pass any voice), there is nothing to be relative to."""
         if orig_sim is None or orig_sim <= MIN_REL_ORIG_SIM:
             return "absolute"
         short = orig_speech_s is not None and orig_speech_s < self.short_sim_s
