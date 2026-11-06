@@ -547,9 +547,9 @@ def tempo_phrase(ratio: float) -> str:
 
 def apply_tempo(plan: Delivery, phrase: str | None) -> Delivery:
     """Add the tempo hint `phrase` (tempo_phrase) to a measured or tag-less delivery: a measured `quick` is
-    dropped (the dub already runs fast), `slow` is added with `phrase` as its control phrase. An agent
-    delivery wins, a dropped control stays dropped, a delivery that is already `slow` or has MAX_TAGS tags
-    is left alone."""
+    removed first (the dub already runs fast), then `slow` is added with `phrase` as its control phrase
+    ([shouting, quick, expressive] -> [shouting, expressive, slow]). An agent delivery wins, a dropped
+    control stays dropped, a delivery that is then already `slow` or still has MAX_TAGS tags is left alone."""
     if phrase is None or plan.source not in ("measured", "none"):
         return plan
     tags = [t for t in plan.tags if t != "quick"]
@@ -1112,6 +1112,7 @@ def _plan_synth(
 
         prefer: str | None = None
         avoid: str | None = None
+        keep_tags = False  # a delivery re-voice of a `tags` take stays `tags` (never short_word's line, never clone)
         reason = "new" if not rows else "retry"
         if pending and args.attempt_next and latest_ok is not None:
             reason = str(decision["decision"])
@@ -1145,6 +1146,13 @@ def _plan_synth(
                 reason = "retranslated"
             elif same:
                 reason = "delivery"
+                # a re-voice keeps the take's prompt family: a QA reref (line/char) is not undone, and a tagged
+                # take (short_word first take, reref, clone fallback) never becomes a clone take, which would
+                # voice no control text and so not the changed delivery
+                kept = str(latest_ok.get("ref_mode") or "").removesuffix("-xvec")
+                if kept in ("line", "char") and not (kept == "line" and cls == "short_word"):
+                    prefer = kept
+                keep_tags = kept == "tags"
         elif args.force and rows:
             reason = "force"
         tries_for_text = len({r.get("attempt") for r in rows if r.get("text") == text})  # a scored row repeats its attempt
@@ -1159,7 +1167,8 @@ def _plan_synth(
         avoid_bucket = _avoid_bucket(reason, latest_ok, qa_latest.get(line_id))
         # a short word's first take uses the line itself; its regen goes through the character's own
         # (bootstrap) reference, whose pronunciation of the target language is steadier
-        orig = _orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen" else None
+        orig = (_orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen"
+                and not keep_tags else None)
         if orig is not None:  # a short word: the line itself carries the delivery, no target-language prompt
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             src = str((line.get("text") or {}).get("src") or "")
@@ -1169,7 +1178,7 @@ def _plan_synth(
         elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             bucket, long_ref, tgt = boot.pick(line_id, avoid_bucket)
-            if boot.clone:  # the long original reference continued by its own transcript, then the dub text
+            if boot.clone and not keep_tags:  # the long original reference continued by its own transcript, then the dub text
                 ref = Ref("clone", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
                 prompt = long_ref
             elif strategy in ("tags", "clone"):  # the long original reference alone; the delivery comes from the control text
@@ -1864,7 +1873,7 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
     take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest.
     `converted`: {candidate name: RVC-converted wav} scored in place of the candidate's own file."""
     from babeldub.cast.characters import UNKNOWN_ID
-    from babeldub.commands.vc import load_models
+    from babeldub.commands.vc import load_models, pitch_mode
     from babeldub.qa.baseline import MOS_BASELINE, MosBaseline, char_f0_hints
     from babeldub.qa.metrics import f0_shift_st, prosody_similarity, voiced_seconds
     from babeldub.qa.qc import QcItemError, cer_report
@@ -1872,6 +1881,7 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
     chosen = {str(r["char_id"]): r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")}
     rvc = set(load_models(project))
+    vc_shifts = bool(rvc) and pitch_mode(project) != "keep"
     converted = converted or {}
     max_cer = float(project.setting("qa", "max_cer", 0.15))
     mos_drop = float(project.setting("qa", "mos_drop", 1.0))
@@ -1907,6 +1917,10 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
         ranked: list[best_rank.Candidate] = []
         # one line's candidates are compared on the same audio: all converted, or (a conversion failed) all raw
         all_converted = all(converted.get(_cand_name(row, cand)) is not None for cand in cands)
+        # an RVC character's timbre is final only when its candidates were converted before scoring
+        unconverted_rvc = cid in rvc and not all_converted
+        # ... and with vc.pitch other than keep, vc moves the winner's F0: a raw take's median says nothing
+        f0_measured = not (unconverted_rvc and vc_shifts)
         for cand in cands:
             wav = _abs(project, cand["wav"])
             assert wav is not None
@@ -1923,7 +1937,7 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
             dub_p, orig_p = sc.get("prosody") or {}, sc.get("orig_prosody") or {}
             voiced = [voiced_seconds(dub_p), voiced_seconds(orig_p)]
             shift = (f0_shift_st(dub_p.get("f0_median_hz"), orig_p.get("f0_median_hz"))
-                     if all(v is not None and v >= min_voiced for v in voiced) else None)
+                     if f0_measured and all(v is not None and v >= min_voiced for v in voiced) else None)
             ranked.append(best_rank.Candidate(
                 seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
                 sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),
@@ -1934,8 +1948,6 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
         target = float(info.get("target_speech_s") or row.get("dur_s") or 0.0)
         orig_mos = mos_base.median(cid) if mos_base is not None and cid != UNKNOWN_ID else None
         mos_floor = None if orig_mos is None else orig_mos - mos_drop
-        # an RVC character's timbre is final only when its candidates were converted before scoring
-        unconverted_rvc = cid in rvc and not all_converted
         fixed = bool(line.get("fixed_length"))
         win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=unconverted_rvc, fixed_length=fixed,
                              mos_floor=mos_floor, weights=weights)

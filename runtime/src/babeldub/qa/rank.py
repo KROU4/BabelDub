@@ -18,8 +18,11 @@ Then the score, with the weights of `qa.rank_weights` (defaults in core.project.
                      timbre later and the candidates were scored before conversion
 
 A fixed_length (cutscene) line weighs the length fit `length_fixed` (0.30) instead, since a take that ends
-early or late cannot be timed without slowing or squeezing it; the extra weight is taken in equal halves
-from prosody and liveliness. A metric that could not be measured counts as 0.5. CER is only a gate.
+early or late cannot be timed without slowing or squeezing it. The difference is taken from prosody and
+liveliness in proportion to their weights (0.25 / 0.20 -> 0.1667 / 0.1333), then from MOS and voice SIM
+the same way when those two run out; a `length_fixed` lighter than `length` gives it back to prosody and
+liveliness. No weight goes below 0 and the sum stays the same (unless `length_fixed` alone outweighs it).
+A metric that could not be measured counts as 0.5. CER is only a gate.
 """
 
 from __future__ import annotations
@@ -108,12 +111,28 @@ def effective_weights(weights: dict[str, float] | None = None, *, rvc: bool = Fa
     out = {k: w[k] for k in SCORE_KEYS}
     if rvc:
         out["sim"] = w["sim_rvc"]
-    if fixed_length and w["length_fixed"] > out["length"]:
+    if fixed_length:
         extra = w["length_fixed"] - out["length"]
         out["length"] = w["length_fixed"]
-        out["prosody"] = max(0.0, out["prosody"] - extra / 2)
-        out["liveliness"] = max(0.0, out["liveliness"] - extra / 2)
+        for group in (("prosody", "liveliness"), ("mos", "sim")):
+            extra = _take(out, group, extra)
+            if extra <= 0:
+                break
     return {k: round(v, 4) for k, v in out.items()}
+
+
+def _take(out: dict[str, float], keys: tuple[str, ...], amount: float) -> float:
+    """Take `amount` from the weights `keys` in proportion to them (a negative amount gives it back the
+    same way, in equal parts when they all weigh 0); returns what they could not give."""
+    pool = sum(out[k] for k in keys)
+    if amount < 0:
+        for k in keys:
+            out[k] -= amount * (out[k] / pool if pool > 0 else 1 / len(keys))
+        return 0.0
+    taken = min(amount, pool)
+    for k in keys:
+        out[k] = max(0.0, out[k] - taken * out[k] / pool) if pool > 0 else out[k]
+    return amount - taken
 
 
 def length_fit(speech_s: float, target_s: float) -> float:

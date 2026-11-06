@@ -272,6 +272,41 @@ def test_without_applio_rvc_characters_keep_the_low_sim_weight(project: Project,
     assert final["best_of"]["scored_after_rvc"] is False and final["best_of"]["sim_weight"] == 0.05
 
 
+@pytest.mark.parametrize(("pitch", "measured"), [("line", False), ("keep", True)])
+def test_unconverted_rvc_candidates_get_no_f0_median_fit_when_vc_shifts_f0(
+        project: Project, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+        pitch: str, measured: bool) -> None:
+    import babeldub.commands.vc as vc_cmd
+    import babeldub.qa.qc as qc
+    from babeldub.core.output import EXIT_ENV, BabelDubError
+
+    class F0Qc(FakeScoreQc):  # raw takes a fifth above the original: vc.pitch would move them back
+        def request(self, msg: dict[str, Any]) -> dict[str, Any]:
+            reply = super().request(msg)
+            if msg["op"] == "score":
+                reply["prosody"].update(f0_median_hz=180.0, voiced_s=2.0)
+                reply["orig_prosody"].update(f0_median_hz=120.0, voiced_s=2.0)
+            return reply
+
+    run(capsys, project.root, "synth")
+    _rvc_model(project, str(voice._pending_scores(project)[0]["char_id"]))
+    project.data.setdefault("vc", {})["pitch"] = pitch
+    project.save()
+
+    def no_applio() -> None:
+        raise BabelDubError("Applio is not installed", code=EXIT_ENV)
+
+    monkeypatch.setattr(vc_cmd.rvc, "require_applio", no_applio)
+    monkeypatch.setattr(qc, "_make_client", lambda log_path: F0Qc())
+    monkeypatch.setattr(qc, "qc_missing", lambda *a, **k: [])
+    code, out = run(capsys, project.root, "synth", "score")
+    assert code == EXIT_OK and out["scored"] == 1, out
+    scores = latest_by(read_jsonl(project.path(layout.SYNTH_RESULTS)))[LID]["best_of"]["scores"]
+    shifts = [s["f0_shift_st"] for s in scores]
+    want = round(12 * math.log2(1.5), 4) if measured else None
+    assert len(shifts) == 3 and all(s == pytest.approx(want, abs=1e-3) if measured else s is None for s in shifts), shifts
+
+
 def test_a_partial_rvc_failure_scores_the_whole_line_unconverted(project: Project, monkeypatch: pytest.MonkeyPatch,
                                                                  capsys: pytest.CaptureFixture[str]) -> None:
     import babeldub.commands.vc as vc_cmd
@@ -425,7 +460,15 @@ def test_rank_weights_setting() -> None:
     assert rank.effective_weights() == {"prosody": 0.25, "mos": 0.1, "liveliness": 0.2, "length": 0.15, "sim": 0.3}
     assert rank.effective_weights(rvc=True)["sim"] == 0.05
     fixed = rank.effective_weights(fixed_length=True)
-    assert fixed == {"prosody": 0.175, "mos": 0.1, "liveliness": 0.125, "length": 0.3, "sim": 0.3}
+    assert fixed == {"prosody": 0.1667, "mos": 0.1, "liveliness": 0.1333, "length": 0.3, "sim": 0.3}
+    # length_fixed replaces length whatever its size, the difference spread so the sum stays the same
+    lighter = rank.effective_weights({"length_fixed": 0.06}, fixed_length=True)
+    assert lighter == {"prosody": 0.3, "mos": 0.1, "liveliness": 0.24, "length": 0.06, "sim": 0.3}
+    heavier = rank.effective_weights({"length_fixed": 0.8}, fixed_length=True)
+    assert heavier["length"] == 0.8 and heavier["prosody"] == heavier["liveliness"] == 0.0
+    assert heavier["mos"] == pytest.approx(0.05, abs=1e-4) and heavier["sim"] == pytest.approx(0.15, abs=1e-4)
+    for w in (fixed, lighter, heavier):
+        assert sum(w.values()) == pytest.approx(1.0, abs=1e-3) and min(w.values()) >= 0
     assert rank.weights_from({"sim": 0.5, "bogus": 1, "mos": "x"})["sim"] == 0.5
     assert rank.check_weights(None) is None and rank.check_weights({"sim": 0.4}) is None
     assert "unknown" in rank.check_weights({"timbre": 0.4})

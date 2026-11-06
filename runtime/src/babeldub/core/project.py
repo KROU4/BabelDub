@@ -83,7 +83,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "short_sim_ratio": 0.8,
         "max_asr_disagreement": 0.15,
         # best-of ranking (qa/rank.py): sim_rvc replaces sim for a character whose RVC model sets the timbre
-        # after scoring; length_fixed replaces length on fixed_length lines (taken from prosody and liveliness)
+        # after scoring; length_fixed replaces length on fixed_length lines (the difference from prosody and liveliness)
         "rank_weights": {"prosody": 0.25, "mos": 0.10, "liveliness": 0.20, "length": 0.15, "sim": 0.30,
                          "sim_rvc": 0.05, "length_fixed": 0.30},
     },

@@ -288,6 +288,39 @@ def test_tagged_take_of_a_clone_character_goes_stale(project: Project, capsys: p
     assert row["control"] != "shouting" and row["tags_source"] == "agent"
 
 
+def test_a_reref_take_keeps_its_prompt_family_when_its_delivery_changes(project: Project,
+                                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    append_jsonl(project.path(layout.QA), [{"id": line_id(3), "attempt": 1, "verdict": "fail", "reasons": ["sim"]}])
+    append_jsonl(project.path(layout.DECISIONS), [{"id": line_id(3), "decision": "reref", "attempt": 1, "by": "agent"}])
+    run(capsys, project.root, "synth", "--attempt-next")
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 2 and row["ref_mode"] == "line" and row["control"] == "shouting"
+    append_jsonl(project.path(layout.TRANSLATIONS), [
+        {"id": line_id(3), "dub_text": dub(3), "lang": "ru", "by": "agent", "rev": 2, "delivery": ["whispered"]}])
+    code, out = run(capsys, project.root, "synth")
+    assert code == EXIT_OK and out["done"] == 1 and out["skipped"]["done"] == N_LINES - 1, out
+    row = results(project)[line_id(3)]
+    assert row["attempt"] == 3 and row["reason"] == "delivery" and row["ref_mode"] == "line"  # not a clone take
+    assert row["control"] not in (None, "shouting") and row["tags"] == ["whispered"] and row["tags_source"] == "agent"
+
+
+def test_a_fallback_tags_take_stays_tags_when_its_delivery_changes(project: Project,
+                                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    originals = {n: f"This is the original line number {n}." for n in range(1, N_LINES + 1)}
+    relink(project, {n: "" for n in originals})
+    run(capsys, project.root, "synth")
+    assert results(project)[line_id(3)]["ref_mode"] == "tags"
+    relink(project, originals)  # the character now has a clone reference
+    append_jsonl(project.path(layout.TRANSLATIONS), [
+        {"id": line_id(3), "dub_text": dub(3), "lang": "ru", "by": "agent", "rev": 2, "delivery": ["whispered"]}])
+    code, out = run(capsys, project.root, "synth")
+    assert code == EXIT_OK and out["done"] == 1 and out["by_ref"] == {"tags": 1}, out
+    row = results(project)[line_id(3)]
+    assert row["reason"] == "delivery" and row["ref_mode"] == "tags" and row["tags"] == ["whispered"]
+    assert row["control"] and "prompt_id" not in row
+
+
 def test_switching_strategy_needs_force_or_a_decision(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
     run(capsys, project.root, "set", "tts.ref_strategy=tags")
     assert run(capsys, project.root, "synth")[1]["by_ref"] == {"tags": N_LINES}
