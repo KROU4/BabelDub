@@ -5,6 +5,10 @@ Change the version only with `scripts/bump_version.py`; the heading of a release
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-06
+
+Measurement and voice fidelity. QA and best-of get a second Russian ASR (GigaAM-v3), Distill-MOS, a robust two-pass F0 and a register check; RVC keeps each line's own pitch (`vc.pitch=line`, index rate 0.75) instead of moving every line to 155 Hz; the dub takes the original's channel (`post.match`); VoxCPM2 "ultimate cloning" is available as the opt-in `tts.ref_strategy=clone`. Lab rounds on the 38-line Low-Budget Repairs test set (22 lines after RVC, metrics only, no listening round yet) left the other defaults unchanged: more RVC epochs (40–120 against 20, one character) gave no consistent gain, other VoxCPM2 settings (cfg 1.5–3.0, 10/20 timesteps, no tags, a Russian fine-tune) did not beat the current ones after RVC, and no other engine (FireRedTTS3, dots.tts-mf, Audio8-TTS-Realistic-Air) beat VoxCPM2 after the same RVC on similarity, naturalness and CER together.
+
 ### Added
 
 - **`tts.ref_strategy=clone`** (opt-in, VoxCPM2 "ultimate cloning"; `auto` stays `tags` until a blind listening round decides). The character's long original reference, built as for `tags` (`tts.tags_reference` and the bucket rules included) but only from lines with a non-empty source text whose syllable rate fits the ICL pre-check range, is sent both as the timbre (`reference_wav_path`) and as the continuation prompt (`prompt_wav` + `prompt_text` = the exact source transcripts of its parts), then the dub text; no control text (VoxCPM2 drops one sent with a prompt), so clone takes carry no delivery tags and `synth` says so in one `clone` note. Results rows: `ref_mode: clone`, `prompt_id`, `prompt_wav`. A character without such a reference is voiced as under `tags` (`ref_reason: "clone: no long reference with source transcripts: tags"`); short words, `reref` and the `unknown` group behave as under `tags` (a tagged take whose delivery changes is voiced again in its own prompt family, `line`/`char` or `tags`, with the new control text, never as a clone take), and a switch of strategy leaves done takes done (`--force` or a QA decision re-voices them). Lab test against `tags` (38 lines raw / 22 after RVC with index rate 0.75 and `vc.pitch=line`): SIM to the character 0.557 vs 0.470 raw and 0.683 vs 0.658 after RVC; Distill-MOS 3.92 vs 3.75 and 4.21 vs 4.16; Whisper CER 0.036 vs 0.046 and 0.036 vs 0.055; best-of-ASR CER after RVC 0.009 vs 0.017; natural speech length ratio after RVC 0.98 vs 0.90.
@@ -135,5 +139,8 @@ First public release: the full pipeline for localizing and dubbing a game in the
 - **Helper scripts:** `bump_version.py`, `validate_skills.py`, `build_release.py`, `install.ps1`, `install.sh`; CI on Ubuntu and Windows.
 - **Documentation (English):** install per host (`docs/HOSTS.md`), engine support (`docs/ENGINES.md`), models and hardware tiers (`docs/MODELS.md`), responsible use (`docs/LEGAL.md`), the CLI contract (`docs/dev/CONTRACT.md`); a Russian README (`README.ru.md`).
 
-[Unreleased]: https://github.com/KROU4/BabelDub/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/KROU4/BabelDub/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/KROU4/BabelDub/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/KROU4/BabelDub/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/KROU4/BabelDub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/KROU4/BabelDub/releases/tag/v0.1.0
