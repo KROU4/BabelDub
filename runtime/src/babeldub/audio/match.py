@@ -114,18 +114,20 @@ def profile(audio: np.ndarray, sr: int) -> Profile:
 
 
 def pooled(profiles: Sequence[Profile]) -> Profile:
-    """Speech-weighted power average of the band levels (no fine spectrum)."""
-    usable = [p for p in profiles if p.speech_s > 0]
+    """Speech-weighted power average of the band levels, each profile first taken re its own speech band (so a
+    loud line weighs no more than a quiet one; the result's speech band is ~0 dB), no fine spectrum."""
+    usable = [(p, _speech_level(p.bands_db)) for p in profiles if p.speech_s > 0]
+    usable = [(p, level) for p, level in usable if not math.isnan(level)]
     if not usable:
         return Profile(0, 0.0, np.full(len(BAND_CENTERS), np.nan))
-    weights = np.array([p.speech_s for p in usable])
-    stack = np.array([10.0 ** (p.bands_db / 10.0) for p in usable])  # NaN stays NaN
+    weights = np.array([p.speech_s for p, _ in usable])
+    stack = np.array([10.0 ** ((p.bands_db - level) / 10.0) for p, level in usable])  # NaN stays NaN
     valid = ~np.isnan(stack)
     total = np.where(valid, stack, 0.0).T @ weights
     norm = valid.astype(float).T @ weights
     bands = np.where(norm > 0, 10.0 * np.log10(np.where(norm > 0, total / np.maximum(norm, 1e-12), 1.0) + 1e-20),
                      np.nan)
-    return Profile(min(p.sr for p in usable), float(weights.sum()), bands)
+    return Profile(min(p.sr for p, _ in usable), float(weights.sum()), bands)
 
 
 def _speech_level(bands_db: np.ndarray) -> float:

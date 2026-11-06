@@ -169,6 +169,29 @@ def test_character_pair_recovers_the_shared_channel_the_line_curves_over_fit() -
     assert match.match_channel(first[0], SR, first[1], SR, "eq", pair=([], [])).info["ref"] == "line"
 
 
+def test_pair_pools_are_level_free_so_a_loud_line_does_not_dominate() -> None:
+    # no channel difference at all: every dub has the content colouring of its original; one original is 20 dB
+    # louder and strongly tilted (its raw dub is not), which must not drag the pooled original curve its way
+    idx = np.arange(len(match.BAND_CENTERS))
+    dubs, origs = [], []
+    for j in range(4):
+        colour = np.linspace(6.0, -6.0, len(idx)) if j == 0 else 2.0 * np.sin(2 * np.pi * idx / 7.0 + j)
+        orig = channel(voice(2.0, seed=50 + j), colour) * (10.0 if j == 0 else 1.0)
+        dub = channel(voice(2.0, seed=70 + j), colour)
+        origs.append(match.profile(orig, SR))
+        dubs.append(match.profile(dub, SR))
+        if j == 0:
+            first = (dub, orig)
+    res = match.match_channel(first[0], SR, first[1], SR, "eq", pair=(dubs, origs))
+    assert res.info["ref"] == "pair" and np.mean(np.abs(res.info["eq_db"])) < 1.0
+    # the pool is the same whatever each line's level; a profile without a speech band level is left out
+    louder = match.Profile(SR, dubs[1].speech_s, dubs[1].bands_db + 20.0)
+    assert np.allclose(match.pooled([dubs[0], louder]).bands_db, match.pooled(dubs[:2]).bands_db, equal_nan=True)
+    blank = match.Profile(SR, 1.0, np.full(len(idx), np.nan))
+    with_blank = match.pooled([*dubs[:2], blank])
+    assert with_blank.speech_s == pytest.approx(match.pooled(dubs[:2]).speech_s)
+
+
 def test_stereo_input_keeps_its_channels_and_ltas_distance_metric() -> None:
     dub = np.repeat(voice(1.5, seed=1)[:, None], 2, axis=1)
     orig = channel(voice(1.5, seed=2), TILT)
