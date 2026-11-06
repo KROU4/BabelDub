@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from babeldub.qa.metrics import RU_VOWEL_FOLD
 from babeldub.qa.metrics import cer as cli_cer
 from babeldub.workers import qc_worker
 
@@ -51,7 +52,8 @@ def audio(monkeypatch: pytest.MonkeyPatch) -> np.ndarray:
     data = np.zeros(2 * SR, dtype=np.float32)
     monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(data)])
     monkeypatch.setitem(qc_worker._STATE, "audio_cache", None)
-    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir"):
+    for key in ("asr", "sv", "mos", "mos_dir", "emotion", "emotion_dir", "accent", "accent_dir", "asr2", "asr2_dir",
+                "asr2_error", "mos_backend", "mos_fallback_dir", "mos_used", "mos_error", "device"):
         monkeypatch.setitem(qc_worker._STATE, key, None)
     return data
 
@@ -110,6 +112,115 @@ def test_prosody_semitone_range(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out["rms_db"] == pytest.approx(-20.0) and out["voiced_ratio"] == 0.8
     contour = out["contour"]  # semitones from the median, None where unvoiced
     assert len(contour) == 10 and contour[0] is None and contour[1] == pytest.approx(round(12 * np.log2(100 / 140), 2))
+    assert out["voiced_s"] == 0.08 and out["rms_std_db"] is not None
+
+
+def _fake_pyin(monkeypatch: pytest.MonkeyPatch, coarse: np.ndarray, fine: np.ndarray) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    def pyin(y: np.ndarray, **kw: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        calls.append(kw)
+        f0 = coarse if kw["hop_length"] == qc_worker.COARSE_HOP else fine
+        return f0, ~np.isnan(f0), np.ones_like(f0)
+
+    lib = ModuleType("librosa")
+    lib.pyin = pyin  # type: ignore[attr-defined]
+    lib.feature = SimpleNamespace(rms=lambda y, **kw: np.array([[0.1, 0.05, 0.0001]]))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "librosa", lib)
+    return calls
+
+
+def test_prosody_second_pass_is_one_octave_around_the_coarse_median(monkeypatch: pytest.MonkeyPatch) -> None:
+    coarse = np.array([200.0, 205.0, 410.0, np.nan, 198.0])  # one octave jump in the coarse pass
+    fine = np.array([200.0, 210.0, 190.0, np.nan, 220.0, 180.0])
+    calls = _fake_pyin(monkeypatch, coarse, fine)
+    out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
+    assert [c["hop_length"] for c in calls] == [qc_worker.COARSE_HOP, 160]
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (qc_worker.F0_MIN_HZ, qc_worker.F0_MAX_HZ)
+    assert calls[1]["fmin"] == pytest.approx(101.25) and calls[1]["fmax"] == pytest.approx(405.0)
+    assert out["f0_bounds_hz"] == [101.2, 405.0] and out["f0_bounds_source"] == "coarse"
+    assert out["f0_median_hz"] == 200.0 and out["voiced_s"] == 0.05
+
+
+def test_prosody_hint_sets_the_bounds_and_they_are_clipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_pyin(monkeypatch, np.array([np.nan]), np.array([120.0, 130.0, 125.0]))
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 140.0})
+    assert len(calls) == 1 and (calls[0]["fmin"], calls[0]["fmax"]) == (70.0, 280.0)
+    calls.clear()
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 80.0})
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (50.0, 160.0)  # never below 50 Hz
+    calls.clear()
+    qc_worker.op_prosody({"id": "a", "wav": "a.wav", "f0_hint_hz": 900.0})
+    assert (calls[0]["fmin"], calls[0]["fmax"]) == (450.0, 1000.0)  # never above 1000 Hz
+
+
+def _tone_pyin(monkeypatch: pytest.MonkeyPatch, tones: dict[str, float]) -> None:
+    """pyin that reads each file's tone, or its subharmonic when the tone lies above the bounds."""
+    t = np.arange(2 * SR) / SR
+
+    def pyin(y: np.ndarray, **kw: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        spectrum = np.abs(np.fft.rfft(y))
+        true_f0 = float(np.fft.rfftfreq(y.size, 1.0 / SR)[int(np.argmax(spectrum))])
+        f0 = true_f0 if kw["fmin"] <= true_f0 <= kw["fmax"] else true_f0 / 2.0  # pyin's subharmonic outside the band
+        return np.full(50, f0), np.ones(50, dtype=bool), np.ones(50)
+
+    lib = ModuleType("librosa")
+    lib.pyin = pyin  # type: ignore[attr-defined]
+    lib.feature = SimpleNamespace(rms=lambda y, **kw: np.array([[0.1, 0.05]]))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "librosa", lib)
+    monkeypatch.setattr(qc_worker, "_read_16k",
+                        lambda path: [FakeTensor((0.3 * np.sin(2 * np.pi * tones[path] * t)).astype(np.float32))])
+
+
+def test_a_shouted_original_and_its_faithful_dub_show_no_shift(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An original at 2.5 x the character's hint (a shout) and a dub at the same F0: both passes share the bounds,
+    so neither reads a subharmonic and the register check sees no shift."""
+    _tone_pyin(monkeypatch, {"dub.wav": 300.0, "orig.wav": 300.0})
+    out = qc_worker.op_score({"id": "a", "wav": "dub.wav", "orig_wav": "orig.wav", "want": ["prosody"],
+                              "f0_hint_hz": 120.0})
+    assert out["prosody"]["f0_bounds_hz"] == out["orig_prosody"]["f0_bounds_hz"] == [60.0, 480.0]
+    assert out["prosody"]["f0_median_hz"] == out["orig_prosody"]["f0_median_hz"] == pytest.approx(300.0)
+    assert abs(12 * np.log2(out["prosody"]["f0_median_hz"] / out["orig_prosody"]["f0_median_hz"])) < 0.01
+
+
+def test_an_octave_up_dub_is_measured_above_the_hint_band(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 250 Hz tone for a 120 Hz character: pyin bounded at 2 x hint reads its subharmonic (125 Hz), so the
+    register check's passes (dub and original) reach HINT_F0_UP x hint."""
+    _tone_pyin(monkeypatch, {"dub.wav": 250.0, "orig.wav": 120.0})
+    banded = qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 120.0})
+    assert banded["f0_bounds_hz"] == [60.0, 240.0] and banded["f0_median_hz"] == pytest.approx(125.0)  # +0.7 st
+    out = qc_worker.op_score({"id": "a", "wav": "dub.wav", "orig_wav": "orig.wav", "want": ["prosody"],
+                              "f0_hint_hz": 120.0})
+    assert out["prosody"]["f0_bounds_hz"] == [60.0, 480.0] and out["prosody"]["f0_median_hz"] == pytest.approx(250.0)
+    assert out["orig_prosody"]["f0_bounds_hz"] == [60.0, 480.0] and out["orig_prosody"]["f0_median_hz"] == 120.0
+    shift = 12 * np.log2(out["prosody"]["f0_median_hz"] / out["orig_prosody"]["f0_median_hz"])
+    assert shift > 12  # the register check sees the octave
+    assert qc_worker.op_prosody({"wav": "dub.wav", "f0_hint_hz": 400.0, "f0_up": qc_worker.HINT_F0_UP})[
+        "f0_bounds_hz"] == [200.0, 1000.0]  # capped at F0_CLIP_HZ
+
+
+def test_a_wide_hinted_pass_keeps_octave_errors_out_of_the_range_and_contour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """f0_up 4 reaches 480 Hz for a 120 Hz character: its octave errors (460-480 Hz) count for the median and the
+    voiced seconds, but the range and the contour keep only the frames within one octave of the median."""
+    fine = np.array([115.0, 120.0, 125.0, 118.0, 122.0, 460.0, 470.0, 480.0, np.nan, 121.0])
+    _fake_pyin(monkeypatch, np.array([np.nan]), fine)
+    monkeypatch.setattr(qc_worker, "CONTOUR_HZ", 100)  # one point per frame
+    out = qc_worker.op_prosody({"wav": "a.wav", "f0_hint_hz": 120.0, "f0_up": qc_worker.HINT_F0_UP})
+    assert out["f0_bounds_hz"] == [60.0, 480.0] and out["f0_median_hz"] == 122.0 and out["voiced_s"] == 0.09
+    assert out["f0_range_bounds_hz"] == [61.0, 244.0]
+    lo, hi = np.percentile([115.0, 120.0, 125.0, 118.0, 122.0, 121.0], [10, 90])
+    assert out["f0_range_st"] == round(12 * np.log2(hi / lo), 2) and out["f0_range_st"] < 2.0
+    assert out["contour"][5:9] == [None, None, None, None] and out["contour"][0] == round(12 * np.log2(115 / 122), 2)
+    # the one-octave pass is unchanged: its range uses every voiced frame
+    banded = qc_worker.op_prosody({"wav": "a.wav", "f0_hint_hz": 120.0})
+    assert banded["f0_range_bounds_hz"] == banded["f0_bounds_hz"] == [60.0, 240.0] and banded["f0_range_st"] > 12
+
+
+def test_prosody_without_a_voice_in_the_coarse_pass_keeps_the_wide_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_pyin(monkeypatch, np.array([np.nan, np.nan, 300.0]), np.array([np.nan, np.nan, np.nan]))
+    out = qc_worker.op_prosody({"id": "a", "wav": "a.wav"})
+    assert (calls[1]["fmin"], calls[1]["fmax"]) == (qc_worker.F0_MIN_HZ, qc_worker.F0_MAX_HZ)
+    assert out["f0_bounds_source"] == "wide" and out["f0_median_hz"] is None and out["voiced_s"] == 0.0
 
 
 def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,10 +249,234 @@ def test_score_combines_metrics_and_reports_what_is_missing(monkeypatch: pytest.
 @pytest.mark.parametrize(
     ("ref", "hyp"),
     [("Привет, как дела?", "привет как дела"), ("Ёлка <i>тут</i>", "елка тут"), ("Hello", "Hallo there"),
-     ("", ""), ("", "x"), ("It's [laughs] fine", "its fine")],
+     ("", ""), ("", "x"), ("It's [laughs] fine", "its fine"), ("Посмотрим, закрыто!", "пасмотрим закрыта"),
+     ("Тебя здесь нет", "тибя здесь нет"), ("Эй, ёж", "ий иж")],
 )
-def test_worker_cer_matches_the_cli(ref: str, hyp: str) -> None:
-    assert qc_worker._cer(ref, hyp) == pytest.approx(cli_cer(ref, hyp))
+@pytest.mark.parametrize("fold", [False, True])
+def test_worker_cer_matches_the_cli(ref: str, hyp: str, fold: bool) -> None:
+    assert qc_worker._cer(ref, hyp, fold=fold) == pytest.approx(cli_cer(ref, hyp, fold=fold))
+    assert qc_worker.RU_VOWEL_FOLD == RU_VOWEL_FOLD
+
+
+class FakeGiga:
+    """transformers' GigaAMModel: `.model` is the GigaAMASR with forward, head and greedy decoding."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self.texts = list(texts)
+        self.lengths: list[int] = []
+        outer = self
+
+        class Inner:
+            head = object()
+
+            def parameters(self) -> Any:
+                return iter([SimpleNamespace(device="cpu")])
+
+            def forward(self, wav: Any, length: Any) -> tuple[Any, Any]:
+                outer.lengths.append(int(wav.shape[-1]))
+                return wav, length
+
+            class decoding:  # noqa: N801 - mirrors the attribute name
+                @staticmethod
+                def decode(head: Any, encoded: Any, lengths: Any) -> list[str]:
+                    return [outer.texts.pop(0)]
+
+        self.model = Inner()
+
+    def eval(self) -> FakeGiga:
+        return self
+
+    def to(self, device: Any) -> FakeGiga:
+        return self
+
+
+class FakeTorchTensor:
+    def __init__(self, data: np.ndarray) -> None:
+        self.data = data
+        self.shape = data.shape
+
+    def to(self, device: Any) -> FakeTorchTensor:
+        return self
+
+    def unsqueeze(self, dim: int) -> FakeTorchTensor:
+        return FakeTorchTensor(self.data[None, :])
+
+
+def _fake_torch() -> ModuleType:
+    import contextlib
+
+    torch = ModuleType("torch")
+    torch.from_numpy = FakeTorchTensor  # type: ignore[attr-defined]
+    torch.full = lambda shape, value, device=None: value  # type: ignore[attr-defined]
+    torch.inference_mode = contextlib.nullcontext  # type: ignore[attr-defined]
+    return torch
+
+
+def test_asr2_transcribes_long_clips_in_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "torch", _fake_torch())
+    long = np.zeros(int(45 * SR), dtype=np.float32)
+    monkeypatch.setattr(qc_worker, "_read_16k", lambda path: [FakeTensor(long)])
+    giga = FakeGiga([" садись ", "в машину", ""])
+    monkeypatch.setitem(qc_worker._STATE, "asr2", giga)
+    out = qc_worker.op_asr2({"id": "a", "wav": "a.wav"})
+    assert out == {"id": "a", "text": "садись в машину", "model": "gigaam-v3-ctc"}
+    assert giga.lengths == [20 * SR, 20 * SR, 5 * SR]
+
+
+def test_score_uses_the_second_asr_for_russian_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "asr", FakeWhisper())
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setattr(qc_worker, "_asr2_text", lambda path: "пасмотрим")
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"]})
+    assert out["asr2_text"] == "пасмотрим" and out["cer2"] == 0.0 and out["cer_folded"] is not None
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Hello", "lang": "en", "want": ["cer"]})
+    assert "asr2_text" not in out and "cer_folded" not in out
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"],
+                              "asr2": False})  # the session turned the second ASR off
+    assert "asr2_text" not in out and "cer2" not in out and "unavailable" not in out and out["cer"] is not None
+
+    def broken(path: str) -> str:
+        raise RuntimeError("GigaAM needs transformers")
+
+    monkeypatch.setattr(qc_worker, "_asr2_text", broken)
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "text": "Посмотрим", "lang": "ru", "want": ["cer"]})
+    assert out["unavailable"] == ["asr2"] and "transformers" in out["asr2_error"] and out["cer"] is not None
+
+
+def test_asr2_load_ignores_the_long_form_only_pyannote_import(monkeypatch: pytest.MonkeyPatch) -> None:
+    scanned: list[list[str]] = []
+    dmu = SimpleNamespace(get_imports=lambda f: ["torch", "hydra", "pyannote", "omegaconf"])
+    giga = FakeGiga(["привет"])
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(folder: str, **kw: Any) -> FakeGiga:
+            scanned.append(dmu.get_imports("modeling_gigaam.py"))  # what transformers' check_imports would see
+            assert kw == {"trust_remote_code": True, "local_files_only": True}
+            return giga
+
+    original = dmu.get_imports
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoModel=AutoModel, dynamic_module_utils=dmu))
+    monkeypatch.setitem(qc_worker._STATE, "asr2", None)
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    assert qc_worker._get_asr2() is giga
+    assert scanned == [["torch", "hydra", "omegaconf"]] and dmu.get_imports is original  # restored after the load
+
+
+def test_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)  # import fails
+    with pytest.raises(RuntimeError, match="hydra-core"):
+        qc_worker._get_asr2()
+    assert "setup --engines qc" in qc_worker._STATE["asr2_error"]
+    monkeypatch.delitem(sys.modules, "transformers")
+    with pytest.raises(RuntimeError, match="hydra-core"):  # not retried
+        qc_worker._get_asr2()
+
+
+@pytest.mark.parametrize("stage", ["from_pretrained", "to"])
+def test_any_asr2_load_failure_is_remembered(monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    calls: list[str] = []
+
+    class Model:
+        def eval(self) -> Model:
+            return self
+
+        def to(self, device: str) -> Model:
+            calls.append("to")
+            raise RuntimeError("CUDA out of memory")
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(folder: str, **kw: Any) -> Model:
+            calls.append("load")
+            if stage == "from_pretrained":
+                raise OSError("pytorch_model.bin not found")  # a partial download
+            return Model()
+
+    dmu = SimpleNamespace(get_imports=lambda f: [])
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(AutoModel=AutoModel, dynamic_module_utils=dmu))
+    monkeypatch.setitem(qc_worker._STATE, "asr2", None)
+    monkeypatch.setitem(qc_worker._STATE, "asr2_dir", "giga")
+    monkeypatch.setitem(qc_worker._STATE, "asr2_error", None)
+    monkeypatch.setattr(qc_worker, "_torch_device", lambda: "cuda")
+    for _ in range(3):  # `synth score` asks once per candidate: the model is loaded once
+        with pytest.raises(RuntimeError, match="GigaAM failed to load"):
+            qc_worker._get_asr2()
+    assert calls == (["load"] if stage == "from_pretrained" else ["load", "to"])
+    assert ("OSError" if stage == "from_pretrained" else "out of memory") in qc_worker._STATE["asr2_error"]
+
+
+def test_mos_backends_and_the_utmos_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
+    monkeypatch.setitem(qc_worker._STATE, "device", "cpu")
+    for key in ("mos_backend", "mos_fallback_dir", "mos_used"):
+        monkeypatch.setitem(qc_worker._STATE, key, None)
+
+    class Model:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def eval(self) -> Model:
+            return self
+
+        def to(self, device: str) -> Model:
+            return self
+
+    loaded: list[str] = []
+    monkeypatch.setattr(qc_worker, "_load_utmos22", lambda folder: loaded.append(f"utmos:{folder}") or Model("u"))
+    monkeypatch.setattr(qc_worker, "_load_distillmos", lambda folder: loaded.append(f"distill:{folder}") or Model("d"))
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos",
+                       "mos_fallback": "ut"})
+    assert qc_worker._get_mos().name == "d" and qc_worker._STATE["mos_used"] == "distillmos"
+    assert loaded == ["distill:dm"]
+
+    def missing(folder: str) -> Any:
+        raise ImportError("No module named 'distillmos'")
+
+    monkeypatch.setattr(qc_worker, "_load_distillmos", missing)
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm2", "mos_backend": "distillmos",
+                       "mos_fallback": "ut"})
+    assert qc_worker._get_mos().name == "u" and qc_worker._STATE["mos_used"] == "utmos22"  # fell back
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm3", "mos_backend": "distillmos"})
+    monkeypatch.setitem(qc_worker._STATE, "mos_fallback_dir", None)
+    with pytest.raises(RuntimeError, match="distillmos package"):
+        qc_worker._get_mos()
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "ut2", "mos_backend": "utmos22"})
+    assert qc_worker._get_mos().name == "u" and loaded[-1] == "utmos:ut2"
+
+
+def test_score_keeps_the_other_metrics_when_mos_cannot_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Distill-MOS without its package and without a UTMOS22 fallback: score reports mos_error, keeps CER, and
+    the worker does not retry the import until a new load request."""
+    monkeypatch.setattr(qc_worker, "_resolve_device", lambda requested: "cpu")
+    monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
+    monkeypatch.setitem(qc_worker._STATE, "asr", FakeWhisper())
+    tries: list[str] = []
+
+    def missing(folder: str) -> Any:
+        tries.append(folder)
+        raise ImportError("No module named 'distillmos'")
+
+    monkeypatch.setattr(qc_worker, "_load_distillmos", missing)
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos"})
+    outs = [qc_worker.op_score({"wav": "a.wav", "text": "Hello there, bye!", "lang": "en", "want": ["cer", "mos"]})
+            for _ in range(2)]
+    for out in outs:
+        assert out["cer"] == 0.0 and out["mos"] is None and out["unavailable"] == ["mos"]
+        assert "distillmos package" in out["mos_error"] and "mos_model" not in out
+    assert tries == ["dm"]  # the failure is remembered
+    qc_worker.op_load({"op": "load", "device": "cpu", "mos_model": "dm", "mos_backend": "distillmos"})
+    qc_worker.op_score({"wav": "a.wav", "want": ["mos"]})
+    assert tries == ["dm", "dm"]  # a new load request tries again
+
+
+def test_mos_reports_the_model_that_answered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(qc_worker._STATE, "mos_used", "distillmos")
+    monkeypatch.setattr(qc_worker, "_mos_of", lambda path: 3.14159)
+    assert qc_worker.op_mos({"id": "a", "wav": "a.wav"}) == {"id": "a", "mos": 3.142, "mos_model": "distillmos"}
 
 
 def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,9 +488,16 @@ def test_load_keeps_mos_and_emotion_lazy(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_score_prosody_of_the_take_and_the_original(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(qc_worker, "op_prosody", lambda req: {"f0_range_st": 5.0 if req["wav"] == "a.wav" else 7.0})
-    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "orig_wav": "o.wav", "want": ["prosody"]})
+    hints: list[Any] = []
+
+    def prosody(req: dict[str, Any]) -> dict[str, Any]:
+        hints.append(req.get("f0_hint_hz"))
+        return {"f0_range_st": 5.0 if req["wav"] == "a.wav" else 7.0}
+
+    monkeypatch.setattr(qc_worker, "op_prosody", prosody)
+    out = qc_worker.op_score({"id": "a", "wav": "a.wav", "orig_wav": "o.wav", "want": ["prosody"], "f0_hint_hz": 150})
     assert out["prosody"]["f0_range_st"] == 5.0 and out["orig_prosody"]["f0_range_st"] == 7.0
+    assert hints == [150, 150]  # the character's median bounds both passes
 
 
 def test_accent_marks_homographs_only(monkeypatch: pytest.MonkeyPatch) -> None:

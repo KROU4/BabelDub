@@ -5,7 +5,9 @@ synth  tts.engine=auto runs VoxCPM2 (voxcpm) on an NVIDIA GPU, else qwen3tts-fas
        plus a short English delivery control text "(shouting, fast pace)" before the dub text, from the
        translator agent's `delivery` or measured on the original against the character's other lines
        (analysis/prosody_tags.py). ref_strategy=bootstrap (explicit) adds a target-language continuation
-       prompt made of the character's first accepted dubs instead (cast/bootstrap.py). Other engines use
+       prompt made of the character's first accepted dubs instead (cast/bootstrap.py). ref_strategy=clone
+       (explicit) sends the long reference built from lines with a usable source transcript both as the
+       timbre and as a continuation prompt with that exact transcript, no control text. Other engines use
        the original line itself with its source transcript (line) or the character's best clean
        reference (char). Every line is
        generated tts.best_of times with different seeds; the take whose speech length is closest to the
@@ -39,10 +41,11 @@ from typing import Any
 
 import numpy as np
 
-from babeldub.analysis.prosody_tags import Measured, clean_tags, control_phrase, delivery_counts
+from babeldub.analysis.prosody_tags import MAX_TAGS, Measured, clean_tags, control_phrase, delivery_counts
 from babeldub.analysis.store import keep_original_classes, line_classes, load_analysis, measured_tags
-from babeldub.audio.dsp import fade, speech_seconds, to_mono
-from babeldub.audio.fit import fit_segments, length_score, speech_span
+from babeldub.audio import match as channel
+from babeldub.audio.dsp import fade, level_db, speech_seconds, to_mono
+from babeldub.audio.fit import conform, fit_segments, length_score, speech_bounds, speech_span
 from babeldub.audio.io import probe, read_audio, write_wav
 from babeldub.audio.stretch import METHODS as STRETCH_METHODS
 from babeldub.audio.stretch import time_stretch
@@ -67,12 +70,22 @@ ENGINES = ("voxcpm", "qwen3tts-fast", "qwen3tts", "chatterbox", "dummy")
 AUTO = "auto"  # tts.engine=auto: voxcpm on CUDA when its env exists, else the preference below
 AUTO_PREFERENCE = ("qwen3tts-fast", "qwen3tts", "chatterbox")
 PREMIUM = "voxcpm"
-PROMPT_ENGINES = ("voxcpm", "dummy")  # timbre reference + target-language continuation prompt (bootstrap)
+PROMPT_ENGINES = ("voxcpm", "dummy")  # timbre reference + continuation prompt (bootstrap, clone)
 CONTROL_ENGINES = ("voxcpm", "dummy")  # read a "(delivery control)" text before the dub text (ref_strategy=tags)
-LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags")  # the ~15-20 s long timbre reference, never cut
+LONG_REF_MODES = ("bootstrap-src", "bootstrap-tgt", "tags", "clone")  # the ~15-20 s long timbre reference, never cut
+CLONE_FALLBACK = "clone: no long reference with source transcripts: tags"  # ref_reason of such a character's lines
 TAGS_REFERENCES = ("main", "bucket")  # tts.tags_reference
 DELIVERY_SETTINGS = ("on", "measured", "off")  # tts.delivery_tags
 DROP_CONTROL_ATTEMPT = 3  # a QA regen from this take of the current text on is voiced without the control text
+SLOW_HINT_RATIO = 0.85  # tts.slow_hint_ratio: dub/original speech under this adds the tempo hint "slow"
+SLOW_HINT_MIN_LINES = 3  # ... measured on at least this many of the character's lines (median)
+SLOW_HINT_MIN_S = 1.0  # ... each with at least this much original speech (shorter ratios are noise)
+SLOW_STRONG_RATIO = 0.7  # under this ratio the hint reads "slow pace", else "slightly slower"
+MATCH_POOL_LINES = 8  # post.match: a short line's EQ target pools up to this many of the character's originals
+MATCH_TARGETS = ("character", "line")  # post.match_target
+MATCH_PAIR_LINES = 16  # match_target=character: the pair pools up to this many of the character's lines ...
+MATCH_PAIR_MIN_LINES = 3  # ... and needs at least this many ...
+MATCH_PAIR_MIN_S = 10.0  # ... and this much speech on each side, else the line's own curve is used
 # same models and the same output for one seed: a take of one is "done" for the other
 ENGINE_FAMILY = {"qwen3tts-fast": "qwen3tts"}
 REF_MAX_S = 15.0  # longer references are cut at a pause (models are trained on 3-15 s prompts)
@@ -444,7 +457,7 @@ def _usable(project: Project, row: dict[str, Any]) -> bool:
 
 @dataclass
 class Ref:
-    mode: str  # line | char | bootstrap-src | bootstrap-tgt | tags
+    mode: str  # line | char | bootstrap-src | bootstrap-tgt | tags | clone
     ref_id: str
     wav: Path
     text: str  # transcript (may be empty -> speaker-embedding-only cloning)
@@ -473,7 +486,7 @@ class Job:
     alt_ref: Ref | None = None  # character reference to fall back to when a line prompt runs away
     ref_reason: str | None = None  # why the CLI changed the prompt picked by the strategy
     src_rate: float | None = None  # syllables/s of the line transcript over its original speech
-    prompt: Prompt | None = None  # bootstrap-tgt: target-language continuation prompt (wav + exact text)
+    prompt: Prompt | None = None  # continuation prompt (wav + exact text): bootstrap-tgt target language, clone source
     target_speech: float | None = None  # speech span of the original (best-of picks the closest)
     line_class: str | None = None  # analyze class of the original (speech, short_word, mixed, ...)
     bucket: str | None = None  # arousal bucket of the bootstrap reference/prompt (calm, animated, loud, soft)
@@ -483,7 +496,7 @@ class Job:
 
     @property
     def ref_mode(self) -> str:
-        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt | tags (-xvec: timbre only)."""
+        """line | line-xvec | char | char-xvec | bootstrap-src | bootstrap-tgt | tags | clone (-xvec: timbre only)."""
         return f"{self.ref.mode}-xvec" if self.x_vector_only else self.ref.mode
 
     @property
@@ -495,8 +508,9 @@ class Job:
 class Delivery:
     """Delivery of one take under ref_strategy=tags."""
     tags: list[str]
-    source: str  # agent | measured | none | dropped
+    source: str  # agent | measured | none | dropped | tempo
     control: str | None  # the phrase sent as "(control)text"; None = no control text
+    tempo: str | None = None  # source tempo: the slow-down phrase apply_tempo added
 
 
 def plan_delivery(setting: str, translation: dict[str, Any] | None, measured: Measured | None) -> Delivery:
@@ -526,15 +540,37 @@ def apply_drop(plan: Delivery, drop: bool) -> Delivery:
     return Delivery(plan.tags, "dropped", None) if drop and plan.control else plan
 
 
+def tempo_phrase(ratio: float) -> str:
+    """The slow-down phrase for a dub/original speech ratio under tts.slow_hint_ratio."""
+    return "slow pace" if ratio < SLOW_STRONG_RATIO else "slightly slower"
+
+
+def apply_tempo(plan: Delivery, phrase: str | None) -> Delivery:
+    """Add the tempo hint `phrase` (tempo_phrase) to a measured or tag-less delivery: a measured `quick` is
+    removed first (the dub already runs fast), then `slow` is added with `phrase` as its control phrase
+    ([shouting, quick, expressive] -> [shouting, expressive, slow]). An agent delivery wins, a dropped
+    control stays dropped, a delivery that is then already `slow` or still has MAX_TAGS tags is left alone."""
+    if phrase is None or plan.source not in ("measured", "none"):
+        return plan
+    tags = [t for t in plan.tags if t != "quick"]
+    if "slow" in tags or len(tags) >= MAX_TAGS:
+        return plan
+    control = ", ".join(p for p in (control_phrase(tags), phrase) if p)
+    return Delivery([*tags, "slow"], "tempo", control, phrase)
+
+
 def delivery_matches(row: dict[str, Any], plan: Delivery) -> bool:
     """The take already has the delivery the line asks for now. A take without `tags_source` (made before
     v0.3 or by another strategy) stands; a take whose control a regen dropped stands while the tags are the
     same; otherwise the control text must match (a changed agent delivery, re-measured tags or a changed
-    tts.delivery_tags make the take stale)."""
+    tts.delivery_tags make the take stale). A take with a tempo hint is compared with the line's delivery
+    plus that same hint (a hint that comes or goes alone never makes a take stale)."""
     if "tags_source" not in row:
         return True
     if row.get("tags_source") == "dropped":
         return plan.control is None or list(row.get("tags") or []) == plan.tags
+    if row.get("tempo_hint"):
+        plan = apply_tempo(plan, str(row["tempo_hint"]))
     return (row.get("control") or None) == plan.control
 
 
@@ -596,10 +632,14 @@ def _char_ref(
     src_lang: str,
     avoid_ref: str | None,
     prepare: Callable[[str, str, str], str],
+    keep_ref: str | None = None,
 ) -> Ref | None:
-    """The character's chosen reference (another one first when `avoid_ref` is given)."""
+    """The character's chosen reference (another one first when `avoid_ref` is given; `keep_ref`, the
+    reference a re-voiced take used, first of all, so a delivery re-voice does not undo a QA reref)."""
     pool = [r for r in char_refs if r.get("chosen")] or char_refs
     ordered = [r for r in pool if str(r.get("ref_id")) != avoid_ref] + [r for r in pool if str(r.get("ref_id")) == avoid_ref]
+    if keep_ref:
+        ordered = [r for r in char_refs if str(r.get("ref_id")) == keep_ref] + ordered
     for row in ordered:
         wav = _abs(project, row.get("wav"))
         if wav is None or not wav.exists():
@@ -619,6 +659,7 @@ def _choose_ref(
     prefer: str | None,
     avoid_ref: str | None,
     prepare: Callable[[str, str, str], str],
+    keep_ref: str | None = None,
 ) -> Ref | None:
     text = line.get("text") or {}
     src_lang = str(text.get("src_lang") or _primary(line.get("locale")) or "")
@@ -636,7 +677,7 @@ def _choose_ref(
         return Ref("line", f"line:{_line_uid(line)}", orig, src, src_lang, dur)
 
     def char_ref() -> Ref | None:
-        return _char_ref(project, char_refs, src_lang, avoid_ref, prepare)
+        return _char_ref(project, char_refs, src_lang, avoid_ref, prepare, keep_ref)
 
     if prefer == "line" and line_ok:
         return line_ref()
@@ -689,6 +730,8 @@ class _Bootstrap:
     phase1: list[str]
     phase1_done: bool
     arousal: dict[str, Arousal] = field(default_factory=dict)  # line id -> where its original sits
+    clone: bool = False  # ref_strategy=clone: long_refs carry their source transcripts (continuation prompts)
+    note: str | None = None  # ref_reason of the lines voiced with these references (clone fallback)
 
     @property
     def long_ref(self) -> Prompt | None:
@@ -776,9 +819,12 @@ def _tags_states(
     refs_by_char: dict[str, list[dict[str, Any]]],
     analysis: dict[str, dict[str, Any]],
     reference: str,
+    transcript: Callable[[dict[str, Any]], str | None] | None = None,
 ) -> dict[str, _Bootstrap]:
     """Per character the long original timbre reference of ref_strategy=tags: `main` = the calm/main one
-    (the same file bootstrap uses), `bucket` = one per arousal bucket, picked per line like bootstrap."""
+    (the same file bootstrap uses), `bucket` = one per arousal bucket, picked per line like bootstrap.
+    With `transcript` (ref_strategy=clone, _source_transcript) the references are built from lines with a
+    usable source transcript (`clone`); a character without such a reference gets the tags ones (`note`)."""
     by_char: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for lid, cid in char_of.items():
         if lid not in follows:
@@ -790,10 +836,39 @@ def _tags_states(
         banks = emotion_banks(lines, analysis)
         if reference == "main":
             banks = {"calm": banks.get("calm", [])}
-        long_refs = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks)
         arousal = line_arousal(lines, analysis) if reference == "bucket" else {}
-        states[cid] = _Bootstrap(long_refs, {}, [], True, arousal)
+        if transcript is not None:
+            cloned = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks, transcript)
+            if cloned:
+                states[cid] = _Bootstrap(cloned, {}, [], True, arousal, clone=True)
+                continue
+        long_refs = long_references(project.root, cid, lines, refs_by_char.get(cid, []), banks)
+        note = CLONE_FALLBACK if transcript is not None else None
+        states[cid] = _Bootstrap(long_refs, {}, [], True, arousal, note=note)
     return states
+
+
+def _source_transcript(project: Project, prepare: Callable[[str, str, str], str]) -> Callable[[dict[str, Any]], str | None]:
+    """ref_strategy=clone: a line's prepared source transcript (as a line reference's) when it can continue a
+    voice prompt, else None: non-empty text.src whose syllable rate over the original's speech is inside
+    ICL_RATE_RANGE (transcript_rate, the ICL pre-check). Cached per line id."""
+    cache: dict[str, str | None] = {}
+    lo, hi = ICL_RATE_RANGE
+
+    def transcript(line: dict[str, Any]) -> str | None:
+        lid = str(line["id"])
+        if lid not in cache:
+            text = line.get("text") or {}
+            src_lang = str(text.get("src_lang") or _primary(line.get("locale")) or "")
+            raw = str(text.get("src") or "")
+            src = prepare(raw, src_lang, "keep") if raw.strip() else ""
+            wav = _abs(project, (line.get("audio") or {}).get("wav"))
+            dur = float((line.get("audio") or {}).get("dur_s") or 0.0)
+            usable = bool(src) and wav is not None and wav.exists()
+            cache[lid] = src if usable and lo <= transcript_rate(Ref("line", "", wav, src, src_lang, dur)) <= hi else None
+        return cache[lid]
+
+    return transcript
 
 
 def delivery_setting(project: Project) -> str:
@@ -812,6 +887,55 @@ def tags_reference(project: Project) -> str:
         raise BabelDubError(f"tts.tags_reference must be one of {list(TAGS_REFERENCES)}", code=EXIT_USAGE,
                             hint="`babeldub set tts.tags_reference=main`")
     return value
+
+
+def slow_hint_ratio(project: Project) -> float:
+    """tts.slow_hint_ratio (0 = no tempo hint)."""
+    raw = project.setting("tts", "slow_hint_ratio", SLOW_HINT_RATIO)
+    try:
+        value = float(SLOW_HINT_RATIO if raw is None else raw)
+    except (TypeError, ValueError):
+        value = -1.0
+    if not 0.0 <= value <= 1.0:
+        raise BabelDubError("tts.slow_hint_ratio must be a number in [0, 1] (0 = off)", code=EXIT_USAGE,
+                            hint="`babeldub set tts.slow_hint_ratio=0.85`")
+    return value
+
+
+def speech_ratios(post_rows: list[dict[str, Any]], hinted: set[tuple[str, int]]) -> dict[str, float]:
+    """{line id: dub/original speech before the fit (`ratio_raw`)} of the latest post row of every line whose
+    take had no tempo hint (`hinted`: (id, attempt) of such takes) and whose original has at least
+    SLOW_HINT_MIN_S of speech: how fast the engine speaks this character on its own."""
+    out: dict[str, float] = {}
+    for row in post_rows:
+        lid, ratio = row.get("id"), row.get("ratio_raw")
+        if not lid or ratio is None or float(row.get("target_s") or 0.0) < SLOW_HINT_MIN_S:
+            continue
+        if (str(lid), int(row.get("attempt") or 0)) in hinted:
+            continue
+        out[str(lid)] = float(ratio)
+    return out
+
+
+def character_tempo(ratios: dict[str, float], char_of: dict[str, str]) -> dict[str, tuple[float, int]]:
+    """{char_id: (median ratio, lines)} over `speech_ratios` of each character with SLOW_HINT_MIN_LINES lines."""
+    by_char: dict[str, list[float]] = defaultdict(list)
+    for lid, ratio in ratios.items():
+        if lid in char_of:
+            by_char[char_of[lid]].append(ratio)
+    return {cid: (float(np.median(v)), len(v)) for cid, v in by_char.items() if len(v) >= SLOW_HINT_MIN_LINES}
+
+
+def tempo_hint(reason: str, own: float | None, character: tuple[float, int] | None, threshold: float) -> str | None:
+    """The slow-down phrase of the next take of a line: a regen of a take that came out under `threshold` of
+    the original's speech (`own`), else the character's median under it; None = no hint."""
+    if threshold <= 0.0:
+        return None
+    if reason == "regen" and own is not None and own < threshold:
+        return tempo_phrase(own)
+    if character is not None and character[0] < threshold:
+        return tempo_phrase(character[0])
+    return None
 
 
 # ---- synth --------------------------------------------------------------------------------
@@ -844,7 +968,9 @@ def _plan_synth(
     Strategy `tags`: every job carries its Delivery (plan_delivery, drops_control); a changed control text
     makes a done take stale (reason `delivery`), unless QA accepted it and only the measured tags drifted
     (accepted_delivery_stands). An engine without a control text ignores the tags and
-    says so once in `notes` (control_ignored)."""
+    says so once in `notes` (control_ignored).
+    Strategy `clone`: a character with a long reference built from transcribed lines gets it as the timbre and
+    as the continuation prompt (`ref_mode: clone`, no Delivery); the other lines are planned as under `tags`."""
     lines_all = latest_by(read_jsonl(project.path(layout.LINES)))
     if not lines_all:
         raise BabelDubError("no lines in inventory/lines.jsonl", code=EXIT_USAGE, hint="run `babeldub extract` and `babeldub link` first")
@@ -918,15 +1044,25 @@ def _plan_synth(
         states = _bootstrap_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars},
                                    translations, decisions, history, follows, refs_by_char, analysis,
                                    {lid for lid, c in classes.items() if c in keep_classes})
-    elif strategy == "tags":
+    elif strategy in ("tags", "clone"):
         states = _tags_states(project, lines_all, {lid: c for lid, c in voiced.items() if c in chars}, follows,
-                              refs_by_char, analysis, tags_reference(project))
+                              refs_by_char, analysis, tags_reference(project),
+                              _source_transcript(project, prepare) if strategy == "clone" else None)
     delivery_mode = delivery_setting(project)
-    controls = engine.name in CONTROL_ENGINES and strategy == "tags"
+    # clone: the lines not voiced with a clone reference (fallback, short words, unknown) are voiced as tags
+    controls = engine.name in CONTROL_ENGINES and strategy in ("tags", "clone")
     # an engine without a control text measures nothing: one note says the tags are not voiced
     ignores = engine.name not in CONTROL_ENGINES and delivery_mode != "off"
     measured = measured_tags(project, analysis, lines_all.values()) if controls and delivery_mode != "off" else {}
     agent_tagged = 0  # ignores: planned lines whose translation carries the agent's tags
+    cloned = 0  # planned takes with a clone reference + prompt
+    # tempo hint: a character the engine voices too fast gets "slow" on its next takes (speech is never slowed)
+    hint_threshold = slow_hint_ratio(project) if controls and delivery_mode != "off" else 0.0
+    post_rows = read_jsonl(project.path(layout.POST)) if hint_threshold > 0.0 else []
+    hinted = {(lid, int(r.get("attempt") or 0)) for lid, rows in history.items() for r in rows if r.get("tempo_hint")}
+    char_tempo = character_tempo(speech_ratios(post_rows, hinted), voiced) if post_rows else {}
+    post_latest = latest_by(post_rows) if post_rows else {}
+    hinted_lines: Counter[str] = Counter()
 
     accent_map: dict[str, str] = {}
     if accent is not None:
@@ -958,7 +1094,12 @@ def _plan_synth(
         if not text:
             skipped["empty_text"] += 1
             continue
-        plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
+        tags_plan = plan_delivery(delivery_mode, tr, measured.get(line_id)) if controls else None
+        boot = states.get(char_id)
+        # the done check compares every take with the line's current delivery: a clone take has no
+        # tags_source, so it stands whatever the tags say (delivery_matches); a tagged take of a clone
+        # character (short_word first take, reref, fallback) goes stale when its control text changes
+        plan = tags_plan
 
         rows = sorted(history.get(line_id, []), key=lambda r: int(r.get("attempt") or 0))
         last_attempt = max([int(r.get("attempt") or 0) for r in rows], default=0)
@@ -976,6 +1117,8 @@ def _plan_synth(
 
         prefer: str | None = None
         avoid: str | None = None
+        keep_ref: str | None = None  # a delivery re-voice of a char take keeps its reference (a second reref's B, not A)
+        keep_tags = False  # a delivery re-voice of a `tags` take stays `tags` (never short_word's line, never clone)
         reason = "new" if not rows else "retry"
         if pending and args.attempt_next and latest_ok is not None:
             reason = str(decision["decision"])
@@ -1009,6 +1152,15 @@ def _plan_synth(
                 reason = "retranslated"
             elif same:
                 reason = "delivery"
+                # a re-voice keeps the take's prompt family: a QA reref (line/char) is not undone, and a tagged
+                # take (short_word first take, reref, clone fallback) never becomes a clone take, which would
+                # voice no control text and so not the changed delivery
+                kept = str(latest_ok.get("ref_mode") or "").removesuffix("-xvec")
+                if kept in ("line", "char") and not (kept == "line" and cls == "short_word"):
+                    prefer = kept
+                if kept == "char":
+                    keep_ref = str(latest_ok.get("ref_id") or "") or None
+                keep_tags = kept == "tags"
         elif args.force and rows:
             reason = "force"
         tries_for_text = len({r.get("attempt") for r in rows if r.get("text") == text})  # a scored row repeats its attempt
@@ -1021,10 +1173,10 @@ def _plan_synth(
         ref_reason: str | None = None
         bucket: str | None = None
         avoid_bucket = _avoid_bucket(reason, latest_ok, qa_latest.get(line_id))
-        boot = states.get(char_id)
         # a short word's first take uses the line itself; its regen goes through the character's own
         # (bootstrap) reference, whose pronunciation of the target language is steadier
-        orig = _orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen" else None
+        orig = (_orig_wav(project, line) if cls == "short_word" and prefer is None and reason != "regen"
+                and not keep_tags else None)
         if orig is not None:  # a short word: the line itself carries the delivery, no target-language prompt
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             src = str((line.get("text") or {}).get("src") or "")
@@ -1034,8 +1186,12 @@ def _plan_synth(
         elif boot is not None and boot.long_ref is not None and prefer is None:
             src_lang = str((line.get("text") or {}).get("src_lang") or _primary(line.get("locale")) or "")
             bucket, long_ref, tgt = boot.pick(line_id, avoid_bucket)
-            if strategy == "tags":  # the long original reference alone; the delivery comes from the control text
+            if boot.clone and not keep_tags:  # the long original reference continued by its own transcript, then the dub text
+                ref = Ref("clone", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+                prompt = long_ref
+            elif strategy in ("tags", "clone"):  # the long original reference alone; the delivery comes from the control text
                 ref = Ref("tags", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
+                ref_reason = boot.note
             elif tgt is not None:
                 ref = Ref("bootstrap-tgt", long_ref.ref_id, long_ref.wav, "", src_lang, long_ref.dur_s)
                 prompt = tgt
@@ -1049,7 +1205,8 @@ def _plan_synth(
                 continue
         else:
             choice = _choose_ref(project, line, refs_by_char.get(char_id, []),
-                                 "auto" if strategy in ("bootstrap", "tags") else strategy, min_s, prefer, avoid, prepare)
+                                 "auto" if strategy in ("bootstrap", "tags", "clone") else strategy, min_s, prefer,
+                                 avoid, prepare, keep_ref)
             if choice is None:
                 skipped["no_ref"] += 1
                 attention.append(line_id)
@@ -1073,11 +1230,24 @@ def _plan_synth(
                 job.alt_ref = char_ref
         if not job.ref.text and engine.name in TRANSCRIPT_ENGINES and job.ref.mode not in LONG_REF_MODES:
             job.x_vector_only = True  # a prompt without a transcript can only give the timbre
-        if plan is not None:
+        # clone: VoxCPM2 drops a control text sent with a prompt, so a clone take has no delivery (and no tempo hint)
+        plan = None if ref.mode == "clone" else tags_plan
+        if ref.mode == "clone":
+            cloned += 1
+        elif plan is not None:
             qa_row = qa_latest.get(line_id) or {}
             qa_reasons = qa_row.get("reasons") if latest_ok and qa_row.get("attempt") == latest_ok.get("attempt") else []
-            job.delivery = apply_drop(plan, drops_control(reason, tries_for_text + 1, qa_reasons))
+            drop = drops_control(reason, tries_for_text + 1, qa_reasons)
+            prow = post_latest.get(line_id) or {}
+            own = (float(prow["ratio_raw"]) if latest_ok and prow.get("attempt") == latest_ok.get("attempt")
+                   and prow.get("ratio_raw") is not None and float(prow.get("target_s") or 0.0) >= SLOW_HINT_MIN_S
+                   else None)
+            phrase = None if drop else tempo_hint(reason, own, char_tempo.get(char_id) if char_id != "unknown" else None,
+                                                  hint_threshold)
+            job.delivery = apply_drop(plan, True) if drop else apply_tempo(plan, phrase)
             job.delivery_tags = delivery_mode
+            if job.delivery.tempo:
+                hinted_lines[char_id] += 1
         elif ignores and delivery_mode == "on" and clean_tags(tr.get("delivery")):
             agent_tagged += 1
         job.est_s = estimate_seconds(text, target)  # the dub text alone, never the control phrase
@@ -1086,11 +1256,20 @@ def _plan_synth(
         job.out = project.path(layout.SYNTH_DIR, uid, f"a{job.attempt}.wav")
         jobs.append(job)
     jobs.sort(key=lambda j: j.sort_key)
+    if hinted_lines and notes is not None:
+        chars_note = ", ".join(
+            f"{cid} {n}" + (f" (median {char_tempo[cid][0]:.2f} over {char_tempo[cid][1]} lines)" if cid in char_tempo else "")
+            for cid, n in hinted_lines.most_common(5))
+        notes.append(f"tempo_hint: {sum(hinted_lines.values())} takes get a slow-down control phrase, the dub spoke under "
+                     f"tts.slow_hint_ratio {hint_threshold} of the original's speech: {chars_note}")
     if ignores and jobs and (analysis or agent_tagged) and notes is not None:
         sources = (["measured on the originals"] if analysis else []) + (
             [f"the translator's on {agent_tagged} lines"] if agent_tagged else [])
         notes.append(f"control_ignored: the {engine.name} engine reads no delivery control text, the delivery tags "
                      f"({', '.join(sources)}) are not voiced")
+    if cloned and delivery_mode != "off" and notes is not None:
+        notes.append(f"clone: {cloned} takes voice no delivery tags (tts.delivery_tags={delivery_mode}), their "
+                     "delivery comes from the continuation of the character's original reference")
     if keep_rows and not args.dry_run:
         _ensure_header(project.path(layout.DECISIONS), DECISIONS_SCHEMA)
         append_jsonl(project.path(layout.DECISIONS), keep_rows)
@@ -1139,13 +1318,13 @@ def _engine_params(project: Project, engine: EngineChoice, job: Job) -> dict[str
 
 def effective_strategy(configured: str, engine: str) -> tuple[str, str | None]:
     """ref_strategy for this engine: auto -> tags on voxcpm (and the dummy test engine); tags needs an
-    engine that reads a control text, bootstrap one that takes a continuation prompt."""
+    engine that reads a control text, bootstrap and clone one that takes a continuation prompt."""
     if configured == "auto" and engine in CONTROL_ENGINES:
         return "tags", None
     if configured == "tags" and engine not in CONTROL_ENGINES:
         return "auto", f"ref_strategy=tags needs the {PREMIUM} engine (delivery control text): using auto (line/char) with {engine}"
-    if configured == "bootstrap" and engine not in PROMPT_ENGINES:
-        return "auto", f"ref_strategy=bootstrap needs the {PREMIUM} engine: using auto (line/char) with {engine}"
+    if configured in ("bootstrap", "clone") and engine not in PROMPT_ENGINES:
+        return "auto", f"ref_strategy={configured} needs the {PREMIUM} engine: using auto (line/char) with {engine}"
     return configured, None
 
 
@@ -1415,6 +1594,8 @@ class _SynthRun:
         if job.delivery is not None:
             row.update(control=job.delivery.control, tags=job.delivery.tags, tags_source=job.delivery.source,
                        delivery_tags=job.delivery_tags)
+            if job.delivery.tempo:
+                row["tempo_hint"] = job.delivery.tempo
         if reply.get("prompt_dropped"):
             row["prompt_dropped"] = True
         if job.line_class:
@@ -1634,21 +1815,95 @@ def _open_scorer(project: Project, wait_lock: float) -> Any:
     from babeldub.qa.qc import QcSession, emotion_model_dir
 
     return QcSession.open(project.root, project.data, need_asr=True, need_sv=True, need_mos=True,
-                          need_emotion=emotion_model_dir(project.data) is not None, wait_lock=wait_lock,
-                          owner="synth:score")
+                          need_emotion=emotion_model_dir(project.data) is not None, need_asr2=True,
+                          wait_lock=wait_lock, owner="synth:score")
 
 
-def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any) -> dict[str, Any]:
+def _cand_name(row: dict[str, Any], cand: dict[str, Any]) -> str:
+    return f"{make_uid(str(row['id']))}_s{cand['seed']}"
+
+
+def _convert_for_scoring(project: Project, rows: list[dict[str, Any]], wait_lock: float,
+                         notes: list[str]) -> tuple[dict[str, Path], set[str]]:
+    """RVC-convert the candidates of characters with a model before they are scored ({name: converted wav},
+    the characters involved). Without Applio they are scored as they are, with the low `sim_rvc` weight."""
+    from babeldub.commands.vc import convert_for_scoring, load_models, pitch_mode
+    from babeldub.qa.qc import qc_missing
+
+    models = load_models(project)
+    if not models or qc_missing(project.data, True, True):  # no scoring without the qc env: convert nothing
+        return {}, set()
+    lines = latest_by(read_jsonl(project.path(layout.LINES)))
+    jobs: dict[str, list[tuple[str, Path, dict[str, Any]]]] = {}
+    for row in rows:
+        cid = str(row.get("char_id"))
+        line = lines.get(row["id"])
+        if cid not in models or line is None:
+            continue
+        for cand in (row.get("best_of") or {}).get("cands") or []:
+            wav = _abs(project, cand.get("wav"))
+            if wav is not None and wav.exists():
+                jobs.setdefault(cid, []).append((_cand_name(row, cand), wav, line))
+    if not jobs:
+        return {}, set()
+    pitch_mode(project)  # an invalid vc.pitch is the same usage error as in `vc`, not a skipped conversion
+    try:
+        converted, errors = convert_for_scoring(project, jobs, wait_lock)
+    except BabelDubError as err:
+        notes.append(f"RVC before scoring skipped ({err}); the voice similarity of {', '.join(sorted(jobs))} "
+                     "weighs qa.rank_weights.sim_rvc")
+        return {}, set(jobs)
+    if errors:
+        notes.append(f"RVC before scoring failed for {len(errors)} candidate(s), e.g. {errors[0]}; "
+                     "those lines are scored unconverted")
+    return converted, set(jobs)
+
+
+def _score_pass(project: Project, rows: list[dict[str, Any]], wait_lock: float,
+                notes: list[str]) -> tuple[dict[str, Any], str]:
+    """RVC before scoring (characters with a model), then the qc session ranks; (summary, device)."""
+    from babeldub.commands.vc import drop_scoring_files
+
+    converted, rvc_chars = _convert_for_scoring(project, rows, wait_lock, notes)
+    try:
+        with _open_scorer(project, wait_lock) as session:
+            summary = score_candidates(project, rows, session, converted=converted)
+            device = session.device
+            notes.extend(session.warnings)  # e.g. the second ASR (GigaAM) is unavailable
+    finally:
+        drop_scoring_files(project, rvc_chars)
+    return summary, device
+
+
+def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any,
+                     converted: dict[str, Path] | None = None) -> dict[str, Any]:
     """Pass 2 of best-of: score every kept candidate with the qc worker, keep the winner as the line's
-    take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest."""
-    from babeldub.commands.vc import load_models
-    from babeldub.qa.metrics import prosody_similarity
-    from babeldub.qa.qc import QcItemError, number_cer
+    take (a new results row keyed sha(key, seed), so `post` redoes the line) and delete the rest.
+    `converted`: {candidate name: RVC-converted wav} scored in place of the candidate's own file."""
+    from babeldub.cast.characters import UNKNOWN_ID
+    from babeldub.commands.vc import load_models, pitch_mode
+    from babeldub.qa.baseline import MOS_BASELINE, MosBaseline, char_f0_hints
+    from babeldub.qa.metrics import f0_shift_st, prosody_similarity, voiced_seconds
+    from babeldub.qa.qc import QcItemError, cer_report
 
     lines = latest_by(read_jsonl(project.path(layout.LINES)))
     chosen = {str(r["char_id"]): r for r in read_jsonl(project.path(layout.REFS)) if r.get("chosen")}
     rvc = set(load_models(project))
+    vc_shifts = bool(rvc) and pitch_mode(project) != "keep"
+    converted = converted or {}
     max_cer = float(project.setting("qa", "max_cer", 0.15))
+    mos_drop = float(project.setting("qa", "mos_drop", 1.0))
+    min_voiced = float(project.setting("qa", "pitch_min_voiced_s", 0.5))
+    weights = best_rank.weights_from(project.setting("qa", "rank_weights"))
+    assign = {r["id"]: str(r["char_id"]) for r in read_jsonl(project.path(layout.ASSIGN)) if r.get("char_id")}
+    f0_hints = char_f0_hints(load_analysis(project), assign)
+    mos_base = None
+    if getattr(session, "has_mos", False):
+        char_lines: dict[str, list[dict[str, Any]]] = {}
+        for lid, cid in assign.items():
+            if lid in lines:
+                char_lines.setdefault(cid, []).append(lines[lid])
+        mos_base = MosBaseline(project.root, project.path(MOS_BASELINE), session, char_lines)
     lang = project.target_lang
     scored, changed, done, errors = 0, 0, 0, []
     results = project.path(layout.SYNTH_RESULTS)
@@ -1665,33 +1920,52 @@ def score_candidates(project: Project, rows: list[dict[str, Any]], session: Any)
         orig = _orig_wav(project, line)
         ref = chosen.get(str(row.get("char_id")))
         refs = [p for p in (orig, _abs(project, (ref or {}).get("wav"))) if p is not None and p.exists()]
+        cid = str(row.get("char_id"))
+        hint = f0_hints.get(cid)
         ranked: list[best_rank.Candidate] = []
+        # one line's candidates are compared on the same audio: all converted, or (a conversion failed) all raw
+        all_converted = all(converted.get(_cand_name(row, cand)) is not None for cand in cands)
+        # an RVC character's timbre is final only when its candidates were converted before scoring
+        unconverted_rvc = cid in rvc and not all_converted
+        # ... and with vc.pitch other than keep, vc moves the winner's F0: a raw take's median says nothing
+        f0_measured = not (unconverted_rvc and vc_shifts)
         for cand in cands:
             wav = _abs(project, cand["wav"])
             assert wav is not None
+            score_wav = converted[_cand_name(row, cand)] if all_converted else wav
             try:
-                sc = session.score(f"{row['id']}#s{cand['seed']}", wav, text=row.get("text"), lang=lang,
-                                   orig_wav=orig, refs=refs, want=SCORE_WANTS)
+                sc = session.score(f"{row['id']}#s{cand['seed']}", score_wav, text=row.get("text"), lang=lang,
+                                   orig_wav=orig, refs=refs, want=SCORE_WANTS, f0_hint=hint)
             except QcItemError as exc:
                 errors.append(f"{_line_uid(line)} seed {cand['seed']}: {exc}")
                 continue
             cer_v = sc.get("cer")
-            if sc.get("asr_text") is not None:
-                cer_v = number_cer(session, row.get("text"), sc["asr_text"], lang)
+            if sc.get("asr_text") is not None:  # the lowest CER: plain, vowel-folded and the second ASR (ru)
+                cer_v = cer_report(session, row.get("text"), sc["asr_text"], lang, asr2_text=sc.get("asr2_text"))["cer"]
+            dub_p, orig_p = sc.get("prosody") or {}, sc.get("orig_prosody") or {}
+            voiced = [voiced_seconds(dub_p), voiced_seconds(orig_p)]
+            shift = (f0_shift_st(dub_p.get("f0_median_hz"), orig_p.get("f0_median_hz"))
+                     if f0_measured and all(v is not None and v >= min_voiced for v in voiced) else None)
             ranked.append(best_rank.Candidate(
                 seed=int(cand["seed"]), wav=str(cand["wav"]), speech_s=float(cand.get("speech_s") or 0.0), cer=cer_v,
                 sim=sc.get("sim"), mos=sc.get("mos"), emo_cos=sc.get("emo_cos"),
-                prosody_sim=prosody_similarity(sc.get("prosody"), sc.get("orig_prosody"))["sim"]))
+                prosody_sim=prosody_similarity(dub_p, orig_p)["sim"], f0_shift_st=shift,
+                liveliness=best_rank.liveliness(dub_p, orig_p)))
         if not ranked:
             continue  # stays unscored: the next `synth score` tries again
         target = float(info.get("target_speech_s") or row.get("dur_s") or 0.0)
-        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=str(row.get("char_id")) in rvc,
-                             fixed_length=bool(line.get("fixed_length")))
+        orig_mos = mos_base.median(cid) if mos_base is not None and cid != UNKNOWN_ID else None
+        mos_floor = None if orig_mos is None else orig_mos - mos_drop
+        fixed = bool(line.get("fixed_length"))
+        win = best_rank.rank(ranked, target_s=target, max_cer=max_cer, rvc=unconverted_rvc, fixed_length=fixed,
+                             mos_floor=mos_floor, weights=weights)
         win_path = _abs(project, win.wav)
         assert win_path is not None
         changed += int(win.seed != info.get("picked_seed"))
+        used = best_rank.effective_weights(weights, rvc=unconverted_rvc, fixed_length=fixed)
         info.update(scored=True, provisional_seed=info.get("picked_seed"), picked_seed=win.seed,
-                    sim_weight=best_rank.W_SIM_RVC if str(row.get("char_id")) in rvc else best_rank.W_SIM,
+                    sim_weight=used["sim"], weights=used, scored_after_rvc=cid in rvc and all_converted,
+                    orig_mos=None if orig_mos is None else round(orig_mos, 3),
                     scores=[c.summary() for c in ranked])
         # copy the winner over the take, write its row, only then delete the candidates: a crash at any
         # point leaves the finished lines consistent and an unfinished one still scorable from all its candidates
@@ -1725,8 +1999,7 @@ def _auto_score(project: Project, ids: list[str] | None, args: argparse.Namespac
                      "`babeldub setup --engines qc`, then `babeldub synth score`")
         return {"scored": 0, "pending": len(rows)}
     try:
-        with _open_scorer(project, float(getattr(args, "wait_lock", 0.0) or 0.0)) as session:
-            return score_candidates(project, rows, session)
+        return _score_pass(project, rows, float(getattr(args, "wait_lock", 0.0) or 0.0), notes)[0]
     except BabelDubError as err:
         notes.append(f"synth score: {err} (run `babeldub synth score` later)")
         return {"scored": 0, "pending": len(rows)}
@@ -1741,16 +2014,17 @@ def cmd_synth_score(args: argparse.Namespace) -> int:
     if args.dry_run or not rows:
         return emit({"stage": "synth score", "dry_run": bool(args.dry_run), "pending": len(rows), "scored": 0,
                      "next": "babeldub post"})
-    with _open_scorer(project, float(args.wait_lock or 0.0)) as session:
-        summary = score_candidates(project, rows, session)
-        device = session.device
+    notes: list[str] = []
+    summary, device = _score_pass(project, rows, float(args.wait_lock or 0.0), notes)
     payload = {"stage": "synth score", **summary, "device": device, "results": layout.SYNTH_RESULTS,
                "next": "babeldub synth score" if summary["pending"] else "babeldub post"}
+    if notes:
+        payload["notes"] = notes
     return emit(payload, EXIT_ATTENTION if summary.get("errors") else EXIT_OK)
 
 
 # ---- post ---------------------------------------------------------------------------------
-def _original_audio(project: Project, line: dict[str, Any], fallback_s: float, fallback_sr: int) -> tuple[np.ndarray, int]:
+def original_audio(project: Project, line: dict[str, Any], fallback_s: float, fallback_sr: int) -> tuple[np.ndarray, int]:
     """The original line, or silence of its declared length/format when the file is missing."""
     orig_path = _orig_wav(project, line)
     if orig_path is not None:
@@ -1759,6 +2033,152 @@ def _original_audio(project: Project, line: dict[str, Any], fallback_s: float, f
     sr = int(audio.get("sr") or fallback_sr)
     dur = float(audio.get("dur_s") or fallback_s)
     return np.zeros((max(1, int(round(dur * sr))), int(audio.get("ch") or 1)), dtype=np.float32), sr
+
+
+def match_mode(project: Project) -> str:
+    """post.match: off | eq | full. A project created before v0.4 has no post.match and keeps `off`."""
+    value = str(project.setting("post", "match", "off") or "off")
+    if value not in channel.MODES:
+        raise BabelDubError(f"post.match must be one of {list(channel.MODES)}", code=EXIT_USAGE,
+                            hint="`babeldub set post.match=eq`")
+    return value
+
+
+def match_target(project: Project) -> str:
+    """post.match_target: character (default, also without the key) | line."""
+    value = str(project.setting("post", "match_target", "character") or "character")
+    if value not in MATCH_TARGETS:
+        raise BabelDubError(f"post.match_target must be one of {list(MATCH_TARGETS)}", code=EXIT_USAGE,
+                            hint="`babeldub set post.match_target=character`")
+    return value
+
+
+def match_current(row: dict[str, Any] | None, mode: str, target: str) -> bool:
+    """The row's channel match was made with this post.match mode and (unless off) post.match_target; a row
+    written before match_target existed counts as `line`."""
+    info = (row or {}).get("match") or {}
+    if info.get("mode", "off") != mode:
+        return False
+    return mode == "off" or info.get("target", "line") == target
+
+
+class ChannelPool:
+    """Channel profiles of each character's original lines (up to MATCH_POOL_LINES, the longest first), measured
+    once per run: the EQ target of a line with too little speech of its own. With post.match_target=character
+    also the character's pair (`pair`): dub-side takes (`dubs`: line id -> wav) and originals of the same lines."""
+
+    def __init__(self, project: Project, lines: dict[str, dict[str, Any]], target: str = "line",
+                 dubs: dict[str, Path | None] | None = None) -> None:
+        self.project = project
+        self.lines = lines
+        self.target = target
+        assign = latest_by(read_jsonl(project.path(layout.ASSIGN)))
+        self.char_of = {lid: str((assign.get(lid) or {}).get("char_id") or line.get("speaker_hint") or "unknown")
+                        for lid, line in lines.items()}
+        self.cache: dict[str, list[tuple[str, channel.Profile]]] = {}
+        self.dubs: dict[str, Path | None] = dict(dubs or {})
+        self.pairs: dict[str, tuple[list[channel.Profile], list[channel.Profile]] | None] = {}
+
+    def use_dubs(self, dubs: dict[str, Path | None]) -> None:
+        """Other dub-side takes (vc: the converted takes before the match); the pairs are measured again."""
+        self.dubs.update(dubs)
+        self.pairs.clear()
+
+    def pair(self, line: dict[str, Any]) -> tuple[list[channel.Profile], list[channel.Profile]] | None:
+        """(dub profiles, original profiles) of the character's pair, None for target `line` or too few lines."""
+        cid = self.char_of.get(line["id"], "unknown")
+        if self.target != "character" or cid == "unknown":
+            return None
+        if cid not in self.pairs:
+            self.pairs[cid] = self._build_pair(cid)
+        return self.pairs[cid]
+
+    def _build_pair(self, cid: str) -> tuple[list[channel.Profile], list[channel.Profile]] | None:
+        mates = sorted((ln for lid, ln in self.lines.items() if self.char_of.get(lid) == cid and self.dubs.get(lid)),
+                       key=lambda ln: (-float((ln.get("audio") or {}).get("dur_s") or 0.0), ln["id"]))
+        dubs: list[channel.Profile] = []
+        origs: list[channel.Profile] = []
+        for mate in mates:
+            if len(dubs) >= MATCH_PAIR_LINES:
+                break
+            orig_path, dub_path = _orig_wav(self.project, mate), self.dubs.get(mate["id"])
+            if orig_path is None or dub_path is None or not dub_path.exists():
+                continue
+            try:
+                orig_p, dub_p = channel.profile(*read_audio(orig_path)), channel.profile(*read_audio(dub_path))
+            except (RuntimeError, ValueError, OSError):  # an unreadable file leaves only this line out
+                continue
+            if orig_p.speech_s < channel.MIN_SPEECH_S or dub_p.speech_s < channel.MIN_SPEECH_S:
+                continue
+            if channel.detect_cutoff(dub_p, orig_p) is not None:  # its highs are the channel's limit, not a tilt
+                continue
+            dubs.append(dub_p)
+            origs.append(orig_p)
+        if (len(dubs) < MATCH_PAIR_MIN_LINES or sum(p.speech_s for p in dubs) < MATCH_PAIR_MIN_S
+                or sum(p.speech_s for p in origs) < MATCH_PAIR_MIN_S):
+            return None
+        return dubs, origs
+
+    def extra(self, line: dict[str, Any]) -> list[channel.Profile]:
+        cid = self.char_of.get(line["id"], "unknown")
+        if cid == "unknown":
+            return []
+        if cid not in self.cache:
+            mates = sorted((ln for lid, ln in self.lines.items() if self.char_of.get(lid) == cid),
+                           key=lambda ln: (-float((ln.get("audio") or {}).get("dur_s") or 0.0), ln["id"]))
+            found: list[tuple[str, channel.Profile]] = []
+            for mate in mates:
+                path = _orig_wav(self.project, mate)
+                if path is None:
+                    continue
+                try:
+                    found.append((mate["id"], channel.profile(*read_audio(path))))
+                except (RuntimeError, ValueError, OSError):  # an unreadable original leaves only this mate out
+                    continue
+                if len(found) >= MATCH_POOL_LINES:
+                    break
+            self.cache[cid] = found
+        return [p for lid, p in self.cache[cid] if lid != line["id"]]
+
+
+def channel_match(
+    line: dict[str, Any], audio: np.ndarray, sr: int, orig: np.ndarray, o_sr: int, mode: str, pool: ChannelPool | None,
+    *, level_ref: float, measure: str, ceiling_db: float,
+) -> tuple[np.ndarray, float | None, dict[str, Any] | None]:
+    """post.match on a fitted (or converted) take: the matched audio with its speech level matched to
+    `level_ref` again and its true peak (None when nothing was applied), and the `match` info (None for off)
+    with the pool's post.match_target as `target`."""
+    if mode == "off":
+        return audio, None, None
+    res = channel.match_channel(audio, sr, orig, o_sr, mode, extra=(lambda: pool.extra(line)) if pool else (),
+                                pair=pool.pair(line) if pool else None)
+    res.info["target"] = pool.target if pool else "line"
+    if not res.applied:
+        return audio, None, res.info
+    out, peak = conform(res.audio, sr, audio, sr, level_ref=level_ref, measure=measure, ceiling_db=ceiling_db)
+    return out, peak, res.info
+
+
+def count_match(counts: Counter[str], info: dict[str, Any] | None) -> None:
+    """Add one row's `match` info to the post/vc output counters."""
+    info = info or {}
+    if info.get("applied"):
+        counts["eq"] += 1
+        counts["cutoff"] += info.get("cutoff_hz") is not None
+        counts["radio"] += bool(info.get("radio_chain"))
+        counts["pair"] += info.get("ref") == "pair"
+    elif info:
+        counts["skipped"] += 1
+
+
+def match_summary(counts: Counter[str], mode: str, target: str) -> dict[str, Any]:
+    return {"mode": mode, "target": target, **{k: counts.get(k, 0) for k in ("eq", "cutoff", "radio", "pair", "skipped")}}
+
+
+def speech_level(audio: np.ndarray, sr: int, measure: str) -> float:
+    mono = to_mono(audio) if audio.ndim > 1 else audio
+    bounds = speech_bounds(mono, sr)
+    return level_db(mono[bounds[0] : bounds[1]], sr, measure) if bounds else float("nan")
 
 
 def _vad_segments(project: Project) -> dict[str, list[list[float]]]:
@@ -1776,13 +2196,13 @@ def _vad_segments(project: Project) -> dict[str, list[list[float]]]:
 
 def _post_line(
     project: Project, line: dict[str, Any], res: dict[str, Any], settings: dict[str, float], method: str | None,
-    segments: list[list[float]] | None = None,
+    segments: list[list[float]] | None = None, mode: str = "off", pool: ChannelPool | None = None,
 ) -> dict[str, Any]:
     raw_path = _abs(project, res.get("wav"))
     if raw_path is None or not raw_path.exists():
         raise BabelDubError(f"synth file missing: {res.get('wav')}")
     raw, sr = read_audio(raw_path)
-    orig, o_sr = _original_audio(project, line, raw.shape[0] / sr, sr)
+    orig, o_sr = original_audio(project, line, raw.shape[0] / sr, sr)
 
     def stretcher(src: Path, dst: Path, ratio: float) -> str:
         return time_stretch(src, dst, ratio, method=method)
@@ -1799,8 +2219,18 @@ def _post_line(
     # the same limits as QA's duration check
     over = (fit.ratio > 1.0 + settings["fixed_length_tolerance"] or not fit.fits) if fixed \
         else fit.ratio > settings["max_duration_ratio"]
+    final, peak, match_info = channel_match(line, fit.audio, fit.sr, orig, o_sr, mode, pool, level_ref=fit.level_ref,
+                                            measure=fit.measure, ceiling_db=settings["true_peak_db"])
     out_path = project.path(layout.POST_DIR, f"{_line_uid(line)}.wav")
-    write_wav(out_path, fit.audio, fit.sr, subtype="PCM_16")
+    write_wav(out_path, final, fit.sr, subtype="PCM_16")
+    extra: dict[str, Any] = {}
+    if match_info is not None:
+        extra["match"] = match_info
+    if peak is not None:  # matched: the fitted take stays for QA's voice checks
+        pre = project.path(layout.POST_PRE_MATCH_DIR, f"{_line_uid(line)}.wav")
+        write_wav(pre, fit.audio, fit.sr, subtype="PCM_16")
+        extra.update(pre_match_wav=project.rel(pre), peak_db=_num(peak, 2),
+                     lufs_out=_num(speech_level(final, fit.sr, fit.measure), 2))
     frames = fit.audio.shape[0]
     return {
         "id": line["id"], "attempt": res.get("attempt"), "wav": project.rel(out_path),
@@ -1817,7 +2247,8 @@ def _post_line(
                         "max": round(max(fit.chunk_tempos), 4)},
         "sr": fit.sr, "ch": int(fit.audio.shape[1]), "frames": frames, "exact": fit.exact,
         "fixed_length": fixed, "over_length": bool(over),
-        "src_wav": res.get("wav"), "src_key": res.get("key"), "vad_key": _vad_key(line, segments), "ts": now_iso(),
+        "src_wav": res.get("wav"), "src_key": res.get("key"), "vad_key": _vad_key(line, segments), **extra,
+        "ts": now_iso(),
     }
 
 
@@ -1858,6 +2289,8 @@ def cmd_post(args: argparse.Namespace) -> int:
     existing = latest_by(read_jsonl(project.path(layout.POST)))
     want = set(_csv(args.ids))
     settings = post_settings(project)
+    mode = match_mode(project)
+    target = match_target(project)
     segments = _vad_segments(project)
     work: list[tuple[dict[str, Any], dict[str, Any]]] = []
     up_to_date = missing_line = followers = 0
@@ -1876,6 +2309,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         prev_wav = _abs(project, (prev or {}).get("wav"))
         if (not args.force and prev and prev.get("attempt") == res.get("attempt")
                 and prev.get("src_key") == res.get("key") and prev.get("vad_key") == _vad_key(line, segments.get(line_id))
+                and match_current(prev, mode, target)
                 and prev_wav is not None and prev_wav.exists()):
             up_to_date += 1
             continue
@@ -1885,7 +2319,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         work = work[: max(0, args.limit)]
     if args.dry_run:
         return emit({"stage": "post", "dry_run": True, "would_run": len(work), "pending": pending,
-                     "up_to_date": up_to_date, "settings": settings})
+                     "up_to_date": up_to_date, "settings": {**settings, "match": mode, "match_target": target}})
 
     post_path = project.path(layout.POST)
     _ensure_header(post_path, POST_SCHEMA)
@@ -1894,9 +2328,13 @@ def cmd_post(args: argparse.Namespace) -> int:
     not_exact: list[str] = []  # dubs that run past the original's length even at post.tempo_max
     errors: list[str] = []
     methods: Counter[str] = Counter()
+    matched: Counter[str] = Counter()
+    # the pair's dub side: the raw take post fits for each line of the character, not only the lines of this run
+    pool = ChannelPool(project, lines, target, {lid: _abs(project, r.get("wav")) for lid, r in latest.items()
+                                                if lid not in follows}) if mode != "off" else None
     for line, res in work:
         try:
-            row = _post_line(project, line, res, settings, args.stretch_method, segments.get(line["id"]))
+            row = _post_line(project, line, res, settings, args.stretch_method, segments.get(line["id"]), mode, pool)
         except BabelDubError as err:
             if err.code == EXIT_ENV:
                 raise
@@ -1908,6 +2346,7 @@ def cmd_post(args: argparse.Namespace) -> int:
         append_jsonl(post_path, [row])
         done += 1
         methods[row["stretch_method"]] += 1
+        count_match(matched, row.get("match"))
         if row["over_length"]:
             over.append(row["id"])
         if not row["exact"]:
@@ -1928,6 +2367,8 @@ def cmd_post(args: argparse.Namespace) -> int:
     payload["exact"] = done - len(not_exact)
     if not_exact:
         payload["not_exact"] = clip(not_exact)
+    if mode != "off":
+        payload["match"] = match_summary(matched, mode, target)
     payload["next"] = "babeldub post" if remaining else "babeldub vc"
     return emit(payload, EXIT_ATTENTION if (over or errors) else EXIT_OK)
 
@@ -1938,8 +2379,8 @@ def register(sub: Any, common: Callable[[argparse.ArgumentParser], None]) -> Non
         "synth",
         help="dub translated lines in the original character's voice (TTS voice cloning)",
         description="Synthesize dub_text of selected lines; the voice prompt is the character's long original "
-        "reference with delivery tags (ref_strategy=tags, VoxCPM2), the original line (line) or the character's "
-        "best reference (char).",
+        "reference with delivery tags (ref_strategy=tags, VoxCPM2), the same reference continued by its source "
+        "transcript (clone), the original line (line) or the character's best reference (char).",
     )
     common(p)
     p.add_argument("action", nargs="?", choices=("score",),

@@ -429,3 +429,86 @@ def test_settings_defaults_and_validation(project: Project, capsys: pytest.Captu
     project.save()
     code, out = run(capsys, project.root, "set", "tts.delivery_tags=on")  # `set` repairs it with a word
     assert code == EXIT_OK and out["changed"]["tts.delivery_tags"] == {"old": False, "new": "on"}, out
+
+
+# ---- tempo hint: a character voiced too fast gets "slow" on its next takes ------------------------------
+def measured_post(project: Project, ratios: dict[int, float], attempt: int = 1) -> None:
+    """post rows of lines n with dub/original speech `ratios[n]` (before the fit)."""
+    append_jsonl(project.path(layout.POST), [
+        {"id": line_id(n), "attempt": attempt, "ratio_raw": r, "target_s": 4.8, "wav": f"post/audio/{n}.wav"}
+        for n, r in ratios.items()])
+
+
+def test_tempo_hint_rules() -> None:
+    assert voice.tempo_phrase(0.8) == "slightly slower" and voice.tempo_phrase(0.6) == "slow pace"
+    none, shout = voice.Delivery([], "none", None), voice.Delivery(["shouting"], "measured", "shouting")
+    assert voice.apply_tempo(none, "slightly slower") == voice.Delivery(["slow"], "tempo", "slightly slower",
+                                                                         "slightly slower")
+    assert voice.apply_tempo(shout, "slow pace") == voice.Delivery(["shouting", "slow"], "tempo",
+                                                                   "shouting, slow pace", "slow pace")
+    quick = voice.Delivery(["energetic", "quick"], "measured", "energetic, slightly faster")
+    assert voice.apply_tempo(quick, "slightly slower").tags == ["energetic", "slow"]  # the dub already runs fast
+    agent = voice.Delivery(["urgent"], "agent", "urgent")
+    full = voice.Delivery(["shouting", "quick", "expressive"], "measured", "shouting, fast pace, expressive intonation")
+    for kept in (agent, voice.Delivery(["sad"], "dropped", None), voice.Delivery(["calm", "slow"], "measured", "x"),
+                 voice.Delivery(["shouting", "loud", "expressive"], "measured", "y")):
+        assert voice.apply_tempo(kept, "slow pace") is kept
+    assert voice.apply_tempo(full, "slow pace").tags == ["shouting", "expressive", "slow"]
+    assert voice.apply_tempo(shout, None) is shout
+    # who gets it: a regen of a take that came out short, else the character's median
+    assert voice.tempo_hint("regen", 0.8, (0.9, 5), 0.85) == "slightly slower"
+    assert voice.tempo_hint("new", 0.6, (0.9, 5), 0.85) is None and voice.tempo_hint("new", None, None, 0.85) is None
+    assert voice.tempo_hint("new", None, (0.65, 3), 0.85) == "slow pace"
+    assert voice.tempo_hint("regen", 0.5, (0.5, 9), 0.0) is None  # tts.slow_hint_ratio=0: off
+    ratios = voice.speech_ratios([
+        {"id": "a", "attempt": 1, "ratio_raw": 0.7, "target_s": 3.0},
+        {"id": "a", "attempt": 2, "ratio_raw": 0.95, "target_s": 3.0},
+        {"id": "b", "attempt": 1, "ratio_raw": 0.5, "target_s": 0.6},  # too short to count
+        {"id": "c", "attempt": 1, "ratio_raw": 0.8, "target_s": 3.0}], hinted={("a", 2)})
+    assert ratios == {"a": 0.7, "c": 0.8}  # a hinted take does not measure the engine's own pace
+    assert voice.character_tempo(ratios, {"a": "z", "c": "z"}) == {}  # fewer than 3 lines
+    assert voice.character_tempo({**ratios, "d": 0.9}, {"a": "z", "c": "z", "d": "z"}) == {"z": (0.8, 3)}
+
+
+def test_tempo_hint_slows_the_next_takes_of_a_fast_character(project: Project,
+                                                             capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    measured_post(project, {1: 0.74, 2: 0.7, 5: 0.8, 6: 0.78})  # the engine rushes Zbyszek: median 0.76
+    assert run(capsys, project.root, "synth")[1]["skipped"]["done"] == N_LINES  # done takes stay done
+    judge(project, 1, 1, ["flat"])
+    judge(project, 3, 1, ["flat"])
+    retranslate(project, 2, delivery=["sad"])  # an explicit agent delivery wins over the hint
+    code, out = run(capsys, project.root, "synth", "--attempt-next")
+    assert code == EXIT_OK and out["done"] == 2, out
+    assert any(n.startswith("tempo_hint: 2 takes") and "0.76 over 4 lines" in n for n in out["notes"]), out["notes"]
+    rows = results(project)
+    plain, shout = rows[line_id(1)], rows[line_id(3)]
+    assert plain["control"] == "slightly slower" and plain["tags"] == ["slow"] and plain["tags_source"] == "tempo"
+    assert plain["tempo_hint"] == "slightly slower"
+    assert shout["control"] == "shouting, slightly slower" and shout["tags_source"] == "tempo"
+    assert out["delivery"]["by_source"] == {"tempo": 2} and out["delivery"]["tags"] == {"slow": 2, "shouting": 1}
+    code, out = run(capsys, project.root, "synth")  # the agent's line 2 is voiced again: no hint on it
+    assert out["done"] == 1 and results(project)[line_id(2)]["tags_source"] == "agent", out
+    # a hinted take stays done, with the hint or without it (the character's median moved on)
+    assert run(capsys, project.root, "synth")[1]["done"] == 0
+    measured_post(project, {1: 0.95, 3: 0.95, 4: 0.95, 7: 0.95, 8: 0.95}, attempt=2)
+    assert run(capsys, project.root, "synth")[1]["done"] == 0
+
+
+def test_tempo_hint_on_a_regen_of_one_short_take(project: Project, capsys: pytest.CaptureFixture[str]) -> None:
+    run(capsys, project.root, "synth")
+    measured_post(project, {1: 0.8, 2: 0.95, 5: 0.92, 6: 0.97})  # the character's median is fine
+    judge(project, 1, 1, ["mos"])
+    judge(project, 5, 1, ["mos"])
+    jobs = plan(project, "--attempt-next")
+    assert jobs[line_id(1)].delivery == voice.Delivery(["slow"], "tempo", "slightly slower", "slightly slower")
+    assert jobs[line_id(5)].delivery == voice.Delivery([], "none", None)
+    judge(project, 1, 1, ["cer"])  # a cer regen drops the control text: no hint either
+    assert plan(project, "--attempt-next")[line_id(1)].delivery.source == "none"
+    project.data["tts"]["slow_hint_ratio"] = 0
+    judge(project, 1, 1, ["mos"])
+    assert plan(project, "--attempt-next")[line_id(1)].delivery == voice.Delivery([], "none", None)
+    project.data["tts"]["slow_hint_ratio"] = 1.5
+    with pytest.raises(BabelDubError, match="slow_hint_ratio"):
+        plan(project, "--attempt-next")
+    assert DEFAULT_SETTINGS["tts"]["slow_hint_ratio"] == 0.85

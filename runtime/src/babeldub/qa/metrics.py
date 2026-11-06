@@ -2,8 +2,9 @@
 and the speaker identity margin.
 
 CER is computed on normalized text (lower case, no punctuation or markup, ё -> е; digits are
-spelled out on both sides when the language is given), with spaces counted as characters. The Levenshtein distance is a row-vectorized
-numpy implementation, so no extra dependency is needed in the CLI.
+spelled out on both sides when the language is given), with spaces counted as characters; for Russian
+a vowel-folded variant (о -> а, е/э/я -> и) forgives the vowel reduction ASR writes down. The Levenshtein
+distance is a row-vectorized numpy implementation, so no extra dependency is needed in the CLI.
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from typing import Any
 
 import numpy as np
 import soundfile as sf
+
+from babeldub.audio import match
 
 _MARKUP_RE = re.compile(r"\{[^{}]*\}|<[^<>]*>|\[[^\[\]]*\]")
 _APOSTROPHES = "'’ʼ`´"
@@ -64,11 +67,23 @@ def levenshtein(a: Sequence[str] | str, b: Sequence[str] | str) -> int:
     return int(prev[m])
 
 
-def cer(reference: str | None, hypothesis: str | None, lang: str | None = None) -> float:
+# Russian vowel reduction: unstressed о sounds like а ("пасмотрим", "закрита"), е/э/я like и. ASR writes
+# what it hears, so the folded CER maps both sides onto the reduced vowels (ё is already е).
+RU_VOWEL_FOLD = str.maketrans({"о": "а", "е": "и", "э": "и", "я": "и"})
+FOLD_LANGS = frozenset({"ru"})
+
+
+def folds_vowels(lang: str | None) -> bool:
+    """The language has a vowel-folded CER (Russian)."""
+    return bool(lang) and str(lang).replace("_", "-").split("-")[0].lower() in FOLD_LANGS
+
+
+def cer(reference: str | None, hypothesis: str | None, lang: str | None = None, fold: bool = False) -> float:
     """Character error rate of the hypothesis (ASR) against the reference (dub text).
 
     With `lang`, digits on both sides are spelled out first (num2words), so "25" heard for
-    "двадцать пять" (or the other way round) is not an error."""
+    "двадцать пять" (or the other way round) is not an error. `fold` compares the texts with the
+    RU_VOWEL_FOLD vowels folded after normalisation (qc_worker._cer applies the same rules)."""
     if lang:
         from babeldub.text.normalize import numbers_to_words
 
@@ -76,6 +91,8 @@ def cer(reference: str | None, hypothesis: str | None, lang: str | None = None) 
         hypothesis = numbers_to_words(hypothesis or "", lang)
     ref = normalize_text(reference)
     hyp = normalize_text(hypothesis)
+    if fold:
+        ref, hyp = ref.translate(RU_VOWEL_FOLD), hyp.translate(RU_VOWEL_FOLD)
     if not ref:
         return 0.0 if not hyp else 1.0
     return levenshtein(ref, hyp) / len(ref)
@@ -93,6 +110,24 @@ def f0_range_ratio(dub_range: float | None, orig_range: float | None) -> float |
     if dub_range <= 0 or orig_range <= 0:
         return None
     return float(min(dub_range, orig_range) / max(dub_range, orig_range))
+
+
+def f0_shift_st(dub_hz: float | None, orig_hz: float | None) -> float | None:
+    """Register shift in semitones: 12 x log2(dub median F0 / original median F0)."""
+    if not isinstance(dub_hz, (int, float)) or not isinstance(orig_hz, (int, float)) or dub_hz <= 0 or orig_hz <= 0:
+        return None
+    return float(12.0 * np.log2(dub_hz / orig_hz))
+
+
+def voiced_seconds(prosody: dict[str, Any] | None, dur_s: float | None = None) -> float | None:
+    """Voiced speech of a `prosody` reply: `voiced_s`, else (older rows, e.g. analysis.jsonl) voiced_ratio x dur."""
+    prosody = prosody or {}
+    if isinstance(prosody.get("voiced_s"), (int, float)):
+        return float(prosody["voiced_s"])
+    ratio, dur = prosody.get("voiced_ratio"), prosody.get("dur_s") or dur_s
+    if isinstance(ratio, (int, float)) and isinstance(dur, (int, float)):
+        return float(ratio) * float(dur)
+    return None
 
 
 def contour_correlation(dub: Sequence[float | None] | None, orig: Sequence[float | None] | None) -> float | None:
@@ -174,6 +209,13 @@ def audio_levels(path: Path) -> AudioLevels:
     return AudioLevels(n / float(sr), int(sr), _db(peak), _db(rms), _db(active), clip_frac)
 
 
+def ltas_distance_db(dub: np.ndarray, dub_sr: int, orig: np.ndarray, orig_sr: int) -> float | None:
+    """Channel distance: mean |difference| (dB) of the 1/3-octave long-term average spectra of the speech frames
+    of `dub` and `orig` (80 Hz - 16 kHz, the bands both rates have), after removing their median level offset;
+    None when either has under 0.3 s of speech. Informational (QA `ltas_db`), not a fail reason."""
+    return match.band_distance(match.profile(dub, dub_sr), match.profile(orig, orig_sr))
+
+
 def unit(vec: Sequence[float] | np.ndarray) -> np.ndarray:
     v = np.asarray(vec, dtype=np.float32).reshape(-1)
     norm = float(np.linalg.norm(v))
@@ -209,6 +251,11 @@ def identity_margin(
     return sims[own] - max(others), closest
 
 
+def mean_cosine(vec: Sequence[float] | np.ndarray, embs: Sequence[np.ndarray]) -> float:
+    """Average cosine of `vec` to each of `embs` (line to line, the scale of `mean_pairwise_cosine`)."""
+    return float(np.mean([cosine(vec, e) for e in embs]))
+
+
 def mean_pairwise_cosine(embs: Sequence[np.ndarray]) -> float | None:
     """Average cosine over all distinct pairs (the voice baseline of a speaker)."""
     if len(embs) < 2:
@@ -217,3 +264,14 @@ def mean_pairwise_cosine(embs: Sequence[np.ndarray]) -> float | None:
     sims = mat @ mat.T
     iu = np.triu_indices(len(embs), k=1)
     return float(np.mean(sims[iu]))
+
+
+def mean_loo_centroid_cosine(embs: Sequence[np.ndarray]) -> float | None:
+    """Average cosine of each embedding to the centroid of the others (leave-one-out). A centroid averages
+    the noise of single lines away, so for lines that are similar at all this is at least the pairwise mean
+    of the same lines: the two definitions must never be compared with each other."""
+    if len(embs) < 2:
+        return None
+    mat = np.stack([unit(e) for e in embs])
+    total = mat.sum(axis=0)
+    return float(np.mean([cosine(mat[i], total - mat[i]) for i in range(len(mat))]))

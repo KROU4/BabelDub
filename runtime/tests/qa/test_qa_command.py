@@ -100,6 +100,9 @@ def test_qa_verdicts_and_auto_decisions(dub, fake_qc, run) -> None:
     report = dub.project.path(layout.QA_REPORT).read_text(encoding="utf-8")
     assert report.startswith("# QA report — Demo Game")
     assert "| Hero | `hero` | 8 |" in report
+    # the relative SIM rule only relaxes the absolute bar; an orig_sim at about zero keeps the absolute rule
+    assert "relaxes it (`sim_rule: relative`): the dub\npasses at the bar" in report
+    assert "an `orig_sim` ≤ 0.05 keeps the absolute rule" in report
     assert ids["long"] in report
 
 
@@ -296,4 +299,301 @@ def test_qa_mos_prosody_timing_and_line_classes(dub, fake_qc, run, home) -> None
     assert qa[ids["mixed"]]["class"] == "mixed" and ids["mixed"] in out["attention"]
     assert out["mos_median"] == 3.4
     mos_base = json.loads(dub.project.path("qa/mos_baseline.json").read_text(encoding="utf-8"))
-    assert mos_base["hero"] == {"median": 3.5, "n": 8}
+    assert mos_base["chars"]["hero"] == {"median": 3.5, "n": 8}
+    assert mos_base["model"] == "utmos22"  # an older project without qa.mos_model keeps UTMOS22
+    assert fake_qc.loads[0]["mos_backend"] == "utmos22" and "mos_fallback" not in fake_qc.loads[0]
+
+
+def test_qa_mos_baseline_is_remeasured_when_the_mos_model_changes(dub, fake_qc, run, home) -> None:
+    from pathlib import Path
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    for name in ("utmos22-strong", "distillmos"):
+        (home / "models" / name).mkdir(parents=True)
+        (home / "models" / name / "w.pt").write_bytes(b"x")
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    lid = dub.line("hero", 3.0)
+    dub.translate(lid, "Привет.")
+    wav = dub.dub(lid, voice="hero", asr="привет")
+    fake_qc.mos[key_of(wav)] = 3.0
+    for b in base:
+        fake_qc.mos[key_of(dub.project.path(next(x for x in dub.lines if x["id"] == b)["audio"]["wav"]))] = 3.6
+    dub.save()
+    # a v0.3 baseline file (no model recorded: UTMOS22)
+    path = dub.project.path("qa/mos_baseline.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"hero": {"median": 4.4, "n": 8}}), encoding="utf-8")
+    dub.project.data.setdefault("qa", {})["mos_model"] = "distillmos"
+    dub.project.save()
+    fake_qc.mos_model = "distillmos"
+    run(["qa", "--project", str(dub.project.root)])
+    load = fake_qc.loads[0]
+    assert load["mos_backend"] == "distillmos" and load["mos_model"].endswith("distillmos")
+    assert load["mos_fallback"].endswith("utmos22-strong")
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[lid]["orig_mos"] == 3.6  # measured again with Distill-MOS, not the UTMOS22 4.4
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["model"] == "distillmos" and saved["chars"]["hero"]["median"] == 3.6
+
+
+def test_qa_russian_vowel_reduction_is_not_a_cer_failure(dub, fake_qc, run) -> None:
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    reduced, garbled = dub.line("hero", 3.0), dub.line("hero", 3.0)
+    dub.translate(reduced, "Закрыто. Посмотрим!")
+    dub.dub(reduced, voice="hero", asr="закрыта пасмотрим")
+    dub.translate(garbled, "Кошмар какой!")
+    dub.dub(garbled, voice="hero", asr="кук фасут")
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    row = qa[reduced]
+    assert row["verdict"] == "pass" and row["cer"] == 0.0 and row["cer_folded"] == 0.0 and row["cer_raw"] > 0.1
+    assert row["asr_text_raw"] == "закрыта пасмотрим"
+    assert qa[garbled]["reasons"] == ["cer"] and qa[garbled]["cer"] > 0.15
+    asr = [r for r in fake_qc.requests if r["op"] == "asr"]
+    assert {r["text"] for r in asr} == {"Закрыто. Посмотрим!", "Кошмар какой!"}  # the reference for tail stripping
+
+
+def test_qa_second_asr_lowers_the_cer_and_flags_disagreement(dub, fake_qc, run, home) -> None:
+    from pathlib import Path
+
+    giga = home / "models" / "GigaAM-v3-ctc"
+    giga.mkdir(parents=True)
+    (giga / "pytorch_model.bin").write_bytes(b"x")
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    misheard, both_bad, broken = dub.line("hero", 3.0), dub.line("hero", 3.0), dub.line("hero", 3.0)
+    for lid, whisper, giga_hears in ((misheard, "совсем другое", "садись в машину"),
+                                     (both_bad, "совсем другое", "тоже другое"),
+                                     (broken, "садись в машину", None)):
+        dub.translate(lid, "Садись в машину.")
+        wav = dub.dub(lid, voice="hero", asr=whisper)
+        if giga_hears is not None:
+            fake_qc.texts2[str(Path(wav).resolve()).lower()] = giga_hears
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    assert fake_qc.loads[0]["asr2_model"] == str(giga)
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    row = qa[misheard]
+    assert row["verdict"] == "pass" and row["cer"] == 0.0 and row["cer_asr2"] == 0.0 and row["cer_raw"] > 0.5
+    assert row["asr_disagree"] is True and row["asr2_text"] == "садись в машину"
+    assert qa[both_bad]["reasons"] == ["cer"] and qa[both_bad]["asr_disagree"] is False
+    # GigaAM fails on this line: it is turned off for the rest of the run with a warning, Whisper alone decides
+    assert qa[broken]["cer_asr2"] is None and qa[broken]["verdict"] == "pass"
+    assert out["asr_disagree"] == 1 and out["asr2"] == 2 and any("GigaAM" in w for w in out["warnings"])
+
+
+def test_qa_without_a_russian_target_never_loads_the_second_asr(dub, fake_qc, run, home) -> None:
+    giga = home / "models" / "GigaAM-v3-ctc"
+    giga.mkdir(parents=True)
+    (giga / "pytorch_model.bin").write_bytes(b"x")
+    dub.project.data["target_lang"] = "pl"
+    dub.project.save()
+    lid = dub.line("hero", 3.0)
+    dub.translate(lid, "Wsiadaj.")
+    dub.dub(lid, voice="hero", asr="wsiadaj")
+    dub.save()
+    run(["qa", "--project", str(dub.project.root)])
+    assert "asr2_model" not in fake_qc.loads[0] and not any(r["op"] == "asr2" for r in fake_qc.requests)
+
+
+def test_qa_short_lines_judge_sim_relative_to_the_original(dub, fake_qc, run) -> None:
+    v = dub.voices
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])  # a typical reference; only the short originals are atypical
+    weak = v.mix({"hero": 0.35, "noise1": 1.0})  # ECAPA on < 1 s: far from the hero even for the original
+    short_ok, short_bad = dub.line("hero", 0.7, vec=weak), dub.line("hero", 0.7, vec=weak)
+    dub.translate(short_ok, "Тихо!")
+    dub.dub(short_ok, voice=None, vec=v.mix({"hero": 0.33, "noise2": 1.0}), asr="тихо", dur_s=0.7)
+    dub.translate(short_bad, "Тихо!")
+    dub.dub(short_bad, voice="stranger", asr="тихо", dur_s=0.7)
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    ok, bad = qa[short_ok], qa[short_bad]
+    assert ok["sim_rule"] == "relative" and ok["sim"] < ok["sim_threshold"]  # the absolute bar would fail it
+    assert ok["sim_rel"] >= 0.8 and ok["verdict"] == "pass"  # sim_rel: the dub's cosine / orig_sim
+    assert bad["sim_rule"] == "relative" and bad["sim_rel"] < 0.8 and bad["reasons"] == ["sim"]
+    assert out["sim_relative"] == 2
+    baseline = json.loads(dub.project.path("qa/baseline.json").read_text(encoding="utf-8"))
+    assert baseline["lines"][short_ok]["orig_sim"] == ok["orig_sim"]
+    ref_id = dub.refs[0]["ref_id"]  # what orig_sim was measured against: the reference, its character, its embedding
+    assert baseline["lines"][short_ok]["against"].startswith(f"ref:{ref_id}:hero:")
+    assert baseline["definition"].startswith("line-to-line") and baseline["chars"]["hero"]["sim_ref_loo"] is not None
+
+
+def test_qa_cached_orig_sim_follows_a_recast(dub, fake_qc, run) -> None:
+    v = dub.voices
+    for char in ("hero", "villain"):
+        for _ in range(3):
+            dub.line(char, 4.0)
+    long = dub.line("hero", 3.0)
+    dub.translate(long, "Длинная реплика.")
+    dub.dub(long, voice="hero", asr="длинная реплика")
+    short = dub.line("hero", 0.7, vec=v.mix({"hero": 1.0, "villain": 0.2}))
+    dub.translate(short, "Эй!")
+    dub.dub(short, voice="hero", asr="эй", dur_s=0.7)
+    dub.save()
+    run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[long]["sim_rule"] == "absolute" and qa[long]["sim_rel"] is None  # sim_rel only under the relative rule
+    path = dub.project.path("qa/baseline.json")
+    first = json.loads(path.read_text(encoding="utf-8"))["lines"][short]
+    assert first["against"].startswith("lines:hero:")
+    # the line belonged to the villain: its own sim is measured again against the villain's clean originals
+    dub.assign = [a if a["id"] != short else {**a, "char_id": "villain"} for a in dub.assign]
+    dub.save()
+    run(["qa", "--project", str(dub.project.root), "--force"])
+    second = json.loads(path.read_text(encoding="utf-8"))["lines"][short]
+    assert second["against"].startswith("lines:villain:") and second["orig_sim"] < first["orig_sim"]
+    assert latest_by(read_jsonl(dub.project.path(layout.QA)))[short]["orig_sim"] == second["orig_sim"]
+
+
+def test_qa_atypical_original_is_judged_line_to_line_without_itself(dub, fake_qc, run) -> None:
+    from pathlib import Path
+
+    from babeldub.qa.metrics import mean_cosine
+
+    def key(path):
+        return str(Path(path).resolve()).lower()
+
+    v = dub.voices
+    base = [dub.line("hero", 4.0) for _ in range(3)]  # typical clean originals, no chosen reference
+    odd = dub.line("hero", 3.0, vec=v.mix({"hero": 0.2, "odd": 1.0}))  # clean and long, but atypical
+    dub.translate(odd, "Садись в машину.")
+    dub.dub(odd, vec=v.mix({"hero": 0.2, "odd_dub": 1.0}), asr="садись в машину")
+    dub.save()
+    root = str(dub.project.root)
+    run(["qa", "--project", root])
+    row = latest_by(read_jsonl(dub.project.path(layout.QA)))[odd]
+    others = [fake_qc.vectors[key(dub.project.path(x["audio"]["wav"]))] for x in dub.lines if x["id"] in base]
+    own = fake_qc.vectors[key(dub.project.path(next(x for x in dub.lines if x["id"] == odd)["audio"]["wav"]))]
+    # line to line like sim_ref, the line itself left out: a centroid that contains the line read it as typical
+    assert row["orig_sim"] == round(mean_cosine(own, others), 4) and row["orig_sim"] < row["sim_threshold"]
+    assert row["sim_rule"] == "relative" and row["sim"] < row["sim_threshold"]
+    assert row["sim_rel"] >= 0.8 and row["verdict"] == "pass"
+    path = dub.project.path("qa/baseline.json")
+    assert json.loads(path.read_text(encoding="utf-8"))["lines"][odd]["against"].startswith("lines:hero:")
+
+    # a value cached against the old centroid target is not reused
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lines"][odd] = {"orig_sim": 0.9, "against": "centroid:hero:000000000000"}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    run(["qa", "--project", root, "--force"])
+    assert latest_by(read_jsonl(dub.project.path(layout.QA)))[odd]["orig_sim"] == row["orig_sim"]
+
+
+def test_qa_pitch_register_check(dub, fake_qc, run) -> None:
+    import math
+    from pathlib import Path
+
+    from babeldub.core.jsonl import write_jsonl
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    cases = {"shifted": (200.0, 1.0, 140.0, 1.0), "close": (148.0, 1.0, 140.0, 1.0),
+             "too_short": (200.0, 1.0, 140.0, 0.2)}
+    ids = {}
+    for name, (dub_hz, dub_voiced, orig_hz, orig_voiced) in cases.items():
+        lid = ids[name] = dub.line("hero", 3.0)
+        dub.translate(lid, "Садись в машину.")
+        wav = dub.dub(lid, voice="hero", asr="садись в машину")
+        fake_qc.prosody[key_of(wav)] = {"f0_median_hz": dub_hz, "voiced_s": dub_voiced, "f0_range_st": 5.0}
+        orig = dub.project.path(next(x for x in dub.lines if x["id"] == lid)["audio"]["wav"])
+        fake_qc.prosody[key_of(orig)] = {"f0_median_hz": orig_hz, "voiced_s": orig_voiced, "f0_range_st": 5.0}
+    dub.save()
+    write_jsonl(dub.project.path(layout.ANALYSIS),
+                [{"id": lid, "prosody": {"f0_median_hz": hz}} for lid, hz in zip(base, (140.0, 150.0, 160.0), strict=True)],
+                schema="babeldub.analysis/1")
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[ids["shifted"]]["reasons"] == ["pitch"] and qa[ids["shifted"]]["pitch_shift_st"] == round(12 * math.log2(200 / 140), 2)
+    assert qa[ids["close"]]["verdict"] == "pass" and abs(qa[ids["close"]]["pitch_shift_st"]) < 1.0
+    assert qa[ids["too_short"]]["pitch_shift_st"] is None and qa[ids["too_short"]]["verdict"] == "pass"
+    assert qa[ids["shifted"]]["f0_median_hz"] == 200.0 and qa[ids["shifted"]]["orig_f0_median_hz"] == 140.0
+    dec = latest_by(read_jsonl(dub.project.path(layout.DECISIONS)))
+    assert dec[ids["shifted"]]["decision"] == "regen"
+    shifts = [abs(qa[ids[n]]["pitch_shift_st"]) for n in ("shifted", "close")]
+    assert out["pitch"] == {"checked": 2, "over": 1, "median_abs_st": round(sum(shifts) / 2, 2)}
+    hints = {r.get("f0_hint_hz") for r in fake_qc.requests if r["op"] == "prosody"}
+    assert hints == {150.0}  # the character's median F0 from analysis.jsonl bounds every pyin pass
+    # both passes reach 4 x the hint (an octave-up take or a shouted original is not read as its subharmonic)
+    passes = [(Path(r["wav"]).as_posix(), r.get("f0_up")) for r in fake_qc.requests if r["op"] == "prosody"]
+    assert {up for wav, up in passes if f"/{layout.POST_DIR}/" in wav} == {4.0}
+    assert {up for wav, up in passes if f"/{layout.ORIG_AUDIO_DIR}/" in wav} == {4.0}
+
+
+def test_qa_register_check_measures_flagged_originals_and_never_judges_the_analysis_fallback(dub, fake_qc, run) -> None:
+    from pathlib import Path
+
+    from babeldub.core.jsonl import write_jsonl
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    base = [dub.line("hero", 4.0) for _ in range(3)]
+    dub.ref("hero", base[0])
+    bed = dub.line("hero", 3.0, flags=("has_bed",))  # a music bed: no voice sample, but its F0 is measurable
+    unmeasured = dub.line("hero", 3.0)  # the worker cannot measure this original
+    for lid in (bed, unmeasured):
+        dub.translate(lid, "Садись в машину.")
+        wav = dub.dub(lid, voice="hero", asr="садись в машину")
+        fake_qc.prosody[key_of(wav)] = {"f0_median_hz": 200.0, "voiced_s": 1.0, "f0_range_st": 5.0}
+    bed_orig = dub.project.path(next(x for x in dub.lines if x["id"] == bed)["audio"]["wav"])
+    fake_qc.prosody[key_of(bed_orig)] = {"f0_median_hz": 140.0, "voiced_s": 1.0, "f0_range_st": 5.0}
+    dub.save()
+    # unhinted analysis prosody: it agrees with the dub on the bed line and disagrees on the unmeasured one
+    analysis = [{"id": lid, "prosody": {"f0_median_hz": hz}} for lid, hz in zip(base, (140.0, 150.0, 160.0), strict=True)]
+    analysis += [{"id": bed, "prosody": {"f0_median_hz": 200.0, "voiced_s": 1.0, "f0_range_st": 5.0}},
+                 {"id": unmeasured, "prosody": {"f0_median_hz": 120.0, "voiced_s": 1.0, "f0_range_st": 5.0}}]
+    write_jsonl(dub.project.path(layout.ANALYSIS), analysis, schema="babeldub.analysis/1")
+    run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    # the has_bed original is measured from its own wav with the character's hint, not taken from analysis.jsonl
+    assert qa[bed]["orig_f0_median_hz"] == 140.0 and qa[bed]["reasons"] == ["pitch"]
+    orig_pass = [r for r in fake_qc.requests if r["op"] == "prosody" and key_of(r["wav"]) == key_of(bed_orig)]
+    assert orig_pass and all(r.get("f0_hint_hz") == 150.0 and r.get("f0_up") == 4.0 for r in orig_pass)
+    # the fallback still feeds the prosody similarity, but an unhinted median gives no register verdict
+    assert qa[unmeasured]["orig_f0_median_hz"] == 120.0 and qa[unmeasured]["pitch_shift_st"] is None
+    assert qa[unmeasured]["verdict"] == "pass"
+
+
+def test_voice_checks_use_the_take_before_the_channel_match(dub, fake_qc, run) -> None:
+    from pathlib import Path
+
+    import numpy as np
+    import soundfile as sf
+
+    def key_of(path):
+        return str(Path(path).resolve()).lower()
+
+    for _ in range(3):
+        dub.line("hero", 4.0)
+    radio = dub.line("hero", 3.0)
+    plain = dub.line("hero", 3.0)
+    for lid in (radio, plain):
+        dub.translate(lid, "Привет, как дела?")
+    final = dub.dub(radio, asr="привет как дела", vec=dub.voices.emb("villain"))  # the radio chain: another "voice"
+    pre = dub.project.path("post/pre_match/radio.wav")
+    pre.parent.mkdir(parents=True)
+    sf.write(str(pre), (0.2 * np.sin(np.arange(3 * 16000) * 0.07)).astype(np.float32), 16000)
+    fake_qc.vectors[key_of(pre)] = dub.voices.emb("hero")
+    dub.post[-1]["pre_match_wav"] = "post/pre_match/radio.wav"
+    dub.dub(plain, voice="hero", asr="привет как дела")
+    dub.save()
+    code, out = run(["qa", "--project", str(dub.project.root)])
+    qa = latest_by(read_jsonl(dub.project.path(layout.QA)))
+    assert qa[radio]["verdict"] == "pass" and qa[radio]["voice_wav"] == "post/pre_match/radio.wav", qa[radio]
+    assert qa[plain]["voice_wav"] is None
+    embedded = [key_of(r["wav"]) for r in fake_qc.requests if r["op"] == "embed" and "#a" in str(r.get("id"))]
+    heard = [key_of(r["wav"]) for r in fake_qc.requests if r["op"] == "asr"]
+    assert key_of(pre) in embedded and key_of(final) not in embedded  # SIM on the take before the match ...
+    assert key_of(final) in heard and key_of(pre) not in heard  # ... the words on what the player hears
+    assert isinstance(qa[radio]["ltas_db"], float) and qa[radio]["ltas_db"] >= 0.0  # informational, never a reason
+    assert "ltas" not in " ".join(qa[radio]["reasons"])

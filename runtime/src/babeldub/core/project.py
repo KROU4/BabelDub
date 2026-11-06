@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,11 +28,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # "(shouting, fast pace)" from the agent's `delivery` or the tags measured on the original), else
     # line/char: "line" = the original line itself is the voice prompt (timbre AND delivery), "char" = best
     # clean reference of the character; bootstrap (explicit) = long reference, then a target-language prompt
-    # built from the character's first accepted dubs.
+    # built from the character's first accepted dubs; clone (explicit) = the long reference of lines with a source
+    # transcript as timbre AND continuation prompt (that transcript), no control text.
     # tags_reference: main = the calm/main long reference, bucket = the nearest arousal bucket's.
     # delivery_tags: on = agent delivery > measured tags, measured = ignore the agent's, off = no control text.
     # best_of: candidates per line (different seeds); best_of_mode auto = score when the qc env exists (every
-    # candidate is ranked by prosody, MOS, length and voice similarity), else the closest speech length wins.
+    # candidate is ranked by prosody, MOS, liveliness, length and voice similarity, qa.rank_weights), else the
+    # closest speech length wins.
     # stress: on = homographs get a stress mark the engine reads (RUAccent in the qc env), off = plain text
     "tts": {
         "engine": "auto",
@@ -47,13 +50,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "stress": "off",
         "tags_reference": "main",
         "delivery_tags": "on",
+        # tags: a character whose dubs speak under this share of the original's speech (median, >= 3 lines)
+        # gets the delivery tag "slow" on its next takes (0 = off); post never slows speech down
+        "slow_hint_ratio": 0.85,
     },
     # never slower (tempo_min 1.0): a short dub keeps its tempo, the rest is silence; a long one loses part of
-    # its pauses, then speeds up to tempo_max (pitch kept); exact original length
-    "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0},
+    # its pauses, then speeds up to tempo_max (pitch kept); exact original length.
+    # match: the dub takes the original's channel: eq = long-term spectrum EQ + bandwidth, full = + radio chain,
+    # off = none (what a project created before v0.4 without this key keeps); match_target: character = one EQ
+    # curve per character from its pooled dubs vs its pooled originals, line = the line's own curve
+    "post": {"tempo_min": 1.0, "tempo_max": 1.15, "tolerance": 0.03, "fixed_length_tolerance": 0.03, "true_peak_db": -1.0,
+             "match": "eq", "match_target": "character"},
     # RVC timbre transfer (stage vc) for characters with a model trained by `babeldub vc train`
-    "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.5, "protect": 0.33, "f0_method": "rmvpe"},
-    # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language
+    "vc": {"epochs": 20, "minutes": 30.0, "index_rate": 0.75, "protect": 0.33, "f0_method": "rmvpe",
+           "pitch": "line"},
+    # min_sim_ratio: same-language dubs; min_sim_ratio_xlang: dub language != source audio language;
+    # short_sim_*: an original under short_sim_s of speech (or below the sim bar itself) also passes a dub whose
+    # cosine is >= short_sim_ratio x its own; max_pitch_shift_st: register check of the median F0 when both
+    # sides have pitch_min_voiced_s of voiced speech; max_asr_disagreement: Whisper vs GigaAM CER gap flagged
     "qa": {
         "max_cer": 0.15,
         "min_sim_ratio": 0.75,
@@ -63,6 +77,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "max_duration_ratio": 1.35,
         "mos_drop": 1.0,
         "min_f0_range_ratio": 0.5,
+        "max_pitch_shift_st": 3.0,
+        "pitch_min_voiced_s": 0.5,
+        "short_sim_s": 1.0,
+        "short_sim_ratio": 0.8,
+        "max_asr_disagreement": 0.15,
+        # best-of ranking (qa/rank.py): sim_rvc replaces sim for a character whose RVC model sets the timbre
+        # after scoring; length_fixed replaces length on fixed_length lines (the difference from prosody and liveliness)
+        "rank_weights": {"prosody": 0.25, "mos": 0.10, "liveliness": 0.20, "length": 0.15, "sim": 0.30,
+                         "sim_rvc": 0.05, "length_fixed": 0.30},
     },
     "build": {"codec": "auto"},
     "install": {"backup": True},
@@ -139,7 +162,8 @@ class Project:
     def create(cls, root: Path, data: dict[str, Any]) -> Project:
         merged = {"_schema": PROJECT_SCHEMA, "cli_version": __version__, "created": now_iso()}
         for key, value in DEFAULT_SETTINGS.items():
-            merged[key] = {**value, **data.get(key, {})} if isinstance(value, dict) else data.get(key, value)
+            # deep copy: nested defaults (qa.rank_weights) must not be shared with DEFAULT_SETTINGS
+            merged[key] = copy.deepcopy({**value, **data.get(key, {})} if isinstance(value, dict) else data.get(key, value))
         for key, value in data.items():
             merged.setdefault(key, value)
         project = cls(root=root, data=merged)

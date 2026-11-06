@@ -9,7 +9,7 @@ Standalone script: runs under any Python with numpy + soundfile; never imports b
 Test hooks in `params`: dummy_fail = "error" (answer ok=false) | "exit" (crash the process) |
 "batch" (fail a whole synth_batch); dummy_sleep = seconds to stall before answering.
 Like VoxCPM2 it accepts a continuation prompt (`prompt_wav` + `prompt_text`, mode "ref+prompt"), so the
-bootstrap reference strategy can be tested end to end, and a delivery `control` text (ref_strategy=tags):
+bootstrap and clone reference strategies can be tested end to end, and a delivery `control` text (ref_strategy=tags):
 echoed in the reply, never voiced or counted in the length; with a prompt as well the prompt is dropped
 (`prompt_dropped`), as VoxCPM2's worker does.
 

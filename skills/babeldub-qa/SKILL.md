@@ -4,7 +4,7 @@ description: "Quality control of a game dub voiced in the original characters' v
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 with the qc engine installed (babeldub setup --engines qc, faster-whisper and SpeechBrain ECAPA); NVIDIA GPU recommended, CPU works slower."
 metadata:
-  babeldub-cli: "0.3.0"
+  babeldub-cli: "0.4.0"
 ---
 
 # BabelDub: dub quality control
@@ -27,13 +27,14 @@ babeldub report             qa/report.md: per-character totals and the attention
 
 | Metric | How | Default threshold |
 |---|---|---|
-| `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo) against `dub_text`, both texts normalized, digits spelled out on both sides | `qa.max_cer` = 0.15 |
-| `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ sim_threshold = max(ratio × sim_ref, qa.min_sim_abs = 0.25)`; ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (the normal case), `qa.min_sim_ratio` = 0.75 for a same-language dub |
-| `sim_ref` — the character's baseline | mean pairwise similarity of the character's own clean originals | — |
+| `cer` — intelligibility | speech recognition of the dub (faster-whisper large-v3-turbo; for Russian also GigaAM-v3, `cer_asr2`, and the vowel-folded `cer_folded`) against `dub_text`, both texts normalized, digits spelled out on both sides, known Whisper hallucination tails stripped; the lowest CER counts | `qa.max_cer` = 0.15; `asr_disagree` (informational) when the two ASRs differ by > 0.15 |
+| `sim` — is it the same voice | mean of `sim_line` (ECAPA similarity to the original line) and `sim_char` (to the character's reference) | `sim ≥ sim_threshold = max(ratio × sim_ref, qa.min_sim_abs = 0.25)`; ratio `qa.min_sim_ratio_xlang` = 0.45 for a dub in another language than the original audio (the normal case), `qa.min_sim_ratio` = 0.75 for a same-language dub. An original under 1 s of speech or below that bar itself also passes `sim_rel` (dub cosine to the target / `orig_sim`) ≥ 0.8 (`sim_rule: relative`) |
+| `sim_ref` — the character's baseline | mean pairwise similarity of the character's own clean originals (line to line, like `sim`; centroid cosines run higher and do not compare) | — |
 | `margin` — whose voice is it | similarity to the own character's voice centroid minus the best other character's (`closest_char`); needs two characters with centroids | `margin ≥ qa.min_identity_margin` = −0.05, else reason `identity` |
 | `ratio` — length | dub speech / original speech (from `post`) | `qa.max_duration_ratio` = 1.35; for `fixed_length` 1 + `post.fixed_length_tolerance` = 1.03 |
-| `mos` — naturalness | UTMOS22 of the dub against `orig_mos`, the median of the character's own originals (`qa/mos_baseline.json`); only when the UTMOS22 checkpoint is downloaded | reason `mos` when `mos < orig_mos − qa.mos_drop` (1.0): only clear outliers |
-| `prosody_sim` — intonation | 0.6 × F0 range ratio (dub vs original) + 0.4 × F0 contour correlation | reason `flat` when the original moves ≥ 3 semitones and the dub's range is under `qa.min_f0_range_ratio` (0.5) of it |
+| `mos` — naturalness | Distill-MOS (`qa.mos_model=distillmos`, new projects) or UTMOS22 of the dub against `orig_mos`, the median of the character's own originals by the same model (`qa/mos_baseline.json`); only when the checkpoint is downloaded | reason `mos` when `mos < orig_mos − qa.mos_drop` (1.0): only clear outliers |
+| `prosody_sim` — intonation | 0.6 × F0 range ratio (dub vs original) + 0.4 × F0 contour correlation (two-pass pyin within an octave of the character's median F0) | reason `flat` when the original moves ≥ 3 semitones and the dub's range is under `qa.min_f0_range_ratio` (0.5) of it |
+| `pitch_shift_st` — register | 12 · log2 of the dub's median F0 over the original line's | reason `pitch` when both have ≥ 0.5 s voiced and the shift exceeds `qa.max_pitch_shift_st` = 3 semitones |
 | onset/offset (`fixed_length`) | `onset_deltas`/`offset_deltas` of `post` | reason `timing` when a segment starts more than ±80 ms off or ends more than 80 ms late |
 | `peak_db`, clipping | peak and share of clipped samples | peak no higher than `post.true_peak_db` + 0.5 dB |
 | silence | speech loudness | not quieter than −50 dB |
@@ -42,11 +43,11 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 
 ## Workflow
 
-1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `mos_median`, `prosody_median`, `errors[]`, `next`.
+1. `babeldub qa`. Output: `checked`, `pass`, `fail`, `regen`, `shorten`, `keep_original`, `accept` (auto-decisions of this run), `attention[]`, `pending`, `cer_median`, `sim_median`, `mos_median`, `prosody_median`, `pitch {checked, over, median_abs_st}`, `sim_relative`, `asr2`, `asr_disagree`, `errors[]`, `warnings[]` (e.g. the second ASR is unavailable), `next`.
 2. **Exit code 0** — everything was decided automatically. If `regen` > 0, run the voice loop (`synth --attempt-next` → `post` → `vc` → `qa`, skill `babeldub-voice`); if `next` mentions waiting lines (bootstrap phase 2, only with an explicit `tts.ref_strategy=bootstrap`), run `synth` → `post` → `vc` → `qa`; if `shorten` > 0, go back to translation (skill `babeldub-translate`, `batch make --from-decisions`).
 3. **Exit code 3** — `attention[]`: lines where the auto-decision was not enough or was flagged for review. Work through them (steps 4–6).
 4. **Look at the metrics** of the relevant lines only:
-   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.mos,qa.orig_mos,qa.prosody_sim,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
+   `babeldub query --where verdict=fail --fields id,char,kind,fixed_length,qa.attempt,qa.cer,qa.sim,qa.sim_line,qa.sim_char,qa.sim_threshold,qa.margin,qa.closest_char,qa.sim_rule,qa.mos,qa.orig_mos,qa.prosody_sim,qa.pitch_shift_st,qa.ratio,qa.peak_db,qa.reasons --limit 50`.
    In `query`, QA metrics live under the `qa.` prefix; to compare the text with what was recognized, add `translation.dub_text` and `qa.asr_text`.
 5. **Systemic defects.** If more than 20 % of one character's lines in a chunk fail, do not decide line by line: this is a prompt, reference or attribution problem. Return the character in `failing_chars` (to the orchestrator and to the voice and caster roles).
 6. **Decisions:** write them to `qa/decisions.agent.jsonl` and run `babeldub decide apply`. The decision table is below; details — [references/decisions.md](references/decisions.md).
@@ -57,14 +58,14 @@ Lines flagged `nonverbal` (screams, laughs) are measured but never fail on `sim`
 | Decision | When | What happens next |
 |---|---|---|
 | `accept` | metrics within thresholds, or the deviation is acceptable and explained in `note` | the line goes into the build |
-| `regen` | a random defect (`cer`, peaks, silence, looping, `mos`, `flat`, `timing`) with a sound prompt, attempts remain | a new attempt with a different seed. With VoxCPM2's delivery tags (`tts.ref_strategy=tags`): after `cer`, and on any regen from the 3rd take of the same text on, the line is voiced without its tags (`tags_source: dropped`); after `mos`/`flat` the tags stay. The next nearest arousal bucket after `mos`/`flat` only with `bootstrap` or `tts.tags_reference=bucket` |
+| `regen` | a random defect (`cer`, peaks, silence, looping, `mos`, `flat`, `pitch`, `timing`) with a sound prompt, attempts remain | a new attempt with a different seed. With VoxCPM2's delivery tags (`tts.ref_strategy=tags`): after `cer`, and on any regen from the 3rd take of the same text on, the line is voiced without its tags (`tags_source: dropped`); after `mos`/`flat` the tags stay. The next nearest arousal bucket after `mos`/`flat` only with `bootstrap` or `tts.tags_reference=bucket` |
 | `reref` | the voice "drifted": low `sim`, especially `sim_line`, on shouting, whispering, noise, a radio effect | a new attempt with a different prompt (`line` → `char`; the long reference of `tags` → `char`, or the line itself when the character has one reference; delivery tags kept) |
 | `shorten` | `ratio` above the limit, `fixed_length` does not fit | the translator shortens the text, then a new synthesis |
 | `retranslate` | `cer` high again while the voice is fine: numbers, Latin script, hard words | the translator fixes the text, then a new synthesis |
 | `keep_original` | no speech, attempts exhausted, nothing helps | the original plays; reason in `note` |
 | `skip` | the line does not need dubbing (a duplicate, a service entry) | the original plays; reason in `note` |
 
-CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag — except a take that fails only `mos`/`flat` (delivery, not the words or the voice), which is then `accept` with a flag: listen to it; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions. Neither the CLI nor QA changes a line's delivery tags: they come from the measurement or the translator's `delivery` (`translation.delivery` in `query`); a regen only drops them as described above. When many lines of one character fail `cer` or `mos` with clean texts, return it in `failing_chars`: the voice role checks its delivery settings (`tts.delivery_tags`, `tts.tags_reference`).
+CLI auto-decisions: `pass` → `accept` (a `mixed` line, words with a laugh or groan, with a flag: listen to it); a quality failure (`cer`, `sim`, `identity`, `mos`, `flat`, `pitch`, `timing`, `peak`, `empty`, `silent`) → `regen` while the attempt number is below `tts.max_attempts` (3; 2 for a `short_word` line), then `keep_original` with a flag — except a take that fails only `mos`/`flat` (delivery, not the words or the voice), which is then `accept` with a flag: listen to it; length → `shorten`, at most twice, then `keep_original`. The CLI never assigns `reref` or `retranslate` itself — those are agent decisions. Neither the CLI nor QA changes a line's delivery tags: they come from the measurement or the translator's `delivery` (`translation.delivery` in `query`); a regen only drops them as described above. When many lines of one character fail `cer` or `mos` with clean texts, return it in `failing_chars`: the voice role checks its delivery settings (`tts.delivery_tags`, `tts.tags_reference`).
 
 ## Thresholds
 

@@ -63,19 +63,22 @@ Values from `project.json`, created by `babeldub init`. Change them with `babeld
 | `cast.merge_threshold` | 0.75 | a voice cluster at least this similar to a named character is merged into him |
 | `tts.engine` | `auto` | VoxCPM2 (`voxcpm`, Apache-2.0) on an NVIDIA GPU with its env; otherwise `qwen3tts-fast` (CUDA) / `qwen3tts` (CPU) / `chatterbox` by language |
 | `tts.model` | `null` | the model is picked by the engine, tier and language |
-| `tts.ref_strategy` | `auto` | VoxCPM2: `tags` (the long original timbre reference plus the line's delivery tags as a short control text); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char`; `bootstrap` (long reference, then a target-language prompt from the character's accepted dubs) only explicitly |
+| `tts.ref_strategy` | `auto` | VoxCPM2: `tags` (the long original timbre reference plus the line's delivery tags as a short control text); other engines: `line` (the original line with its text) when it lasts ≥ `tts.line_ref_min_s` and has text, otherwise `char`; `bootstrap` (long reference, then a target-language prompt from the character's accepted dubs) and `clone` (the long reference with its source transcript as a continuation prompt, no tags) only explicitly |
 | `tts.tags_reference` | `main` | `tags`: the calm/main long reference for every line; `bucket` takes the reference of the line's arousal bucket |
 | `tts.delivery_tags` | `on` | `tags`: the translator's `delivery` > the measured tags > none; `measured` ignores the translator's tags; `off` sends no control text |
 | `tts.line_ref_min_s` | 1.6 | minimum duration of the original for `line` |
-| `tts.best_of` | 3 | takes per line; scored with the `qc` env (delivery, naturalness, length, voice), else the one closest to the original's speech length is kept |
+| `tts.best_of` | 3 | takes per line; scored with the `qc` env (delivery, liveliness, naturalness, length, voice; `qa.rank_weights`), else the one closest to the original's speech length is kept |
 | `tts.bootstrap_lines` | 4 | `bootstrap` only: first lines of a character dubbed before its target-language prompt exists |
 | `tts.bootstrap_min_accepted` | 3 | `bootstrap` only: accepted first lines needed to build the prompt |
 | `tts.max_attempts` | 3 | attempts before `keep_original` |
 | `post.tempo_min` / `post.tempo_max` | 1.0 / 1.15 | `post` never slows a dub down (slow speech sounds unnatural) and speeds it up at most 15% after shortening its pauses; the rest is silence, the file keeps the original's exact length |
 | `post.tolerance` | 0.03 | no tempo change when the dub's speech is within ±3 % of the original's |
 | `post.fixed_length_tolerance` | 0.03 | tolerance for fixed-length lines (cutscenes) |
+| `post.match` | eq | the dub takes the original's channel: `eq` spectrum EQ + band limit, `full` plus a radio/phone chain, `off` none (games that apply effects in their mixer) |
+| `post.match_target` | character | where the EQ curve comes from: `character` one curve per character from its pooled dubs against its pooled originals (the phonemes of two languages average out, the channel stays; falls back to the line's own curve under 3 lines or 10 s of speech), `line` each line's own curve |
 | `vc.epochs` / `vc.minutes` | 20 / 30 | RVC training per character (`babeldub vc train`) |
-| `vc.index_rate` / `vc.protect` | 0.5 / 0.33 | RVC conversion settings (`babeldub vc`) |
+| `vc.index_rate` / `vc.protect` | 0.75 / 0.33 | RVC conversion settings (`babeldub vc`) |
+| `vc.pitch` | line | RVC F0 shift: `line` each take to its own original line, `char` to the character's originals, `keep` the TTS's F0 |
 | `post.true_peak_db` | −1.0 | peak ceiling |
 | `qa.max_cer` | 0.15 | maximum character error rate of speech recognition on the dub |
 | `qa.min_sim_ratio_xlang` | 0.45 | minimum similarity of the dub's voice to the character's original, relative to the character's baseline, when the dub is in another language than the original audio (the normal case) |

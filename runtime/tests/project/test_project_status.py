@@ -108,6 +108,10 @@ def test_set_calibration_settings(bd, game):
     code, out = bd("set", "qa.min_sim_abs=0.3")
     assert code == 0 and "warnings" not in out and out["changed"]["qa.min_sim_abs"] == {"old": None, "new": 0.3}
     assert bd("set", "qa.min_sim_abs=low")[0] == 2
+    code, out = bd("set", "qa.max_pitch_shift_st=2.5", "qa.short_sim_s=1.2", "qa.short_sim_ratio=0.75",
+                   "qa.pitch_min_voiced_s=0.4", "qa.max_asr_disagreement=0.2")
+    assert code == 0 and "warnings" not in out, out
+    assert out["changed"]["qa.max_pitch_shift_st"] == {"old": 3.0, "new": 2.5}
 
 
 def test_set_validation(bd, game):
@@ -122,3 +126,30 @@ def test_set_validation(bd, game):
     assert bd("set")[0] == 2
     code, out = bd("set", "tts.speed_hack=1")
     assert code == 0 and "not a known setting" in out["warnings"][0]
+    assert bd("set", "qa.mos_model=utmos22")[0] == 0
+    assert bd("set", "qa.mos_model=pesq")[0] == 2
+    assert bd("set", "post.match_target=line")[0] == 0
+    code, out = bd("set", "post.match_target=bogus")
+    assert code == 2 and "post.match_target" in out["error"], out
+
+
+def test_set_rank_weights(bd, game):
+    _, init = bd("init", game, "--lang", "ru")
+    path = Path(init["project"]) / layout.PROJECT_JSON
+    assert read_json(path)["qa"]["rank_weights"]["sim"] == 0.3  # new projects carry the defaults
+    code, out = bd("set", "qa.rank_weights.sim=0.2", "qa.rank_weights.liveliness=0.3")
+    assert code == 0 and "warnings" not in out and out["changed"]["qa.rank_weights.sim"] == {"old": 0.3, "new": 0.2}
+    assert read_json(path)["qa"]["rank_weights"]["liveliness"] == 0.3
+    code, out = bd("set", "qa.rank_weights.timbre=0.2")
+    assert code == 2 and "unknown rank weight" in out["error"]
+    assert bd("set", "qa.rank_weights.sim=2")[0] == 2
+    assert bd("set", "qa.rank_weights.sim=high")[0] == 2
+    assert bd("set", "qa.rank_weights=0.5")[0] == 2
+    assert read_json(path)["qa"]["rank_weights"]["sim"] == 0.2  # a rejected set changes nothing
+    # a project created before the setting existed gets the section on its first key
+    data = read_json(path)
+    del data["qa"]["rank_weights"]
+    write_json(path, data)
+    code, out = bd("set", "qa.rank_weights.mos=0.15")
+    assert code == 0 and read_json(path)["qa"]["rank_weights"] == {"mos": 0.15}
+    assert bd("set", "qa.rank_weights=null")[0] == 0 and read_json(path)["qa"]["rank_weights"] is None

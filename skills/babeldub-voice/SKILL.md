@@ -4,7 +4,7 @@ description: "Dub game lines in the original character's own voice: GPU-first lo
 license: MIT
 compatibility: "Local agent with shell access; babeldub CLI 0.1.0 (install via the babeldub-doctor skill); NVIDIA GPU with 8+ GB VRAM for the default chain (VoxCPM2 + RVC), smaller GPUs and the CPU fall back to Qwen3-TTS; engine venvs and weights are installed by babeldub setup."
 metadata:
-  babeldub-cli: "0.3.0"
+  babeldub-cli: "0.4.0"
 ---
 
 # BabelDub: voice — dubbing in the original character's voice
@@ -21,8 +21,8 @@ Chosen in blind listening rounds on a real game (Low-Budget Repairs, English →
 
 1. **TTS: VoxCPM2** (`tts.engine=auto` on an NVIDIA GPU with 8 GB+ and the `voxcpm` env; 30 languages, 48 kHz, Apache-2.0).
 2. **The long original reference plus delivery tags** (`tts.ref_strategy=auto` = `tags` for VoxCPM2). Every line is voiced with the character's *long timbre reference*: 3–4 clean original lines (4–7.5 s each) joined into ~15–20 s (`tts.tags_reference=main`, the default: the calm/main one for the whole role; `bucket`: the one of the arousal bucket nearest to the line's original). The delivery of the line comes from a short English control text VoxCPM2 reads before the dub text, for example `(shouting, slightly faster)`, made of the line's **delivery tags**: measured on the original line against the same character's other lines, or corrected by the translator agent from the scene. Every line is voiced in the first run: no phases, no waiting lines. Details below and in [references/ref-strategy.md](references/ref-strategy.md), section 2.2.
-3. **Best of N** (`tts.best_of=3`): N takes with different seeds. With the `qc` env installed (`tts.best_of_mode=auto` → `score`) every take is kept, and after the TTS model is unloaded `synth` scores them (prosody similarity to the original, MOS, length, voice similarity; CER and length as gates) and keeps the best; otherwise the take whose speech length is closest to the original's wins.
-4. **Exact fit** (`post`): never slower (a short dub keeps its tempo, the rest is silence); a long one loses part of its pauses, then speeds up to at most `post.tempo_max` (1.15, pitch kept); cutscene (`fixed_length`) chunks start where the original's segments start; the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness.
+3. **Best of N** (`tts.best_of=3`): N takes with different seeds. With the `qc` env installed (`tts.best_of_mode=auto` → `score`) every take is kept, and after the TTS model is unloaded `synth` scores them (prosody similarity and median F0 against the original, liveliness, MOS, length, voice similarity; CER, length and the character's MOS floor as gates; candidates of a character with an RVC model are converted first, so the voice similarity is that of the shipped timbre; weights `qa.rank_weights`) and keeps the best; otherwise the take whose speech length is closest to the original's wins.
+4. **Exact fit** (`post`): never slower (a short dub keeps its tempo, the rest is silence); a long one loses part of its pauses, then speeds up to at most `post.tempo_max` (1.15, pitch kept); cutscene (`fixed_length`) chunks start where the original's segments start; the speech starts where the original's does, and the file has exactly the original's sample count, rate and channels, at the original speech loudness. Then the dub takes the original's channel (`post.match`: `eq` = its long-term spectrum and bandwidth, `full` = also a radio/phone chain for such lines, `off`), again after `vc`.
 5. **RVC timbre transfer** (`vc`): one RVC v2 model per main character, trained once on its clean original lines (`babeldub vc train`), converts every dub of that character. It works for any target language.
 6. **QA** (Whisper with VAD, ECAPA with cross-language calibration) accepts or sends lines back.
 
@@ -45,9 +45,11 @@ Measured on Low-Budget Repairs: VoxCPM2 + RVC CER 0.045 (Qwen3-TTS + RVC 0.050),
 - **Corrected by the translator.** Every batch line carries the measured tags as `delivery_hint`; the translator returns `delivery` only where the scene calls for another delivery (skill `babeldub-translate`). Delivery is decided by agents and the measurement, never asked from the user.
 - **Precedence:** the translator's `delivery` (even `[]`, explicitly neutral) > the measured tags > none; a `delivery` that repeats the measured tags is the measured delivery. `tts.delivery_tags`: `on` (default) | `measured` (ignore the translator's `delivery`) | `off` (no control text).
 - **Regens:** a `regen` after a `cer` failure, and any `regen` from the 3rd take of the same text on (a new translation starts again), drops the control text (`tags_source: dropped`); after `flat` or `mos` the tags stay with a new seed.
-- **Reported** per take in `synth/results.jsonl` (`control`, `tags`, `tags_source`: `agent | measured | none | dropped`), in the `synth` output (`delivery{by_source, tags}`, also in `--dry-run`) and in `babeldub status` (`counts.delivery`).
+- **Too fast:** speech is never slowed down in `post`; a character whose dubs speak under `tts.slow_hint_ratio` (0.85) of its originals' speech (median over ≥ 3 lines) gets `slow` ("slightly slower") on its next takes instead (`tags_source: tempo`, `tempo_hint`; never over the translator's `delivery`).
+- **Reported** per take in `synth/results.jsonl` (`control`, `tags`, `tags_source`: `agent | measured | none | dropped | tempo`), in the `synth` output (`delivery{by_source, tags}`, also in `--dry-run`) and in `babeldub status` (`counts.delivery`).
 - **When to change them** (record the reason in the report): `tts.delivery_tags=measured` when the translators' `delivery` contradicts the hints and the scenes on many lines; `off` when a character's tagged takes fail `cer`/`mos` clearly more often than its untagged ones or the tags over-act a deliberately flat voice; `tts.tags_reference=bucket` when a character's shouts or whispers sound like another person from the calm reference. Change them before the batch: afterwards every line whose control text changes is voiced again (`reason: delivery`, counted toward `tts.max_attempts`).
 - **`bootstrap` stays an option** (`babeldub set tts.ref_strategy=bootstrap`): the v0.2 chain with a target-language prompt bank from the character's first accepted dubs and no tags; use it when the pilot shows a target-language accent the text does not explain ([references/ref-strategy.md](references/ref-strategy.md), sections 2.3 and 6).
+- **`clone` is opt-in** (`babeldub set tts.ref_strategy=clone`): the long reference of lines with a usable source text as the timbre and as a continuation prompt with that transcript, no delivery tags (`ref_mode: clone`; section 2.5). Offer it when the user wants the closest voice to the original; it stays off by default because a blind listening round did not choose it (1 pick of 22 against 7 for `tags`, although its lab metrics were better).
 
 ## Preconditions
 
@@ -117,7 +119,7 @@ babeldub query --where char=<id>,verdict=fail --fields id,qa.attempt,qa.cer,qa.s
 
 ## Step 5. Post-processing and timbre transfer
 
-`babeldub post` fits every take to its original (exact length, never slower, pauses then tempo up to 1.15, loudness, true peak ≤ −1 dB, original format). Then `babeldub vc` converts the lines of characters with an RVC model and re-applies the exact length and loudness; characters without a model pass through (`passthrough`). Both are idempotent.
+`babeldub post` fits every take to its original (exact length, never slower, pauses then tempo up to 1.15, loudness, true peak ≤ −1 dB, original format). Then `babeldub vc` converts the lines of characters with an RVC model (from the take before the channel match) and re-applies the exact length, loudness and `post.match`; characters without a model pass through (`passthrough`). Both are idempotent.
 
 - `post` exit code 3, `over_length[]`: the dub does not fit even at the fastest allowed tempo; `not_exact[]`: such files run longer than the original (speech is never cut). QA decides (usually `shorten`).
 - Length rules and the fitting cascade: [references/length-policy.md](references/length-policy.md). Order of operations, loudness, format, RVC: [references/post.md](references/post.md).

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from babeldub.qa.decisions import (
     Thresholds,
     auto_decide,
@@ -165,3 +167,46 @@ def test_mos_flat_and_timing_reasons() -> None:
     for reasons in (["timing"], ["flat", "cer"], ["mos", "sim"]):
         assert auto_decide("fail", reasons, 3, TH).decision == "keep_original"
     assert auto_decide("fail", ["mos"], 2, TH, line_class="short_word", max_attempts=2).decision == "accept"
+
+
+def test_relative_sim_rule_for_short_or_atypical_originals() -> None:
+    # "Тихо!": the dub's 0.0996 against the original's own 0.0959 to the character reference
+    assert XLANG.sim_rule(0.7, 0.0959, 0.7) == "relative"
+    assert XLANG.sim_rule(3.0, 0.20, 0.7) == "relative"  # the original itself is below the 0.315 bar
+    assert XLANG.sim_rule(3.0, 0.60, 0.7) == "absolute"
+    assert XLANG.sim_rule(0.7, None, 0.7) == "absolute"  # nothing to be relative to
+    # sim_rel is the ratio dub cosine / orig_sim: 0.0996 / 0.0959 passes, 0.05 / 0.0959 = 0.52 does not
+    assert _eval(th=XLANG, sim=0.0996, sim_rule="relative", sim_rel=0.0996 / 0.0959) == ("pass", [])
+    assert _eval(th=XLANG, sim=0.0996, sim_rule="relative", sim_rel=0.05 / 0.0959) == ("fail", ["sim"])
+    assert _eval(th=XLANG, sim=0.0996)[1] == ["sim"]  # the absolute rule would have failed it
+    th = Thresholds.from_project({"qa": {"short_sim_s": 0.5, "short_sim_ratio": 0.9}})
+    assert th.sim_rule(0.7, 0.6, 0.7) == "absolute" and th.short_sim_ratio == 0.9
+
+
+def test_relative_sim_is_never_stricter_than_the_absolute_bar() -> None:
+    # en->ru, sim_ref 0.6: the absolute bar is max(0.45 x 0.6, 0.25) = 0.27 (the cross-language ratio)
+    assert XLANG.sim_threshold(0.6) == pytest.approx(0.27)
+    assert XLANG.sim_rule(0.8, 0.65, 0.6) == "relative"  # a short original with a high own sim
+    # the dub at 0.45 passes the absolute bar although 0.45 / 0.65 = 0.69 < 0.8: the relative rule only relaxes
+    assert _eval(th=XLANG, sim=0.45, sim_ref=0.6, sim_rule="relative", sim_rel=0.45 / 0.65) == ("pass", [])
+    assert _eval(th=XLANG, sim=0.45, sim_ref=0.6) == ("pass", [])
+    assert _eval(th=XLANG, sim=0.20, sim_ref=0.6, sim_rule="relative", sim_rel=0.20 / 0.65) == ("fail", ["sim"])
+
+
+def test_relative_sim_falls_back_to_absolute_when_the_original_is_about_zero() -> None:
+    # ECAPA on a sub-second original can be ~0 or negative: a ratio to it would pass any voice
+    for orig_sim in (-0.05, 0.0, 0.05):
+        assert XLANG.sim_rule(0.7, orig_sim, 0.7) == "absolute"
+    assert XLANG.sim_rule(0.7, 0.06, 0.7) == "relative"
+    assert _eval(th=XLANG, sim=0.0, sim_rule="absolute") == ("fail", ["sim"])  # another voice still fails
+
+
+def test_pitch_reason_and_its_decision() -> None:
+    assert XLANG.off_pitch(3.5) and XLANG.off_pitch(-4.0) and not XLANG.off_pitch(2.9) and not XLANG.off_pitch(None)
+    assert _eval(pitch=True) == ("fail", ["pitch"])
+    assert _eval(pitch=True, nonverbal=True)[1] == []  # a scream's pitch says nothing about the register
+    assert auto_decide("fail", ["pitch"], 1, TH).decision == "regen"
+    last = auto_decide("fail", ["pitch"], 3, TH)
+    assert last.decision == "keep_original" and last.attention  # not a soft reason
+    th = Thresholds.from_project({"qa": {"max_pitch_shift_st": 2.5, "pitch_min_voiced_s": 0.3}})
+    assert th.off_pitch(2.6) and th.pitch_min_voiced_s == 0.3

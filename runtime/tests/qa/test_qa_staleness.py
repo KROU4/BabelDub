@@ -82,11 +82,11 @@ def test_failed_mos_baseline_is_not_cached(dub, fake_qc, run, home) -> None:
     write_json(mos_path, {"hero": {"median": None, "n": 0}})  # cached by an older version after a failure
     root = str(dub.project.root)
     run(["qa", "--project", root])  # the originals' MOS fails again
-    assert "hero" not in json.loads(mos_path.read_text(encoding="utf-8"))
+    assert "hero" not in json.loads(mos_path.read_text(encoding="utf-8"))["chars"]
     assert latest_by(read_jsonl(dub.project.path(layout.QA)))[lid]["orig_mos"] is None
     for other in [*base, lid]:
         line = next(x for x in dub.lines if x["id"] == other)
         fake_qc.mos[key_of(dub.project.path(line["audio"]["wav"]))] = 3.5
     run(["qa", "--force", "--project", root])  # measured on the next run
-    assert json.loads(mos_path.read_text(encoding="utf-8"))["hero"]["median"] == 3.5
+    assert json.loads(mos_path.read_text(encoding="utf-8"))["chars"]["hero"]["median"] == 3.5
     assert latest_by(read_jsonl(dub.project.path(layout.QA)))[lid]["orig_mos"] == 3.5
